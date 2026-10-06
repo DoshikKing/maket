@@ -132,6 +132,27 @@ export function projectDocument(d: ModelDocument): ViewDocument {
     })),
   };
 }
+// Keep an explicit choice within the source notation; otherwise choose its first applicable link.
+export function connectionTypeForSource(
+  d: ViewDocument,
+  sourceId: string,
+  selectedType: string,
+  sourcePort?: string | null,
+): string {
+  if (selectedType === 'universal:association') return selectedType;
+  const source = d.nodes.find((n) => n.id === sourceId);
+  if (!source) return selectedType;
+  const [bindingId, nodeType] = splitType(source.typeId);
+  const binding = d.bindings.find((b) => b.id === bindingId);
+  if (!binding) return selectedType;
+  const [selectedBinding, selectedId] = splitType(selectedType);
+  if (selectedBinding === bindingId && binding.document.edgeTypes.some((t) => t.id === selectedId))
+    return selectedType;
+  const applicable = binding.document.connectionRules.find(
+    (r) => r.source.nodeType === nodeType && (!sourcePort || r.source.port === sourcePort),
+  );
+  return qualify(bindingId, applicable?.edgeType ?? binding.document.edgeTypes[0].id);
+}
 export function effectiveNode(
   n: DiagramDocument['nodes'][number],
   t: NotationDocument['nodeTypes'][number],

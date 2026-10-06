@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { builtinNotation } from '../src/lib/notation';
 import {
   modelDiagramSchema,
+  connectionTypeForSource,
   mergeModelObjects,
   modelErrors,
   projectDocument,
@@ -60,6 +61,26 @@ describe('cross-notation model', () => {
     expect(view.nodes.map((n) => n.typeId)).toEqual(['a:process', 'b:process']);
     expect(packDocument(view, d.objects)).toEqual(d);
     expect('objects' in view).toBe(false);
+  });
+  it('chooses source-notation links while preserving explicit choices and annotations', () => {
+    const d = document();
+    const secondary = d.bindings[1].document;
+    secondary.edgeTypes.push({ ...secondary.edgeTypes[0], id: 'dependency', name: 'Зависимость' });
+    const view = projectDocument(d);
+    expect(connectionTypeForSource(view, 'n2', 'a:flow', 'out')).toBe('b:flow');
+    expect(connectionTypeForSource(view, 'n2', 'b:dependency', 'out')).toBe('b:dependency');
+    expect(connectionTypeForSource(view, 'n1', 'b:dependency', 'out')).toBe('a:flow');
+    expect(connectionTypeForSource(view, 'n2', 'universal:association', 'out')).toBe(
+      'universal:association',
+    );
+    secondary.connectionRules.unshift({
+      edgeType: 'dependency',
+      source: { nodeType: 'decision', port: 'yes' },
+      target: { nodeType: 'process', port: 'in' },
+      allowSelfLoop: false,
+    });
+    d.nodes[1].typeId = 'decision';
+    expect(connectionTypeForSource(projectDocument(d), 'n2', 'a:flow', 'yes')).toBe('b:dependency');
   });
   it('inherits shared name and bound values without mutating local data', () => {
     const d = document(),

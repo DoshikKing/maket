@@ -56,6 +56,7 @@ import { ObjectTree, ObjectEditor } from './object-tree';
 import { DiagramPreview, type NotationItem } from './library';
 import {
   projectDocument,
+  connectionTypeForSource,
   mergeModelObjects,
   packDocument,
   modelErrors,
@@ -509,19 +510,21 @@ function Editor({ initial }: { initial: Diagram }) {
     sourceHandle?: string | null;
     targetHandle?: string | null;
   }): DiagramDocument {
+    const current = docRef.current;
+    const typeId = connectionTypeForSource(current, c.source, edgeType, c.sourceHandle);
     return {
-      ...docRef.current,
+      ...current,
       edges: [
-        ...docRef.current.edges,
+        ...current.edges,
         {
           id: `edge-${crypto.randomUUID()}`,
-          typeId: edgeType,
+          typeId,
           source: c.source,
           target: c.target,
           sourcePort: c.sourceHandle ?? '',
           targetPort: c.targetHandle ?? '',
           properties: defaults(
-            document.notation.edgeTypes.find((t) => t.id === edgeType)!.properties,
+            current.notation.edgeTypes.find((t) => t.id === typeId)?.properties ?? [],
           ),
         },
       ],
@@ -1090,15 +1093,23 @@ function Editor({ initial }: { initial: Diagram }) {
               onChange={(e) => setEdgeType(e.target.value)}
               aria-label="Тип связи"
             >
-              {document.notation.edgeTypes.map((t) => (
-                <option value={t.id} key={t.id}>
-                  {t.name}
-                </option>
+              {document.bindings.map((b) => (
+                <optgroup label={b.document.name} key={b.id}>
+                  {b.document.edgeTypes.map((t) => (
+                    <option value={qualify(b.id, t.id)} key={t.id}>
+                      {t.name}
+                    </option>
+                  ))}
+                </optgroup>
               ))}
+              <optgroup label="Пояснения">
+                <option value="universal:association">Поясняющая связь</option>
+              </optgroup>
             </select>
           </label>
           <p className="muted small-text">
-            Перетащите связь от правого порта к левому. Разрешены только связи по правилам нотации.
+            Перетащите связь от правого порта к левому. Тип связи выбирается в нотации исходного
+            представления. Соединение должно соответствовать её правилам.
           </p>
           <div className="palette-section">СЛОИ</div>
           <div className="layers-panel" aria-label="Слои диаграммы">
@@ -1203,11 +1214,18 @@ function Editor({ initial }: { initial: Diagram }) {
               onPaneClick={() => setSelected(null)}
               onNodeDragStart={() => beginGesture('drag')}
               onNodeDragStop={endGesture}
+              onConnectStart={(_, { nodeId, handleId, handleType }) => {
+                if (nodeId && handleType === 'source')
+                  setEdgeType(connectionTypeForSource(docRef.current, nodeId, edgeType, handleId));
+              }}
               onConnect={(c) => {
                 const next = candidate(c);
                 const issues = modelErrors(packDocument(next, objectsRef.current));
                 if (issues.length) setError(issues.join('; '));
-                else change(next);
+                else {
+                  setEdgeType(next.edges[next.edges.length - 1].typeId);
+                  change(next);
+                }
               }}
               isValidConnection={(c) =>
                 modelErrors(packDocument(candidate(c), objectsRef.current)).length === 0

@@ -718,3 +718,103 @@ test('browser: delete an unused tree object, including saving removal of its rep
   await page.reload();
   await expect(page.locator('[role="treeitem"]')).toHaveCount(0);
 });
+
+test('browser: draw a connection between representations in a secondary notation', async ({
+  request,
+  page,
+}) => {
+  await login(request, page);
+  const uml = structuredClone(builtinNotation);
+  uml.id = 'uml-test';
+  uml.name = 'UML тест';
+  uml.edgeTypes[0].id = 'association';
+  uml.edgeTypes[0].name = 'Ассоциация UML';
+  for (const t of uml.nodeTypes)
+    for (const p of t.ports) {
+      if (p.id === 'in') p.id = 'uml-in';
+      if (p.id === 'out') p.id = 'uml-out';
+    }
+  for (const r of uml.connectionRules) {
+    r.edgeType = 'association';
+    if (r.source.port === 'out') r.source.port = 'uml-out';
+    if (r.target.port === 'in') r.target.port = 'uml-in';
+  }
+  uml.edgeTypes.push({ ...uml.edgeTypes[0], id: 'dependency', name: 'Зависимость UML' });
+  uml.connectionRules.push(...uml.connectionRules.map((r) => ({ ...r, edgeType: 'dependency' })));
+  const nr = await request.post('/api/notations', { data: uml });
+  expect(nr.status()).toBe(201);
+  const notation = await nr.json();
+  let d = await create(request);
+  d = await (
+    await request.post(`/api/diagrams/${d.id}/notations`, {
+      data: { revision: d.revision, notationId: notation.id },
+    })
+  ).json();
+  const binding = d.document.bindings[1];
+  d = await place(request, d, undefined, binding.id);
+  d = await place(request, d, undefined, binding.id);
+  d = await place(request, d);
+  d = await save(request, d, {
+    ...d.document,
+    nodes: d.document.nodes.map((n, i) => ({
+      ...n,
+      position: { x: i === 1 ? 250 : i === 2 ? 125 : 0, y: i === 2 ? 200 : 0 },
+    })),
+  });
+  await page.goto(`/diagrams/${d.id}`);
+  await expect(page.locator('.react-flow__node')).toHaveCount(3);
+  const chooser = page.getByRole('combobox', { name: 'Тип связи', exact: true });
+  await expect(chooser.locator('optgroup[label="UML тест"] option')).toHaveCount(2);
+  await page.locator('.react-flow__controls-fitview').click();
+  const source = page.locator(
+    `[data-id="${d.document.nodes[0].id}"] .source[data-handleid="uml-out"]`,
+  );
+  const target = page.locator(
+    `[data-id="${d.document.nodes[1].id}"] .target[data-handleid="uml-in"]`,
+  );
+  const a = (await source.boundingBox())!,
+    b = (await target.boundingBox())!;
+  await page.mouse.move(a.x + a.width / 2, a.y + a.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 20 });
+  await page.mouse.up();
+  await expect(page.locator('.react-flow__edge')).toHaveCount(1);
+  await expect(chooser).toHaveValue(`${binding.id}:association`);
+  await expect(page.getByText(/Сохранено · ревизия/)).toBeVisible({ timeout: 15000 });
+  const saved = await (await request.get(`/api/diagrams/${d.id}`)).json();
+  expect(saved.document.edges[0]).toMatchObject({
+    bindingId: binding.id,
+    typeId: 'association',
+    sourcePort: 'uml-out',
+    targetPort: 'uml-in',
+  });
+  await page.reload();
+  await expect(page.locator('.react-flow__edge')).toHaveCount(1);
+  await chooser.selectOption(`${binding.id}:dependency`);
+  async function connect(from: string, to: string, sourcePort: string, targetPort: string) {
+    await page.locator('.react-flow__controls-fitview').click();
+    const source = page.locator(`[data-id="${from}"] .source[data-handleid="${sourcePort}"]`);
+    const target = page.locator(`[data-id="${to}"] .target[data-handleid="${targetPort}"]`);
+    const a = (await source.boundingBox())!,
+      b = (await target.boundingBox())!;
+    await page.mouse.move(a.x + a.width / 2, a.y + a.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 20 });
+    await page.mouse.up();
+  }
+  await connect(d.document.nodes[1].id, d.document.nodes[0].id, 'uml-out', 'uml-in');
+  await expect(page.locator('.react-flow__edge')).toHaveCount(2);
+  await expect(chooser).toHaveValue(`${binding.id}:dependency`);
+  await expect(page.getByText(/Сохранено · ревизия/)).toBeVisible({ timeout: 15000 });
+  const dependency = await (await request.get(`/api/diagrams/${d.id}`)).json();
+  expect(dependency.document.edges[1]).toMatchObject({
+    bindingId: binding.id,
+    typeId: 'dependency',
+  });
+  await connect(d.document.nodes[1].id, d.document.nodes[2].id, 'uml-out', 'in');
+  await expect(page.locator('.react-flow__edge')).toHaveCount(2);
+  await chooser.selectOption('universal:association');
+  await connect(d.document.nodes[1].id, d.document.nodes[2].id, 'uml-out', 'in');
+  await expect(page.locator('.react-flow__edge')).toHaveCount(3);
+  await expect(chooser).toHaveValue('universal:association');
+});
