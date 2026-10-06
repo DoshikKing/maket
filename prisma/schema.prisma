@@ -1,0 +1,85 @@
+generator client {
+  provider = "prisma-client-js"
+  engineType = "client"
+}
+datasource db {
+  provider = "postgresql"
+  url = env("DATABASE_URL")
+}
+model User {
+  id String @id @default(cuid())
+  email String @unique
+  name String
+  passwordHash String
+  emailVerified Boolean @default(false)
+  settings Json @default("{\"theme\":\"light\",\"snapToGrid\":true,\"autosave\":true}")
+  createdAt DateTime @default(now())
+  sessions Session[]
+  tokens AuthToken[]
+  diagrams Diagram[]
+  notations Notation[]
+}
+model Session {
+  id String @id
+  userId String
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  @@index([userId])
+}
+model AuthToken {
+  id String @id
+  kind String
+  userId String
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  @@index([userId, kind])
+}
+model Notation {
+  id String @id @default(cuid())
+  ownerId String
+  owner User @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  name String
+  createdAt DateTime @default(now())
+  versions NotationVersion[]
+  @@index([ownerId])
+}
+model NotationVersion {
+  id String @id @default(cuid())
+  notationId String
+  notation Notation @relation(fields: [notationId], references: [id], onDelete: Cascade)
+  number Int
+  document Json
+  createdAt DateTime @default(now())
+  diagrams Diagram[]
+  @@unique([notationId, number])
+}
+model Diagram {
+  id String @id @default(cuid())
+  ownerId String
+  owner User @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  notationVersionId String?
+  notationVersion NotationVersion? @relation(fields: [notationVersionId], references: [id], onDelete: Restrict)
+  name String
+  revision Int @default(1)
+  document Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  revisions DiagramRevision[]
+  @@index([ownerId, updatedAt])
+}
+model DiagramRevision {
+  id String @id @default(cuid())
+  diagramId String
+  diagram Diagram @relation(fields: [diagramId], references: [id], onDelete: Cascade)
+  number Int
+  document Json
+  reason String @default("save")
+  createdAt DateTime @default(now())
+  @@unique([diagramId, number])
+}
+model RateLimit {
+  key String @id
+  count Int @default(1)
+  expiresAt DateTime
+}
