@@ -1,0 +1,559 @@
+'use client';
+import { useState } from 'react';
+import { Plus, ChevronRight, RefreshCw, Copy, Archive, Pencil, LocateFixed } from 'lucide-react';
+import { api, date } from '@/lib/client';
+import { attributesSchema, type ModelObject } from '@/lib/model';
+import { Modal } from './modal';
+export function ObjectEditor({
+  object,
+  parentId,
+  objects,
+  onSaved,
+  onClose,
+}: {
+  object?: ModelObject;
+  parentId?: string | null;
+  objects: ModelObject[];
+  onSaved: (o: ModelObject) => void;
+  onClose: () => void;
+}) {
+  const [name, setName] = useState(object?.name ?? 'Новый объект'),
+    [description, setDescription] = useState(object?.description ?? ''),
+    [parent, setParent] = useState(object?.parentId ?? parentId ?? ''),
+    [attributes, setAttributes] = useState(
+      Object.entries(object?.attributes ?? {}).map(([key, value]) => ({ key, value })),
+    ),
+    [busy, setBusy] = useState(false),
+    [error, setError] = useState(''),
+    [usages, setUsages] = useState<
+      { count: number; diagram: { id: string; name: string } }[] | null
+    >(null),
+    [history, setHistory] = useState<
+      { number: number; createdAt: string; snapshot: ModelObject }[] | null
+    >(null);
+  const forbidden = new Set(object ? [object.id] : []);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const o of objects)
+      if (o.parentId && forbidden.has(o.parentId) && !forbidden.has(o.id)) {
+        forbidden.add(o.id);
+        grew = true;
+      }
+  }
+  return (
+    <Modal
+      title={object ? 'Общие свойства объекта' : 'Создать объект'}
+      onClose={onClose}
+      className="object-modal"
+    >
+      <p className="muted small-text">
+        Имя и атрибуты общие для всех представлений объекта. Вложенность организует дерево.
+      </p>
+      <form
+        className="form-stack"
+        onSubmit={async (e) => {
+          e.preventDefault();
+          setBusy(true);
+          setError('');
+          try {
+            if (new Set(attributes.map((a) => a.key)).size !== attributes.length)
+              throw new Error('Ключи атрибутов должны быть уникальны');
+            const values = attributesSchema.parse(
+              Object.fromEntries(attributes.map((a) => [a.key, a.value])),
+            );
+            const result = await api<ModelObject>(
+              object ? `objects/${object.id}` : 'objects',
+              object ? 'PATCH' : 'POST',
+              {
+                name,
+                description,
+                parentId: parent || null,
+                attributes: values,
+                ...(object ? { revision: object.revision } : {}),
+              },
+            );
+            onSaved(result);
+            onClose();
+          } catch (err) {
+            setError((err as Error).message);
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        <label>
+          Имя объекта
+          <input
+            aria-label="Имя объекта"
+            required
+            maxLength={100}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+          />
+        </label>
+        <label>
+          Описание объекта
+          <textarea
+            aria-label="Описание объекта"
+            maxLength={4000}
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+          />
+        </label>
+        <label>
+          Родительский объект
+          <select
+            aria-label="Родительский объект"
+            value={parent}
+            onChange={(e) => setParent(e.target.value)}
+          >
+            <option value="">Корень модели</option>
+            {objects
+              .filter((o) => !forbidden.has(o.id) && (!o.archived || o.id === parent))
+              .map((o) => (
+                <option key={o.id} value={o.id}>
+                  {o.name}
+                  {o.archived ? ' (архив)' : ''}
+                </option>
+              ))}
+          </select>
+        </label>
+        <div className="section-title">
+          <strong>Общие атрибуты</strong>
+          <button
+            type="button"
+            className="secondary small"
+            disabled={attributes.length >= 100}
+            onClick={() => setAttributes([...attributes, { key: '', value: '' }])}
+          >
+            Добавить атрибут
+          </button>
+        </div>
+        {attributes.map((a, i) => (
+          <div className="object-attribute" key={i}>
+            <input
+              aria-label={`Ключ атрибута ${i + 1}`}
+              placeholder="automated"
+              value={a.key}
+              maxLength={100}
+              pattern="[a-zA-Z0-9_-]+"
+              required
+              onChange={(e) =>
+                setAttributes(
+                  attributes.map((x, j) => (j === i ? { ...x, key: e.target.value } : x)),
+                )
+              }
+            />
+            <select
+              aria-label={`Тип атрибута ${i + 1}`}
+              value={typeof a.value}
+              onChange={(e) =>
+                setAttributes(
+                  attributes.map((x, j) =>
+                    j === i
+                      ? {
+                          ...x,
+                          value:
+                            e.target.value === 'boolean'
+                              ? false
+                              : e.target.value === 'number'
+                                ? 0
+                                : '',
+                        }
+                      : x,
+                  ),
+                )
+              }
+            >
+              <option value="string">Текст</option>
+              <option value="number">Число</option>
+              <option value="boolean">Да / Нет</option>
+            </select>
+            {typeof a.value === 'boolean' ? (
+              <label className="inline-check">
+                <input
+                  aria-label={`Значение атрибута ${i + 1}`}
+                  type="checkbox"
+                  checked={a.value}
+                  onChange={(e) =>
+                    setAttributes(
+                      attributes.map((x, j) => (j === i ? { ...x, value: e.target.checked } : x)),
+                    )
+                  }
+                />
+                Да
+              </label>
+            ) : (
+              <input
+                aria-label={`Значение атрибута ${i + 1}`}
+                type={typeof a.value === 'number' ? 'number' : 'text'}
+                value={String(a.value)}
+                maxLength={2000}
+                onChange={(e) =>
+                  setAttributes(
+                    attributes.map((x, j) =>
+                      j === i
+                        ? {
+                            ...x,
+                            value:
+                              typeof a.value === 'number' ? Number(e.target.value) : e.target.value,
+                          }
+                        : x,
+                    ),
+                  )
+                }
+              />
+            )}
+            <button
+              type="button"
+              className="secondary small danger"
+              aria-label={`Удалить атрибут ${i + 1}`}
+              onClick={() => setAttributes(attributes.filter((_, j) => i !== j))}
+            >
+              ×
+            </button>
+          </div>
+        ))}
+        {error && (
+          <div className="error" role="alert">
+            {error}
+          </div>
+        )}
+        <button className="primary" disabled={busy}>
+          {busy ? 'Сохраняем…' : 'Сохранить объект'}
+        </button>
+      </form>
+      {object && (
+        <div className="object-history">
+          <button
+            className="secondary small"
+            onClick={async () => {
+              try {
+                setUsages(await api(`objects/${object.id}/usages`));
+              } catch (err) {
+                setError((err as Error).message);
+              }
+            }}
+          >
+            Использования объекта
+          </button>
+          {usages && (
+            <div className="form-stack">
+              {usages.length ? (
+                usages.map((u) => (
+                  <a key={u.diagram.id} href={`/diagrams/${u.diagram.id}`}>
+                    {u.diagram.name} · {u.count} представлений
+                  </a>
+                ))
+              ) : (
+                <p className="muted">Объект пока не размещён на диаграммах.</p>
+              )}
+            </div>
+          )}
+          <button
+            className="secondary small"
+            onClick={async () => {
+              try {
+                setHistory(await api(`objects/${object.id}/revisions`));
+              } catch (err) {
+                setError((err as Error).message);
+              }
+            }}
+          >
+            История объекта
+          </button>
+          {history?.map((r) => (
+            <div className="revision-row" key={r.number}>
+              <span>
+                v{r.number} · {r.snapshot.name}
+                <small>{date(r.createdAt)}</small>
+              </span>
+              <button
+                className="secondary small"
+                disabled={r.number === object.revision || busy}
+                onClick={async () => {
+                  if (
+                    !confirm(
+                      'Восстановить общие свойства объекта? Это изменит все его представления.',
+                    )
+                  )
+                    return;
+                  setBusy(true);
+                  try {
+                    const result = await api<ModelObject>(`objects/${object.id}/restore`, 'POST', {
+                      revision: object.revision,
+                      number: r.number,
+                    });
+                    onSaved(result);
+                    onClose();
+                  } catch (err) {
+                    setError((err as Error).message);
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
+              >
+                Восстановить объект
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </Modal>
+  );
+}
+export function ObjectTree({
+  objects,
+  counts,
+  selectedId,
+  onPlace,
+  onLocate,
+  onSaved,
+  onRefresh,
+}: {
+  objects: ModelObject[];
+  counts: Map<string, number>;
+  selectedId?: string;
+  onPlace: (id: string) => void;
+  onLocate: (id: string) => void;
+  onSaved: (o: ModelObject) => void;
+  onRefresh: () => void;
+}) {
+  const [query, setQuery] = useState(''),
+    [collapsed, setCollapsed] = useState(new Set<string>()),
+    [editing, setEditing] = useState<{ object?: ModelObject; parentId?: string | null } | null>(
+      null,
+    ),
+    [error, setError] = useState('');
+  const visible = new Set(
+    objects.filter((o) => o.name.toLowerCase().includes(query.toLowerCase())).map((o) => o.id),
+  );
+  if (query)
+    for (const o of objects.filter((o) => visible.has(o.id))) {
+      let p = o.parentId;
+      while (p) {
+        visible.add(p);
+        p = objects.find((x) => x.id === p)?.parentId ?? null;
+      }
+    }
+  async function move(id: string, parentId: string | null) {
+    const o = objects.find((o) => o.id === id);
+    if (!o) return;
+    try {
+      onSaved(await api<ModelObject>(`objects/${id}`, 'PATCH', { revision: o.revision, parentId }));
+      setError('');
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }
+  function branch(parentId: string | null, depth = 0): React.ReactNode {
+    return objects
+      .filter((o) => o.parentId === parentId && visible.has(o.id))
+      .map((o) => {
+        const children = objects.some((c) => c.parentId === o.id),
+          closed = collapsed.has(o.id) && !query;
+        return (
+          <div
+            key={o.id}
+            role="treeitem"
+            aria-expanded={children ? !closed : undefined}
+            aria-selected={selectedId === o.id}
+          >
+            <div
+              className={`object-tree-row ${selectedId === o.id ? 'selected' : ''} ${o.archived ? 'archived' : ''}`}
+              style={{ paddingLeft: 8 + depth * 12 }}
+              draggable={!o.archived}
+              data-object-id={o.id}
+              onDragStart={(e) => {
+                e.dataTransfer.setData('application/maket-object', o.id);
+                e.dataTransfer.effectAllowed = 'copyMove';
+              }}
+              onDragOver={(e) => {
+                if (e.dataTransfer.types.includes('application/maket-object')) {
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = 'move';
+                }
+              }}
+              onDrop={(e) => {
+                const id = e.dataTransfer.getData('application/maket-object');
+                if (id) {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  void move(id, o.id);
+                }
+              }}
+            >
+              <button
+                className="tree-expander"
+                aria-label={`${closed ? 'Развернуть' : 'Свернуть'} ${o.name}`}
+                disabled={!children}
+                onClick={() =>
+                  setCollapsed((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(o.id)) next.delete(o.id);
+                    else next.add(o.id);
+                    return next;
+                  })
+                }
+              >
+                <ChevronRight
+                  size={13}
+                  style={{
+                    transform: closed ? 'none' : 'rotate(90deg)',
+                    opacity: children ? 1 : 0,
+                  }}
+                />
+              </button>
+              <button
+                className="object-tree-name"
+                title={o.name}
+                onClick={() => onLocate(o.id)}
+                onDoubleClick={() => setEditing({ object: o })}
+              >
+                {o.name}
+                {o.archived && <small>Архив</small>}
+              </button>
+              <span className="badge">{counts.get(o.id) ?? 0}</span>
+              <div className="object-tree-actions">
+                <button
+                  aria-label={`Разместить ${o.name}`}
+                  title="Ещё одно представление"
+                  disabled={o.archived}
+                  onClick={() => onPlace(o.id)}
+                >
+                  <Plus size={13} />
+                </button>
+                <button
+                  aria-label={`Изменить объект ${o.name}`}
+                  onClick={() => setEditing({ object: o })}
+                >
+                  <Pencil size={12} />
+                </button>
+                <button
+                  aria-label={`Создать дочерний объект ${o.name}`}
+                  disabled={o.archived}
+                  onClick={() => setEditing({ parentId: o.id })}
+                >
+                  <LocateFixed size={12} />
+                </button>
+                <button
+                  aria-label={`Копировать объект ${o.name}`}
+                  disabled={o.archived}
+                  onClick={async () => {
+                    try {
+                      onSaved(
+                        await api<ModelObject>('objects', 'POST', {
+                          name: `${o.name.slice(0, 90)} — копия`,
+                          description: o.description,
+                          attributes: o.attributes,
+                          parentId: null,
+                        }),
+                      );
+                    } catch (err) {
+                      setError((err as Error).message);
+                    }
+                  }}
+                >
+                  <Copy size={12} />
+                </button>
+                <button
+                  aria-label={`${o.archived ? 'Вернуть из архива' : 'Архивировать'} ${o.name}`}
+                  onClick={async () => {
+                    try {
+                      if (!o.archived) {
+                        const usages = await api<{ count: number; diagram: { name: string } }[]>(
+                          `objects/${o.id}/usages`,
+                        );
+                        if (
+                          !confirm(
+                            `Архивировать «${o.name}»? Использований: ${usages.reduce((sum, u) => sum + u.count, 0)}. Представления и дочерние объекты сохранятся.`,
+                          )
+                        )
+                          return;
+                      }
+                      onSaved(
+                        await api<ModelObject>(`objects/${o.id}`, 'PATCH', {
+                          revision: o.revision,
+                          archived: !o.archived,
+                        }),
+                      );
+                    } catch (err) {
+                      setError((err as Error).message);
+                    }
+                  }}
+                >
+                  <Archive size={12} />
+                </button>
+              </div>
+            </div>
+            {children && !closed && <div role="group">{branch(o.id, depth + 1)}</div>}
+          </div>
+        );
+      });
+  }
+  return (
+    <aside className="object-panel" aria-label="Дерево объектов">
+      <div className="palette-title">
+        <h3>Объекты модели</h3>
+        <div className="button-row">
+          <button className="icon-button" aria-label="Обновить модель" onClick={onRefresh}>
+            <RefreshCw size={14} />
+          </button>
+          <button
+            className="icon-button"
+            aria-label="Создать объект"
+            onClick={() => setEditing({})}
+          >
+            <Plus size={15} />
+          </button>
+        </div>
+      </div>
+      <input
+        aria-label="Поиск объектов"
+        className="object-search"
+        placeholder="Найти объект…"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+      />
+      <div
+        className="tree-root-drop"
+        onDragOver={(e) => {
+          if (e.dataTransfer.types.includes('application/maket-object')) e.preventDefault();
+        }}
+        onDrop={(e) => {
+          const id = e.dataTransfer.getData('application/maket-object');
+          if (id) {
+            e.preventDefault();
+            void move(id, null);
+          }
+        }}
+      >
+        Корень модели · {objects.length} объектов
+      </div>
+      <div className="object-tree" role="tree" aria-label="Объекты">
+        {branch(null)}
+      </div>
+      {!objects.length && (
+        <p className="muted small-text">Создайте объект здесь или добавьте элемент из палитры.</p>
+      )}
+      <p className="muted small-text">
+        Перетащите объект на канвас. Число справа — представления на этой диаграмме.
+      </p>
+      {error && (
+        <div className="error" role="alert">
+          {error}
+        </div>
+      )}
+      {editing && (
+        <ObjectEditor
+          object={editing.object}
+          parentId={editing.parentId}
+          objects={objects}
+          onSaved={onSaved}
+          onClose={() => setEditing(null)}
+        />
+      )}
+    </aside>
+  );
+}

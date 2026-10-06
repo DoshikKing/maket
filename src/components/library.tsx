@@ -16,7 +16,13 @@ import {
   Layers,
 } from 'lucide-react';
 import { api, date, readJson } from '@/lib/client';
-import { DiagramDocument, diagramSchema } from '@/lib/notation';
+import { DiagramDocument } from '@/lib/notation';
+import {
+  portableDiagramSchema,
+  projectDocument,
+  displayedView,
+  type ModelDocument,
+} from '@/lib/model';
 import { Modal } from './modal';
 import { NodeShape } from './node-shape';
 import {
@@ -33,6 +39,7 @@ type Item = {
   revision: number;
   document: DiagramDocument;
 };
+type ServerItem = Omit<Item, 'document'> & { document: ModelDocument };
 export type NotationItem = {
   id: string;
   name: string;
@@ -48,14 +55,22 @@ export function LibraryPage() {
     [query, setQuery] = useState(''),
     [sort, setSort] = useState('recent'),
     [create, setCreate] = useState(false),
-    [notationId, setNotationId] = useState('builtin'),
+    [notationIds, setNotationIds] = useState<string[]>(['builtin']),
     [busy, setBusy] = useState(false);
   const router = useRouter(),
     file = useRef<HTMLInputElement>(null);
   async function load() {
     try {
-      const [d, n] = await Promise.all([api<Item[]>('diagrams'), api<NotationItem[]>('notations')]);
-      setItems(d);
+      const [d, n] = await Promise.all([
+        api<ServerItem[]>('diagrams'),
+        api<NotationItem[]>('notations'),
+      ]);
+      setItems(
+        d.map((item) => ({
+          ...item,
+          document: displayedView(projectDocument(item.document), item.document.objects),
+        })),
+      );
       setNotations(n);
     } catch (e) {
       setError((e as Error).message);
@@ -113,7 +128,7 @@ export function LibraryPage() {
               setError('');
               try {
                 const raw = await readJson(f);
-                const document = diagramSchema.parse(raw.document ?? raw);
+                const document = portableDiagramSchema.parse(raw.document ?? raw);
                 const d = await api<Item>('diagrams', 'POST', {
                   name:
                     typeof raw.name === 'string'
@@ -287,7 +302,7 @@ export function LibraryPage() {
               setError('');
               try {
                 const name = new FormData(e.currentTarget).get('name');
-                const d = await api<Item>('diagrams', 'POST', { name, notationId });
+                const d = await api<Item>('diagrams', 'POST', { name, notationIds });
                 router.push(`/diagrams/${d.id}`);
               } catch (e) {
                 setError((e as Error).message);
@@ -306,14 +321,19 @@ export function LibraryPage() {
                 autoFocus
               />
             </label>
-            <label>Выберите нотацию</label>
+            <label>Выберите нотации — можно несколько</label>
             <div className="notation-options">
               {notations.map((n) => (
                 <button
                   type="button"
                   key={n.id}
-                  className={`notation-option ${notationId === n.id ? 'selected' : ''}`}
-                  onClick={() => setNotationId(n.id)}
+                  className={`notation-option ${notationIds.includes(n.id) ? 'selected' : ''}`}
+                  aria-pressed={notationIds.includes(n.id)}
+                  onClick={() =>
+                    setNotationIds((ids) =>
+                      ids.includes(n.id) ? ids.filter((id) => id !== n.id) : [...ids, n.id],
+                    )
+                  }
                 >
                   <ShapesIcon />
                   <div>
@@ -328,7 +348,7 @@ export function LibraryPage() {
               ))}
             </div>
             {error && <div className="error">{error}</div>}
-            <button className="primary wide" disabled={busy}>
+            <button className="primary wide" disabled={busy || !notationIds.length}>
               {busy ? 'Создаём…' : 'Открыть редактор'}
               <ArrowUpRight size={18} />
             </button>
@@ -345,7 +365,7 @@ function ShapesIcon() {
     </span>
   );
 }
-function DiagramPreview({ document: d }: { document: DiagramDocument }) {
+export function DiagramPreview({ document: d }: { document: DiagramDocument }) {
   if (!d.nodes.length)
     return (
       <div className="preview-empty">

@@ -12,7 +12,22 @@ import {
   sendAuthEmail,
   tokenHash,
 } from '@/lib/auth';
-import { builtinNotation, diagramErrors, diagramSchema, notationSchema } from '@/lib/notation';
+import { builtinNotation, notationSchema } from '@/lib/notation';
+import { attributesSchema } from '@/lib/model';
+import {
+  ModelError,
+  ensureModel,
+  getDiagram,
+  listDiagrams,
+  newDiagram,
+  saveModelDiagram,
+  duplicateModelDiagram,
+  attachNotation,
+  addObject,
+  updateObject,
+  snapshot,
+  addRepresentation,
+} from '@/lib/model-service';
 export const runtime = 'nodejs';
 const nameSchema = z.string().trim().min(1).max(100);
 const credentials = z.object({
@@ -264,155 +279,177 @@ async function handle(req: NextRequest, context: { params: Promise<{ path: strin
         return json(updated);
       }
       if (method === 'DELETE') {
-        if (await db.diagram.count({ where: { notationVersion: { notationId: n.id } } }))
+        if (
+          (await db.diagram.count({ where: { notationVersion: { notationId: n.id } } })) ||
+          (await db.diagramNotation.count({ where: { version: { notationId: n.id } } }))
+        )
           fail(409, 'Нотация используется диаграммами');
         await db.notation.delete({ where: { id: n.id } });
         return json({ ok: true });
       }
     }
-    if (resource === 'diagrams') {
-      if (method === 'GET' && !id)
+    if (resource === 'model' && method === 'GET') return json(await ensureModel(user.id));
+    if (resource === 'objects') {
+      if (method === 'POST' && !id) {
+        const input = z
+          .object({
+            name: nameSchema,
+            description: z.string().max(4000).optional(),
+            parentId: z.string().nullable().optional(),
+            attributes: attributesSchema.optional(),
+          })
+          .parse(await body(req));
+        return json(await addObject(user.id, input), 201);
+      }
+      if (!id) fail(405, 'Укажите идентификатор объекта');
+      const space = await ensureModel(user.id);
+      const object = await db.modelObject.findFirst({ where: { id, spaceId: space.id } });
+      if (!object) fail(404, 'Объект не найден');
+      if (method === 'GET' && action === 'usages')
         return json(
-          await db.diagram.findMany({
-            where: { ownerId: user.id },
-            select: {
-              id: true,
-              name: true,
-              revision: true,
-              createdAt: true,
-              updatedAt: true,
-              document: true,
-            },
-            orderBy: { updatedAt: 'desc' },
+          await db.diagramObjectUsage.findMany({
+            where: { objectId: id },
+            select: { count: true, diagram: { select: { id: true, name: true } } },
           }),
         );
+      if (method === 'GET' && action === 'revisions')
+        return json(
+          await db.modelObjectRevision.findMany({
+            where: { objectId: id },
+            select: { number: true, createdAt: true, snapshot: true },
+            orderBy: { number: 'desc' },
+            take: 100,
+          }),
+        );
+      if (method === 'GET') return json(snapshot(object));
+      if (method === 'PATCH') {
+        const input = z
+          .object({
+            revision: z.number().int().positive(),
+            name: nameSchema.optional(),
+            description: z.string().max(4000).optional(),
+            parentId: z.string().nullable().optional(),
+            attributes: attributesSchema.optional(),
+            archived: z.boolean().optional(),
+          })
+          .parse(await body(req));
+        return json(await updateObject(user.id, id, input));
+      }
+      if (method === 'POST' && action === 'restore') {
+        const input = z
+          .object({ revision: z.number().int().positive(), number: z.number().int().positive() })
+          .parse(await body(req));
+        return json(await updateObject(user.id, id, { revision: input.revision }, input.number));
+      }
+    }
+    if (resource === 'diagrams') {
+      if (method === 'GET' && !id) return json(await listDiagrams(user.id));
       if (method === 'POST' && !id) {
         const input = z
           .object({
             name: nameSchema,
             notationId: z.string().optional(),
-            document: diagramSchema.optional(),
+            notationIds: z.array(z.string()).min(1).max(12).optional(),
+            document: z.unknown().optional(),
           })
           .parse(await body(req));
-        let document = input.document,
-          notationVersionId: string | null = null;
-        if (!document) {
-          const n =
-            input.notationId && input.notationId !== 'builtin'
-              ? await db.notation.findFirst({
-                  where: { id: input.notationId, ownerId: user.id },
-                  include: { versions: { orderBy: { number: 'desc' }, take: 1 } },
-                })
-              : null;
-          if (input.notationId && input.notationId !== 'builtin' && !n)
-            fail(404, 'Нотация не найдена');
-          notationVersionId = n?.versions[0].id ?? null;
-          document = {
-            schemaVersion: 1,
-            notation: n ? notationSchema.parse(n.versions[0].document) : builtinNotation,
-            nodes: [],
-            edges: [],
-          };
-        }
-        const errors = diagramErrors(document);
-        if (errors.length) fail(400, errors.join('; '));
-        const d = await db.diagram.create({
-          data: {
-            ownerId: user.id,
-            name: input.name,
-            notationVersionId,
-            document: asJson(document),
-            revisions: { create: { number: 1, document: asJson(document), reason: 'create' } },
-          },
-        });
-        return json(d, 201);
+        return json(
+          await newDiagram(user.id, {
+            ...input,
+            notationIds: input.notationIds ?? (input.notationId ? [input.notationId] : undefined),
+          }),
+          201,
+        );
       }
       if (!id) fail(405, 'Укажите идентификатор диаграммы');
       const d = await db.diagram.findFirst({ where: { id, ownerId: user.id } });
       if (!d) fail(404, 'Диаграмма не найдена');
-      if (method === 'GET' && action === 'revisions')
+      if (method === 'GET' && action === 'revisions') {
+        await ensureModel(user.id);
         return json(
           await db.diagramRevision.findMany({
-            where: { diagramId: d.id },
+            where: { diagramId: id },
             select: { number: true, createdAt: true, reason: true },
             orderBy: { number: 'desc' },
             take: 100,
           }),
         );
-      if (method === 'GET') return json(d);
+      }
+      if (method === 'GET' && action === 'history') {
+        const number = z.coerce
+          .number()
+          .int()
+          .positive()
+          .parse(req.nextUrl.searchParams.get('number'));
+        return json(await getDiagram(user.id, id, number));
+      }
+      if (method === 'GET') return json(await getDiagram(user.id, id));
       if (method === 'DELETE') {
-        await db.diagram.delete({ where: { id: d.id } });
+        await db.diagram.delete({ where: { id } });
         return json({ ok: true });
       }
       if (method === 'PATCH') {
         const { name } = z.object({ name: nameSchema }).parse(await body(req));
-        return json(await db.diagram.update({ where: { id: d.id }, data: { name } }));
+        return json(await db.diagram.update({ where: { id }, data: { name } }));
       }
       if (method === 'POST' && action === 'duplicate')
+        return json(await duplicateModelDiagram(user.id, id), 201);
+      if (method === 'POST' && action === 'notations') {
+        const input = z
+          .object({
+            revision: z.number().int().positive(),
+            notationId: z.string().optional(),
+            removeBindingId: z.string().optional(),
+          })
+          .refine((v) => !!v.notationId !== !!v.removeBindingId, 'Укажите одну операцию с нотацией')
+          .parse(await body(req));
         return json(
-          await db.diagram.create({
-            data: {
-              ownerId: user.id,
-              name: `${d.name.slice(0, 90)} — копия`,
-              notationVersionId: d.notationVersionId,
-              document: asJson(d.document),
-              revisions: {
-                create: { number: 1, document: asJson(d.document), reason: 'duplicate' },
-              },
-            },
-          }),
-          201,
+          await attachNotation(
+            user.id,
+            id,
+            input.revision,
+            input.notationId,
+            input.removeBindingId,
+          ),
         );
+      }
+      if (method === 'POST' && action === 'representations') {
+        const input = z
+          .object({
+            revision: z.number().int().positive(),
+            bindingId: z.string(),
+            typeId: z.string(),
+            objectId: z.string().optional(),
+            properties: attributesSchema.optional(),
+            position: z.object({ x: z.number().finite(), y: z.number().finite() }),
+          })
+          .parse(await body(req));
+        return json(await addRepresentation(user.id, id, input.revision, input), 201);
+      }
       if ((method === 'PUT' && !action) || (method === 'POST' && action === 'restore')) {
         const input = z
           .object({
             revision: z.number().int().positive(),
-            document: diagramSchema.optional(),
+            document: z.unknown().optional(),
             number: z.number().int().positive().optional(),
           })
           .parse(await body(req));
-        let document = input.document;
-        if (action === 'restore') {
-          const old = await db.diagramRevision.findUnique({
-            where: { diagramId_number: { diagramId: d.id, number: input.number ?? 0 } },
-          });
-          if (!old) fail(404, 'Версия не найдена');
-          document = diagramSchema.parse(old.document);
-        }
-        if (!document) fail(400, 'Документ обязателен');
-        if (
-          JSON.stringify(document.notation) !==
-          JSON.stringify(diagramSchema.parse(d.document).notation)
-        )
-          fail(400, 'Нотацию существующей диаграммы нельзя заменить');
-        const errors = diagramErrors(document);
-        if (errors.length) fail(400, errors.join('; '));
-        const result = await db.$transaction(async (tx) => {
-          const changed = await tx.diagram.updateMany({
-            where: { id: d.id, ownerId: user.id, revision: input.revision },
-            data: { document: asJson(document), revision: { increment: 1 } },
-          });
-          if (changed.count !== 1)
-            fail(
-              409,
-              'Диаграмма изменена в другой вкладке. Сохраните файл и перезагрузите страницу',
-            );
-          await tx.diagramRevision.create({
-            data: {
-              diagramId: d.id,
-              number: input.revision + 1,
-              document: asJson(document),
-              reason: action === 'restore' ? 'restore' : 'save',
-            },
-          });
-          return tx.diagram.findUniqueOrThrow({ where: { id: d.id } });
-        });
-        return json(result);
+        if (action === 'restore' && !input.number) fail(400, 'Укажите номер ревизии');
+        return json(
+          await saveModelDiagram(
+            user.id,
+            id,
+            input.revision,
+            input.document,
+            action === 'restore' ? input.number : undefined,
+          ),
+        );
       }
     }
     fail(404, 'Неизвестный запрос');
   } catch (error) {
-    if (error instanceof ApiError) return json({ error: error.message }, error.status);
+    if (error instanceof ApiError || error instanceof ModelError)
+      return json({ error: error.message }, error.status);
     if (error instanceof z.ZodError)
       return json(
         { error: error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ') },

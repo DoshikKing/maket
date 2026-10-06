@@ -2264,3 +2264,224 @@ body {
     flex-wrap: wrap;
   }
 }
+
+/* Objects belong to the model; palette symbols and canvas occurrences are views. */
+.model-editor-body .object-panel {
+  width: 240px;
+  flex: 0 0 240px;
+  border-right: 1px solid var(--border);
+  background: var(--panel);
+  padding: 16px 10px;
+  overflow: auto;
+}
+.object-panel .palette-title {
+  padding: 0 4px;
+}
+.object-panel h3 {
+  font-size: 12px;
+  margin: 0;
+}
+.object-panel .button-row {
+  gap: 3px;
+}
+.object-search {
+  width: 100%;
+  margin: 12px 0;
+}
+.tree-root-drop {
+  padding: 9px 5px;
+  color: var(--muted);
+  font-size: 10px;
+  border: 1px dashed var(--border);
+  border-radius: 5px;
+  margin-bottom: 8px;
+}
+.object-tree-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  align-items: center;
+  min-height: 32px;
+  padding: 5px 4px;
+  border-radius: 5px;
+}
+.object-tree-row:hover,
+.object-tree-row.selected {
+  background: var(--accent-soft);
+}
+.object-tree-row.archived {
+  opacity: 0.65;
+}
+.object-tree-row button {
+  background: transparent;
+  color: var(--text);
+  border: 0;
+  padding: 3px;
+}
+.object-tree-name {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 11px;
+}
+.object-tree-name small {
+  display: block;
+  font-size: 9px;
+  color: var(--muted);
+}
+.tree-expander {
+  flex-shrink: 0;
+  width: 20px;
+}
+.object-tree-actions {
+  display: flex;
+  justify-content: flex-end;
+  width: 100%;
+  gap: 6px;
+  opacity: 0;
+}
+.object-tree-row:hover .object-tree-actions,
+.object-tree-row:focus-within .object-tree-actions {
+  opacity: 1;
+}
+.object-tree-actions button {
+  display: flex;
+  align-items: center;
+}
+.object-tree {
+  margin-bottom: 18px;
+}
+.object-attribute {
+  display: grid;
+  grid-template-columns: 1fr 110px 1fr 34px;
+  gap: 8px;
+  align-items: center;
+}
+.object-history {
+  margin-top: 20px;
+}
+.model-object-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 20px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+}
+.model-object-summary small {
+  font-size: 10px;
+  color: var(--muted);
+}
+.model-object-summary select {
+  width: 100%;
+}
+.notation-add {
+  display: block;
+  width: 100%;
+  text-align: left;
+  margin: 8px 0;
+}
+.notation-palette-section {
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 8px;
+}
+.notation-palette-section .palette-section {
+  white-space: normal;
+  line-height: 1.5;
+}
+.model-editor-body {
+  position: relative;
+}
+.remote-busy .editor-body::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1000002;
+  cursor: progress;
+}
+.remote-busy .editor-save-state::after {
+  content: ' · Выполняем…';
+}
+.archived-marker {
+  position: absolute;
+  left: 5px;
+  top: -17px;
+  color: var(--muted);
+  font-size: 10px;
+}
+.archived-object > .node-shape {
+  opacity: 0.65;
+}
+.skin-edge-map {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  margin: 15px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.history-preview {
+  height: 350px;
+  padding: 15px;
+  background: var(--canvas-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.history-preview svg {
+  width: 100%;
+  height: 100%;
+}
+@media (max-width: 1500px) {
+  .model-editor-body .object-panel {
+    width: 180px;
+    flex-basis: 180px;
+  }
+  .model-editor-body .palette {
+    width: 155px;
+    flex-basis: 155px;
+    padding: 15px 10px;
+  }
+  .model-editor-body .inspector {
+    width: 205px;
+    flex-basis: 205px;
+    padding: 16px 12px;
+  }
+}
+@media (max-width: 850px) {
+  .model-editor-body {
+    flex-wrap: wrap;
+  }
+  .model-editor-body .object-panel {
+    width: 100%;
+    flex: 0 0 100%;
+    max-height: 170px;
+    border-bottom: 1px solid var(--border);
+  }
+  .object-tree-actions {
+    opacity: 1;
+  }
+  .object-attribute {
+    grid-template-columns: 1fr 95px;
+  }
+}
+
+.skin-preview {
+  height: 180px;
+  padding: 12px;
+  display: flex;
+  background: var(--canvas-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 14px;
+}
+.skin-preview svg {
+  width: 100%;
+  height: 100%;
+}

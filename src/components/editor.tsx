@@ -32,12 +32,7 @@ import {
   AlertCircle,
 } from 'lucide-react';
 import { api, date, download, readJson } from '@/lib/client';
-import {
-  type DiagramDocument,
-  defaults,
-  diagramErrors,
-  diagramSchema,
-} from '@/lib/notation';
+import { type DiagramDocument as LegacyDocument, defaults } from '@/lib/notation';
 import { useUser } from './workspace';
 import { Modal } from './modal';
 import {
@@ -57,13 +52,45 @@ import {
   type NodeOverride,
   type EdgeOverride,
 } from '@/lib/appearance';
-type Diagram = { id: string; name: string; revision: number; document: DiagramDocument };
+import { ObjectTree, ObjectEditor } from './object-tree';
+import { DiagramPreview, type NotationItem } from './library';
+import {
+  projectDocument,
+  mergeModelObjects,
+  packDocument,
+  modelErrors,
+  effectiveNode,
+  qualify,
+  splitType,
+  portableDiagramSchema,
+  displayedView,
+  type ModelDiagram,
+  type ModelObject,
+  type Space,
+  type ViewDocument,
+  type ModelDocument,
+} from '@/lib/model';
+type DiagramDocument = ViewDocument;
+type Diagram = {
+  id: string;
+  name: string;
+  revision: number;
+  document: ViewDocument;
+  objects: ModelObject[];
+};
+
 export function EditorPage({ id }: { id: string }) {
   const [diagram, setDiagram] = useState<Diagram | null>(null),
     [error, setError] = useState('');
   useEffect(() => {
-    api<Diagram>(`diagrams/${id}`)
-      .then(setDiagram)
+    Promise.all([api<ModelDiagram>(`diagrams/${id}`), api<Space>('model')])
+      .then(([d, space]) =>
+        setDiagram({
+          ...d,
+          document: projectDocument(d.document),
+          objects: mergeModelObjects(space.objects, d.document.objects),
+        }),
+      )
       .catch((e) => setError(e.message));
   }, [id]);
   return diagram ? (
@@ -94,19 +121,77 @@ function Editor({ initial }: { initial: Diagram }) {
     [undo, setUndo] = useState<DiagramDocument[]>([]),
     [redo, setRedo] = useState<DiagramDocument[]>([]),
     [blocked, setBlocked] = useState(false),
-    [interacting, setInteracting] = useState(false);
+    [interacting, setInteracting] = useState(false),
+    [objects, setObjects] = useState(initial.objects),
+    [objectEditing, setObjectEditing] = useState<ModelObject | null>(null),
+    [commandBusy, setCommandBusy] = useState(false),
+    [objectSaving, setObjectSaving] = useState(false),
+    [notationsOpen, setNotationsOpen] = useState(false),
+    [availableNotations, setAvailableNotations] = useState<NotationItem[]>([]),
+    [placementType, setPlacementType] = useState(initial.document.notation.nodeTypes[0].id),
+    [skinChange, setSkinChange] = useState<{
+      nodeId: string;
+      typeId: string;
+      ports: Record<string, string>;
+      types: Record<string, string>;
+    } | null>(null),
+    [historical, setHistorical] = useState<ModelDocument | LegacyDocument | null>(null),
+    [placementRequest, setPlacementRequest] = useState<{
+      typeId: string;
+      objectId?: string;
+      position?: { x: number; y: number };
+      values: ModelObject['attributes'];
+    } | null>(null);
   const docRef = useRef(document),
     revisionRef = useRef(revision),
     savingRef = useRef(false),
     gesture = useRef<DiagramDocument | null>(null),
     file = useRef<HTMLInputElement>(null);
+  const objectWrites = useRef<Promise<unknown>>(Promise.resolve());
+  const objectGeneration = useRef(0),
+    refreshSequence = useRef(0);
+  const objectsRef = useRef(objects);
+  objectsRef.current = objects;
+  const objectLookup = useMemo(() => new Map(objects.map((o) => [o.id, o])), [objects]);
+  const mergeObjects = useCallback((updates: ModelObject[], replace = false) => {
+    const previous = new Map(objectsRef.current.map((o) => [o.id, o]));
+    const next = mergeModelObjects(objectsRef.current, updates, replace);
+    if (next.length === objectsRef.current.length && next.every((o) => previous.get(o.id) === o))
+      return;
+    objectGeneration.current++;
+    objectsRef.current = next;
+    setObjects(next);
+  }, []);
+  const refreshObjects = useCallback(async () => {
+    const generation = objectGeneration.current,
+      sequence = ++refreshSequence.current;
+    try {
+      const space = await api<Space>('model');
+      if (generation === objectGeneration.current && sequence === refreshSequence.current)
+        mergeObjects(space.objects, true);
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }, [mergeObjects]);
+  useEffect(() => {
+    const refresh = () => {
+      if (!window.document.hidden) void refreshObjects();
+    };
+    const timer = setInterval(refresh, 5000);
+    window.addEventListener('focus', refresh);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener('focus', refresh);
+    };
+  }, [refreshObjects]);
   const serialized = useMemo(() => JSON.stringify(document), [document]);
   const dirty = serialized !== savedDoc;
-  const errors = useMemo(() => diagramErrors(document), [document]);
+  const errors = useMemo(() => modelErrors(packDocument(document, objects)), [document, objects]);
   const change = useCallback((next: DiagramDocument, record = true) => {
     if (JSON.stringify(next) === JSON.stringify(docRef.current)) return;
     if (record) {
-      setUndo((u) => [...u.slice(-49), structuredClone(docRef.current)]);
+      const previous = structuredClone(docRef.current);
+      setUndo((u) => [...u.slice(-49), previous]);
       setRedo([]);
     }
     docRef.current = next;
@@ -116,8 +201,11 @@ function Editor({ initial }: { initial: Diagram }) {
   const save = useCallback(
     async (retry = false): Promise<boolean> => {
       if (gesture.current || savingRef.current || (blocked && !retry)) return false;
+      await objectWrites.current;
+      if (gesture.current || savingRef.current) return false;
       const snapshot = docRef.current;
-      const issues = diagramErrors(snapshot);
+      const packed = packDocument(snapshot, objectsRef.current);
+      const issues = modelErrors(packed);
       if (issues.length) {
         setError(issues.join('; '));
         return false;
@@ -126,9 +214,9 @@ function Editor({ initial }: { initial: Diagram }) {
       setSaving(true);
       setError('');
       try {
-        const result = await api<Diagram>(`diagrams/${initial.id}`, 'PUT', {
+        const result = await api<ModelDiagram>(`diagrams/${initial.id}`, 'PUT', {
           revision: revisionRef.current,
-          document: snapshot,
+          document: packed,
         });
         revisionRef.current = result.revision;
         setRevision(result.revision);
@@ -222,18 +310,10 @@ function Editor({ initial }: { initial: Diagram }) {
     (id: string, text: string) => {
       const node = docRef.current.nodes.find((n) => n.id === id);
       if (!node) return;
-      const type = docRef.current.notation.nodeTypes.find((t) => t.id === node.typeId)!;
-      const hasTitle = type.properties.some((p) => p.key === 'title' && p.type === 'string');
       change(
         {
           ...docRef.current,
-          nodes: docRef.current.nodes.map((n) =>
-            n.id === id
-              ? hasTitle
-                ? { ...n, label: undefined, properties: { ...n.properties, title: text } }
-                : { ...n, label: text }
-              : n,
-          ),
+          nodes: docRef.current.nodes.map((n) => (n.id === id ? { ...n, label: text } : n)),
         },
         false,
       );
@@ -280,8 +360,67 @@ function Editor({ initial }: { initial: Diagram }) {
     const nodes = moveLayer(docRef.current.nodes, id, direction);
     if (nodes !== docRef.current.nodes) change({ ...docRef.current, nodes });
   }
-  function addNode(typeId: string) {
-    const definition = document.notation.nodeTypes.find((t) => t.id === typeId)!;
+  function adopt(result: ModelDiagram, record = true) {
+    const next = projectDocument(result.document);
+    mergeObjects(result.document.objects);
+    change(next, record);
+    setSavedDoc(JSON.stringify(next));
+    revisionRef.current = result.revision;
+    setRevision(result.revision);
+    setBlocked(false);
+    if (!next.notation.nodeTypes.some((t) => t.id === placementType))
+      setPlacementType(next.notation.nodeTypes[0].id);
+    if (!next.notation.edgeTypes.some((t) => t.id === edgeType))
+      setEdgeType(next.notation.edgeTypes[0].id);
+  }
+  async function flush() {
+    await objectWrites.current;
+    if (JSON.stringify(docRef.current) === savedDoc) return true;
+    return save();
+  }
+  async function addNode(
+    typeId: string,
+    objectId?: string,
+    dropPosition?: { x: number; y: number },
+    properties?: ModelObject['attributes'],
+  ) {
+    if (commandBusy || interacting) return;
+    setPlacementType(typeId);
+    const definition = docRef.current.notation.nodeTypes.find((t) => t.id === typeId)!;
+    const existing = objectsRef.current.find((o) => o.id === objectId);
+    const missing = definition.properties.filter((p) => {
+      if (!p.required) return false;
+      if (p.key === 'title' && p.type === 'string' && p.scope !== 'object') return false;
+      const value =
+        p.scope === 'object' && existing ? existing.attributes[p.objectKey ?? p.key] : p.default;
+      return value === undefined || value === '' || typeof value !== p.type;
+    });
+    if (!properties && missing.length) {
+      setPlacementRequest({
+        typeId,
+        objectId,
+        position: dropPosition,
+        values: Object.fromEntries(
+          missing.map((p) => {
+            const value =
+              p.scope === 'object' && existing
+                ? existing.attributes[p.objectKey ?? p.key]
+                : p.default;
+            return [
+              p.key,
+              typeof value === p.type
+                ? value!
+                : p.type === 'boolean'
+                  ? false
+                  : p.type === 'number'
+                    ? 0
+                    : '',
+            ];
+          }),
+        ),
+      });
+      return;
+    }
     const container = window.document.querySelector('.flow-container')!.getBoundingClientRect();
     const center = flow.screenToFlowPosition({
       x: container.left + container.width / 2,
@@ -318,15 +457,50 @@ function Editor({ initial }: { initial: Diagram }) {
       });
       if (!overlap) break;
     }
-    const id = `node-${crypto.randomUUID()}`;
-    change({
-      ...docRef.current,
-      nodes: [
-        ...docRef.current.nodes,
-        { id, typeId, position, properties: defaults(definition.properties) },
-      ],
-    });
-    setSelected({ kind: 'node', id });
+    if (dropPosition) position = dropPosition;
+    setCommandBusy(true);
+    try {
+      if (!(await flush())) return;
+      const shared = definition.properties.filter(
+        (p) => p.scope === 'object' && properties?.[p.key] !== undefined,
+      );
+      if (objectId && shared.length) {
+        const current = objectsRef.current.find((o) => o.id === objectId)!;
+        mergeObjects([
+          await api<ModelObject>(`objects/${objectId}`, 'PATCH', {
+            revision: current.revision,
+            attributes: {
+              ...current.attributes,
+              ...Object.fromEntries(shared.map((p) => [p.objectKey ?? p.key, properties![p.key]])),
+            },
+          }),
+        ]);
+      }
+      const [bindingId, symbolId] = splitType(typeId);
+      const before = new Set(docRef.current.nodes.map((n) => n.id));
+      const result = await api<ModelDiagram>(`diagrams/${initial.id}/representations`, 'POST', {
+        revision: revisionRef.current,
+        bindingId,
+        typeId: symbolId,
+        objectId,
+        position,
+        properties: objectId
+          ? Object.fromEntries(
+              Object.entries(properties ?? {}).filter(
+                ([key]) => definition.properties.find((p) => p.key === key)?.scope !== 'object',
+              ),
+            )
+          : properties,
+      });
+      adopt(result);
+      setPlacementRequest(null);
+      const added = result.document.nodes.find((n) => !before.has(n.id));
+      if (added) setSelected({ kind: 'node', id: added.id });
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setCommandBusy(false);
+    }
   }
   function candidate(c: {
     source: string;
@@ -372,6 +546,7 @@ function Editor({ initial }: { initial: Diagram }) {
         previous?.data.node === n &&
         previous.data.definition === definition &&
         previous.data.shapes === document.notation.shapes &&
+        previous.data.object === objectLookup.get(n.objectId ?? '') &&
         previous.selected === isSelected
       )
         return previous;
@@ -384,7 +559,12 @@ function Editor({ initial }: { initial: Diagram }) {
         height: a.height,
         style: { width: a.width, height: a.height },
         zIndex: n.layer ?? 0,
-        data: { definition, node: n, shapes: document.notation.shapes },
+        data: {
+          definition,
+          node: n,
+          shapes: document.notation.shapes,
+          object: objectLookup.get(n.objectId ?? ''),
+        },
         selected: isSelected,
       };
       nodeCache.current.set(n.id, next);
@@ -393,7 +573,7 @@ function Editor({ initial }: { initial: Diagram }) {
     const ids = new Set(document.nodes.map((n) => n.id));
     for (const id of nodeCache.current.keys()) if (!ids.has(id)) nodeCache.current.delete(id);
     return result;
-  }, [document.nodes, document.notation, selected]);
+  }, [document.nodes, document.notation, selected, objectLookup]);
   const styledEdges = useMemo(
     () =>
       document.edges.map((e) => ({
@@ -486,28 +666,38 @@ function Editor({ initial }: { initial: Diagram }) {
   function undoAction() {
     if (!undo.length) return;
     const previous = undo[undo.length - 1];
-    setRedo((r) => [...r, structuredClone(docRef.current)]);
+    const current = structuredClone(docRef.current);
+    setRedo((r) => [...r, current]);
     setUndo(undo.slice(0, -1));
     change(previous, false);
   }
   function redoAction() {
     if (!redo.length) return;
     const next = redo[redo.length - 1];
-    setUndo((u) => [...u, structuredClone(docRef.current)]);
+    const current = structuredClone(docRef.current);
+    setUndo((u) => [...u, current]);
     setRedo(redo.slice(0, -1));
     change(next, false);
   }
-  const selectedObject =
+  const rawSelectedObject =
     selected?.kind === 'node'
       ? document.nodes.find((n) => n.id === selected.id)
       : selected?.kind === 'edge'
         ? document.edges.find((e) => e.id === selected.id)
         : undefined;
-  const definition = selectedObject
+  const definition = rawSelectedObject
     ? selected?.kind === 'node'
-      ? document.notation.nodeTypes.find((t) => t.id === selectedObject.typeId)
-      : document.notation.edgeTypes.find((t) => t.id === selectedObject.typeId)
+      ? document.notation.nodeTypes.find((t) => t.id === rawSelectedObject.typeId)
+      : document.notation.edgeTypes.find((t) => t.id === rawSelectedObject.typeId)
     : undefined;
+  const selectedObject =
+    rawSelectedObject && definition && selected?.kind === 'node'
+      ? effectiveNode(
+          rawSelectedObject as LegacyDocument['nodes'][number],
+          definition as (typeof document.notation.nodeTypes)[number],
+          objectLookup.get((rawSelectedObject as LegacyDocument['nodes'][number]).objectId ?? ''),
+        )
+      : rawSelectedObject;
   const selectedNode =
     selected?.kind === 'node' ? document.nodes.find((n) => n.id === selected.id) : undefined;
   const selectedEdge =
@@ -520,6 +710,31 @@ function Editor({ initial }: { initial: Diagram }) {
     : undefined;
   function propertyChange(key: string, value: string | number | boolean) {
     if (!selected) return;
+    const p = definition?.properties.find((p) => p.key === key);
+    if (selected.kind === 'node' && p?.scope === 'object') {
+      const objectId = selectedNode?.objectId;
+      setObjectSaving(true);
+      const operation = objectWrites.current
+        .then(async () => {
+          const object = objectsRef.current.find((o) => o.id === objectId);
+          if (!object) return;
+          const updated = await api<ModelObject>(`objects/${object.id}`, 'PATCH', {
+            revision: object.revision,
+            attributes: { ...object.attributes, [p.objectKey ?? p.key]: value },
+          });
+          mergeObjects([updated]);
+          return true;
+        })
+        .catch((err) => {
+          setError(err.message);
+          return false;
+        });
+      objectWrites.current = operation;
+      void operation.finally(() => {
+        if (objectWrites.current === operation) setObjectSaving(false);
+      });
+      return operation;
+    }
     change({
       ...docRef.current,
       [selected.kind === 'node' ? 'nodes' : 'edges']: (selected.kind === 'node'
@@ -536,6 +751,115 @@ function Editor({ initial }: { initial: Diagram }) {
       ),
     } as DiagramDocument);
   }
+  function skinCandidate(
+    nodeId: string,
+    typeId: string,
+    ports: Record<string, string>,
+    types: Record<string, string>,
+  ): ViewDocument {
+    const current = docRef.current,
+      definition = current.notation.nodeTypes.find((t) => t.id === typeId)!;
+    return {
+      ...current,
+      nodes: current.nodes.map((n) => {
+        if (n.id !== nodeId) return n;
+        const cached = n.profiles?.[typeId] ?? n.properties;
+        const properties: Record<string, string | number | boolean> = {};
+        for (const p of definition.properties)
+          if (p.scope !== 'object') {
+            if (cached[p.key] !== undefined && typeof cached[p.key] === p.type)
+              properties[p.key] = cached[p.key];
+            else if (p.key !== 'title' && p.default !== undefined) properties[p.key] = p.default;
+          }
+        return {
+          ...n,
+          typeId,
+          size: n.size ?? {
+            width: nodeAppearance(
+              n,
+              current.notation.nodeTypes.find((t) => t.id === n.typeId)!,
+            ).width,
+            height: nodeAppearance(
+              n,
+              current.notation.nodeTypes.find((t) => t.id === n.typeId)!,
+            ).height,
+          },
+          properties,
+          profiles: { ...n.profiles, [n.typeId]: n.properties },
+          appearance: n.appearance
+            ? { ...n.appearance, shape: undefined, shapeId: undefined }
+            : undefined,
+        };
+      }),
+      edges: current.edges
+        .filter((e) => types[e.id] !== 'delete')
+        .map((e) => {
+          if (e.source !== nodeId && e.target !== nodeId) return e;
+          const newType = types[e.id] ?? e.typeId,
+            t = current.notation.edgeTypes.find((t) => t.id === newType)!;
+          const properties = Object.fromEntries(
+            t.properties
+              .map((p) => [
+                p.key,
+                typeof e.properties[p.key] === p.type ? e.properties[p.key] : p.default,
+              ])
+              .filter(([, v]) => v !== undefined),
+          );
+          return {
+            ...e,
+            typeId: newType,
+            properties,
+            sourcePort:
+              e.source === nodeId ? (ports[`${e.id}:source`] ?? e.sourcePort) : e.sourcePort,
+            targetPort:
+              e.target === nodeId ? (ports[`${e.id}:target`] ?? e.targetPort) : e.targetPort,
+          };
+        }),
+    };
+  }
+  function requestSkin(nodeId: string, typeId: string) {
+    const definition = docRef.current.notation.nodeTypes.find((t) => t.id === typeId)!,
+      ports: Record<string, string> = {},
+      types: Record<string, string> = {};
+    for (const e of docRef.current.edges.filter(
+      (e) => e.source === nodeId || e.target === nodeId,
+    )) {
+      types[e.id] = e.typeId;
+      if (e.source === nodeId)
+        ports[`${e.id}:source`] = definition.ports.some(
+          (p) => p.id === e.sourcePort && p.direction === 'output',
+        )
+          ? e.sourcePort
+          : '';
+      if (e.target === nodeId)
+        ports[`${e.id}:target`] = definition.ports.some(
+          (p) => p.id === e.targetPort && p.direction === 'input',
+        )
+          ? e.targetPort
+          : '';
+    }
+    const next = skinCandidate(nodeId, typeId, ports, types),
+      issues = modelErrors(packDocument(next, objectsRef.current));
+    if (issues.length) setSkinChange({ nodeId, typeId, ports, types });
+    else change(next);
+  }
+  async function updateNotations(notationId?: string, removeBindingId?: string) {
+    setCommandBusy(true);
+    try {
+      if (!(await flush())) return;
+      adopt(
+        await api<ModelDiagram>(`diagrams/${initial.id}/notations`, 'POST', {
+          revision: revisionRef.current,
+          notationId,
+          removeBindingId,
+        }),
+      );
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setCommandBusy(false);
+    }
+  }
   async function showHistory() {
     try {
       setRevisions(await api(`diagrams/${initial.id}/revisions`));
@@ -545,7 +869,7 @@ function Editor({ initial }: { initial: Diagram }) {
     }
   }
   return (
-    <main className="editor">
+    <main className={`editor ${commandBusy || objectSaving ? 'remote-busy' : ''}`}>
       <div className="editor-toolbar">
         <div className="editor-title">
           <Link href="/library" className="icon-button" aria-label="В библиотеку">
@@ -595,7 +919,7 @@ function Editor({ initial }: { initial: Diagram }) {
             className="icon-button"
             title="Отменить"
             aria-label="Отменить"
-            disabled={interacting || !undo.length}
+            disabled={commandBusy || interacting || !undo.length}
             onClick={undoAction}
           >
             <Undo2 size={18} />
@@ -604,7 +928,7 @@ function Editor({ initial }: { initial: Diagram }) {
             className="icon-button"
             title="Повторить"
             aria-label="Повторить"
-            disabled={interacting || !redo.length}
+            disabled={commandBusy || interacting || !redo.length}
             onClick={redoAction}
           >
             <Redo2 size={18} />
@@ -616,7 +940,12 @@ function Editor({ initial }: { initial: Diagram }) {
           </button>
           <button
             className="secondary small"
-            onClick={() => download(`${name}.maket.json`, { name, document: docRef.current })}
+            onClick={() =>
+              download(`${name}.maket.json`, {
+                name,
+                document: packDocument(docRef.current, objectsRef.current),
+              })
+            }
           >
             <Download size={16} />
             Экспорт
@@ -624,7 +953,7 @@ function Editor({ initial }: { initial: Diagram }) {
           <button
             className="primary small"
             onClick={() => void save(true)}
-            disabled={interacting || saving || (!dirty && !blocked)}
+            disabled={commandBusy || objectSaving || interacting || saving || (!dirty && !blocked)}
           >
             <Save size={16} />
             {blocked ? 'Повторить' : 'Сохранить'}
@@ -636,23 +965,103 @@ function Editor({ initial }: { initial: Diagram }) {
           {error}
         </div>
       )}
-      <div className="editor-body">
+      <div className="editor-body model-editor-body">
+        <ObjectTree
+          objects={objects}
+          counts={
+            new Map(
+              objects.map((o) => [o.id, document.nodes.filter((n) => n.objectId === o.id).length]),
+            )
+          }
+          selectedId={selectedNode?.objectId}
+          onSaved={(o) => mergeObjects([o])}
+          onRefresh={() => void refreshObjects()}
+          onPlace={(id) => void addNode(placementType, id)}
+          onLocate={(id) => {
+            const n = docRef.current.nodes.find((n) => n.objectId === id);
+            if (n) {
+              setSelected({ kind: 'node', id: n.id });
+              void flow.fitView({
+                nodes: docRef.current.nodes
+                  .filter((n) => n.objectId === id)
+                  .map((n) => ({ id: n.id })),
+                padding: 0.5,
+                maxZoom: 1,
+              });
+            } else {
+              const o = objectLookup.get(id);
+              if (o) setObjectEditing(o);
+            }
+          }}
+        />
+
         <aside className="palette">
           <div className="palette-title">
             <h3>Инструменты</h3>
             <span className="badge">{document.notation.nodeTypes.length}</span>
           </div>
           <p className="muted small-text">Нажмите, чтобы добавить элемент</p>
-          <div className="palette-section">ЭЛЕМЕНТЫ</div>
-          {document.notation.nodeTypes.map((t) => (
-            <button className="palette-item" key={t.id} onClick={() => addNode(t.id)}>
-              <span
-                className={`palette-shape ${t.appearance.shape}`}
-                style={{ borderColor: t.appearance.stroke, background: t.appearance.fill }}
-              />
-              <span>{t.name}</span>
-              <Plus size={14} />
-            </button>
+          <button
+            className="secondary wide small"
+            onClick={async () => {
+              try {
+                setAvailableNotations(await api<NotationItem[]>('notations'));
+                setNotationsOpen(true);
+              } catch (err) {
+                setError((err as Error).message);
+              }
+            }}
+          >
+            Нотации диаграммы
+          </button>
+          <label className="small-text">
+            Отображение при размещении
+            <select
+              aria-label="Отображение при размещении"
+              value={placementType}
+              onChange={(e) => setPlacementType(e.target.value)}
+            >
+              {document.bindings.map((b) => (
+                <optgroup label={b.document.name} key={b.id}>
+                  {b.document.nodeTypes.map((t) => (
+                    <option value={qualify(b.id, t.id)} key={t.id}>
+                      {t.name}
+                    </option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+          </label>
+          {document.bindings.map((b) => (
+            <section
+              className="notation-palette-section"
+              key={b.id}
+              aria-label={`Палитра ${b.document.name}`}
+            >
+              <div className="palette-section">
+                {b.document.name} · {b.document.version}
+              </div>
+              {b.document.nodeTypes.map((t) => (
+                <button
+                  className="palette-item"
+                  key={t.id}
+                  disabled={commandBusy}
+                  draggable
+                  onDragStart={(e) => {
+                    e.dataTransfer.setData('application/maket-type', qualify(b.id, t.id));
+                    e.dataTransfer.effectAllowed = 'copy';
+                  }}
+                  onClick={() => void addNode(qualify(b.id, t.id))}
+                >
+                  <span
+                    className={`palette-shape ${t.appearance.shape}`}
+                    style={{ borderColor: t.appearance.stroke, background: t.appearance.fill }}
+                  />
+                  <span>{t.name}</span>
+                  <Plus size={14} />
+                </button>
+              ))}
+            </section>
           ))}
           <div className="palette-section">СОЕДИНЕНИЯ</div>
           <label className="small-text">
@@ -707,14 +1116,17 @@ function Editor({ initial }: { initial: Diagram }) {
                 if (!f) return;
                 try {
                   const raw = await readJson(f),
-                    next = diagramSchema.parse(raw.document ?? raw);
-                  if (JSON.stringify(next.notation) !== JSON.stringify(document.notation))
-                    throw new Error(
-                      'Другая нотация. Импортируйте файл как новую диаграмму в библиотеке.',
-                    );
-                  if (diagramErrors(next).length) throw new Error(diagramErrors(next).join('; '));
-                  change(next);
-                  flow.fitView();
+                    parsed = portableDiagramSchema.parse(raw.document ?? raw);
+                  if (parsed.schemaVersion !== 2 || parsed.modelSpaceId !== document.modelSpaceId)
+                    throw new Error('Импортируйте этот файл как новую диаграмму через библиотеку.');
+                  if (JSON.stringify(parsed.bindings) !== JSON.stringify(document.bindings))
+                    throw new Error('Другой набор нотаций. Используйте импорт через библиотеку.');
+                  if (parsed.nodes.some((n) => !objectLookup.has(n.objectId)))
+                    throw new Error('Объекты файла отсутствуют в модели. Используйте библиотеку.');
+                  const next = packDocument(projectDocument(parsed), objectsRef.current);
+                  const issues = modelErrors(next);
+                  if (issues.length) throw new Error(issues.join('; '));
+                  change(projectDocument(next));
                 } catch (e) {
                   setError((e as Error).message);
                 }
@@ -733,7 +1145,30 @@ function Editor({ initial }: { initial: Diagram }) {
             </span>
           </div>
         </aside>
-        <div className="flow-container">
+        <div
+          className="flow-container"
+          onDragOver={(e) => {
+            if (
+              e.dataTransfer.types.some(
+                (t) => t === 'application/maket-object' || t === 'application/maket-type',
+              )
+            ) {
+              e.preventDefault();
+              e.dataTransfer.dropEffect = 'copy';
+            }
+          }}
+          onDrop={(e) => {
+            e.preventDefault();
+            const objectId = e.dataTransfer.getData('application/maket-object'),
+              typeId = e.dataTransfer.getData('application/maket-type');
+            if (objectId || typeId)
+              void addNode(
+                typeId || placementType,
+                objectId || undefined,
+                flow.screenToFlowPosition({ x: e.clientX, y: e.clientY }),
+              );
+          }}
+        >
           <NodeActionsContext.Provider value={nodeActions}>
             <ReactFlow<ShapeNode>
               nodes={nodes}
@@ -751,16 +1186,16 @@ function Editor({ initial }: { initial: Diagram }) {
               onNodeDragStop={endGesture}
               onConnect={(c) => {
                 const next = candidate(c);
-                const issues = diagramErrors(next);
+                const issues = modelErrors(packDocument(next, objectsRef.current));
                 if (issues.length) setError(issues.join('; '));
                 else change(next);
               }}
-              isValidConnection={(c) => diagramErrors(candidate(c)).length === 0}
+              isValidConnection={(c) =>
+                modelErrors(packDocument(candidate(c), objectsRef.current)).length === 0
+              }
               snapToGrid={user.settings.snapToGrid}
               snapGrid={[20, 20]}
-              fitView
-              fitViewOptions={{ padding: 0.25, maxZoom: 1 }}
-              deleteKeyCode={['Backspace', 'Delete']}
+              deleteKeyCode={commandBusy || objectSaving ? null : ['Backspace', 'Delete']}
               minZoom={0.2}
               maxZoom={2}
             >
@@ -817,28 +1252,93 @@ function Editor({ initial }: { initial: Diagram }) {
                   <small>{selected?.kind === 'node' ? 'Элемент' : 'Соединение'}</small>
                 </div>
               </div>
+              {selectedNode?.objectId && objectLookup.get(selectedNode.objectId) && (
+                <div className="model-object-summary">
+                  <strong>{objectLookup.get(selectedNode.objectId)!.name}</strong>
+                  <small>
+                    Общий объект ·{' '}
+                    {document.nodes.filter((n) => n.objectId === selectedNode.objectId).length}{' '}
+                    представлений здесь
+                  </small>
+                  <button
+                    className="secondary small"
+                    onClick={() => setObjectEditing(objectLookup.get(selectedNode.objectId!)!)}
+                  >
+                    Общие свойства объекта
+                  </button>
+                  <button
+                    className="secondary small"
+                    onClick={() => void addNode(selectedNode.typeId, selectedNode.objectId)}
+                  >
+                    Ещё одно представление
+                  </button>
+                  <button
+                    className="secondary small"
+                    disabled={
+                      selectedNode.label === undefined &&
+                      selectedNode.properties.title === undefined
+                    }
+                    onClick={() =>
+                      change({
+                        ...docRef.current,
+                        nodes: docRef.current.nodes.map((n) => {
+                          if (n.id !== selectedNode.id) return n;
+                          const properties = { ...n.properties };
+                          if (
+                            definition.properties.some(
+                              (p) =>
+                                p.key === 'title' && p.type === 'string' && p.scope !== 'object',
+                            )
+                          )
+                            delete properties.title;
+                          return { ...n, label: undefined, properties };
+                        }),
+                      })
+                    }
+                  >
+                    Сбросить локальную подпись
+                  </button>
+                  <label>
+                    Отображение объекта
+                    <select
+                      aria-label="Отображение объекта"
+                      value={selectedNode.typeId}
+                      onChange={(e) => requestSkin(selectedNode.id, e.target.value)}
+                    >
+                      {document.bindings.map((b) => (
+                        <optgroup label={`${b.document.name} · ${b.document.version}`} key={b.id}>
+                          {b.document.nodeTypes.map((t) => (
+                            <option key={t.id} value={qualify(b.id, t.id)}>
+                              {t.name}
+                            </option>
+                          ))}
+                        </optgroup>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+              )}
               <div className="form-stack">
                 {definition.properties.map((p) => (
                   <label key={p.key}>
                     {p.label}
+                    {p.scope === 'object' && <small> · общий атрибут</small>}
                     {p.required && <span className="required"> *</span>}
                     {p.type === 'boolean' ? (
-                      <input
-                        type="checkbox"
-                        checked={Boolean(selectedObject.properties[p.key])}
-                        onChange={(e) => propertyChange(p.key, e.target.checked)}
+                      <PropertyCheckbox
+                        key={`${selected?.id}:${p.key}`}
+                        value={Boolean(selectedObject.properties[p.key])}
+                        onValue={(value) => propertyChange(p.key, value)}
                       />
                     ) : (
-                      <input
+                      <PropertyInput
+                        key={`${selected?.id}:${p.key}`}
+                        shared={p.scope === 'object' && selected?.kind === 'node'}
                         type={p.type === 'number' ? 'number' : 'text'}
                         value={String(selectedObject.properties[p.key] ?? '')}
-                        onChange={(e) =>
-                          propertyChange(
-                            p.key,
-                            p.type === 'number' ? Number(e.target.value) : e.target.value,
-                          )
+                        onValue={(value) =>
+                          propertyChange(p.key, p.type === 'number' ? Number(value) : value)
                         }
-                        maxLength={2000}
                       />
                     )}
                   </label>
@@ -932,11 +1432,13 @@ function Editor({ initial }: { initial: Diagram }) {
                           {['Прямоугольник', 'Скруглённый', 'Ромб', 'Эллипс', 'Текст'][i]}
                         </option>
                       ))}
-                      {document.notation.shapes?.map((s) => (
-                        <option value={`custom:${s.id}`} key={s.id}>
-                          {s.name}
-                        </option>
-                      ))}
+                      {document.notation.shapes
+                        ?.filter((s) => splitType(s.id)[0] === splitType(selectedNode.typeId)[0])
+                        .map((s) => (
+                          <option value={`custom:${s.id}`} key={s.id}>
+                            {s.name}
+                          </option>
+                        ))}
                     </select>
                   </label>
                   <div className="appearance-grid">
@@ -1053,22 +1555,33 @@ function Editor({ initial }: { initial: Diagram }) {
                 </div>
                 <button
                   className="secondary small"
-                  disabled={r.number === revision || saving}
+                  onClick={async () => {
+                    try {
+                      const d = await api<{ document: ModelDocument | LegacyDocument }>(
+                        `diagrams/${initial.id}/history?number=${r.number}`,
+                      );
+                      setHistorical(d.document);
+                    } catch (err) {
+                      setError((err as Error).message);
+                    }
+                  }}
+                >
+                  Просмотреть снимок
+                </button>
+                <button
+                  className="secondary small"
+                  disabled={commandBusy || r.number === revision || saving}
                   onClick={async () => {
                     if (
                       !confirm('Восстановить эту версию? Несохранённые изменения будут потеряны.')
                     )
                       return;
                     try {
-                      const d = await api<Diagram>(`diagrams/${initial.id}/restore`, 'POST', {
+                      const d = await api<ModelDiagram>(`diagrams/${initial.id}/restore`, 'POST', {
                         revision: revisionRef.current,
                         number: r.number,
                       });
-                      change(d.document);
-                      setSavedDoc(JSON.stringify(d.document));
-                      revisionRef.current = d.revision;
-                      setRevision(d.revision);
-                      setBlocked(false);
+                      adopt(d);
                       setHistoryOpen(false);
                     } catch (e) {
                       setError((e as Error).message);
@@ -1082,6 +1595,350 @@ function Editor({ initial }: { initial: Diagram }) {
           </div>
         </Modal>
       )}
+      {objectEditing && (
+        <ObjectEditor
+          key={`${objectEditing.id}:${objectEditing.revision}`}
+          object={objectEditing}
+          objects={objects}
+          onSaved={(o) => mergeObjects([o])}
+          onClose={() => setObjectEditing(null)}
+        />
+      )}
+      {notationsOpen && (
+        <Modal title="Нотации диаграммы" onClose={() => setNotationsOpen(false)}>
+          <p className="muted">
+            Каждая нотация закреплена на выбранной версии. Подключено {document.bindings.length} из
+            12.
+          </p>
+          <div className="notation-bindings">
+            {document.bindings.map((b) => (
+              <div className="revision-row" key={b.id}>
+                <span>
+                  <strong>{b.document.name}</strong>
+                  <small>v{b.document.version}</small>
+                </span>
+                <button
+                  className="secondary small danger"
+                  disabled={
+                    commandBusy ||
+                    document.bindings.length === 1 ||
+                    document.nodes.some((n) => splitType(n.typeId)[0] === b.id) ||
+                    document.edges.some((e) => splitType(e.typeId)[0] === b.id)
+                  }
+                  onClick={() => void updateNotations(undefined, b.id)}
+                >
+                  Отключить {b.document.name}
+                </button>
+              </div>
+            ))}
+          </div>
+          <h3>Добавить из библиотеки</h3>
+          {availableNotations.map((n) => (
+            <button
+              key={n.id}
+              className="secondary notation-add"
+              disabled={
+                commandBusy ||
+                document.bindings.length >= 12 ||
+                document.bindings.some(
+                  (b) =>
+                    b.document.id === n.document.id && b.document.version === n.document.version,
+                )
+              }
+              onClick={() => void updateNotations(n.id)}
+            >
+              Добавить {n.name} · v{n.document.version}
+            </button>
+          ))}
+          {error && (
+            <div className="error" role="alert">
+              {error}
+            </div>
+          )}
+        </Modal>
+      )}
+      {placementRequest && (
+        <Modal title="Свойства перед размещением" onClose={() => setPlacementRequest(null)}>
+          <p className="muted">
+            Заполните обязательные свойства отображения. Общие атрибуты относятся к объекту и
+            применяются ко всем его представлениям.
+          </p>
+          <form
+            className="form-stack"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void addNode(
+                placementRequest.typeId,
+                placementRequest.objectId,
+                placementRequest.position,
+                placementRequest.values,
+              );
+            }}
+          >
+            {Object.entries(placementRequest.values).map(([key, value]) => {
+              const p = document.notation.nodeTypes
+                .find((t) => t.id === placementRequest.typeId)!
+                .properties.find((p) => p.key === key)!;
+              return (
+                <label key={key}>
+                  {p.label}
+                  {p.scope === 'object' && <small> · общий атрибут ({p.objectKey ?? p.key})</small>}
+                  <input
+                    type={
+                      p.type === 'boolean' ? 'checkbox' : p.type === 'number' ? 'number' : 'text'
+                    }
+                    required={p.type !== 'boolean'}
+                    maxLength={2000}
+                    disabled={commandBusy}
+                    checked={p.type === 'boolean' ? Boolean(value) : undefined}
+                    value={p.type === 'boolean' ? undefined : String(value)}
+                    onChange={(e) =>
+                      setPlacementRequest({
+                        ...placementRequest,
+                        values: {
+                          ...placementRequest.values,
+                          [key]:
+                            p.type === 'boolean'
+                              ? e.target.checked
+                              : p.type === 'number'
+                                ? Number(e.target.value)
+                                : e.target.value,
+                        },
+                      })
+                    }
+                  />
+                </label>
+              );
+            })}
+            {error && (
+              <p className="error" role="alert">
+                {error}
+              </p>
+            )}
+            <button className="primary" disabled={commandBusy}>
+              Разместить объект
+            </button>
+          </form>
+        </Modal>
+      )}
+      {skinChange && (
+        <Modal title="Изменить отображение объекта" onClose={() => setSkinChange(null)}>
+          <p className="muted">
+            Объект, размер и положение сохраняются. Сопоставьте порты и выберите совместимые связи.
+            Прежние локальные свойства сохраняются для возврата к прежнему отображению.
+          </p>
+          <div className="skin-preview" aria-label="Предпросмотр нового отображения">
+            <DiagramPreview
+              document={displayedView(
+                skinCandidate(
+                  skinChange.nodeId,
+                  skinChange.typeId,
+                  skinChange.ports,
+                  skinChange.types,
+                ),
+                objects,
+              )}
+            />
+          </div>
+          {docRef.current.edges
+            .filter((e) => e.source === skinChange.nodeId || e.target === skinChange.nodeId)
+            .map((e) => (
+              <fieldset className="skin-edge-map" key={e.id}>
+                <legend>{String(e.properties.label || e.id)}</legend>
+                <label>
+                  Отображение связи
+                  <select
+                    aria-label={`Отображение связи ${e.id}`}
+                    value={skinChange.types[e.id]}
+                    onChange={(ev) =>
+                      setSkinChange({
+                        ...skinChange,
+                        types: { ...skinChange.types, [e.id]: ev.target.value },
+                      })
+                    }
+                  >
+                    {document.notation.edgeTypes.map((t) => (
+                      <option value={t.id} key={t.id}>
+                        {t.name}
+                      </option>
+                    ))}
+                    <option value="delete">Удалить эту связь</option>
+                  </select>
+                </label>
+                {(['source', 'target'] as const)
+                  .filter((end) => (end === 'source' ? e.source : e.target) === skinChange.nodeId)
+                  .map((end) => (
+                    <label key={end}>
+                      {end === 'source' ? 'Выходной' : 'Входной'} порт
+                      <select
+                        aria-label={`${end === 'source' ? 'Выходной' : 'Входной'} порт ${e.id}`}
+                        value={skinChange.ports[`${e.id}:${end}`]}
+                        onChange={(ev) =>
+                          setSkinChange({
+                            ...skinChange,
+                            ports: { ...skinChange.ports, [`${e.id}:${end}`]: ev.target.value },
+                          })
+                        }
+                      >
+                        <option value="">Выберите порт</option>
+                        {document.notation.nodeTypes
+                          .find((t) => t.id === skinChange.typeId)!
+                          .ports.filter(
+                            (p) => p.direction === (end === 'source' ? 'output' : 'input'),
+                          )
+                          .map((p) => (
+                            <option value={p.id} key={p.id}>
+                              {p.id}
+                            </option>
+                          ))}
+                      </select>
+                    </label>
+                  ))}
+              </fieldset>
+            ))}
+          {modelErrors(
+            packDocument(
+              skinCandidate(
+                skinChange.nodeId,
+                skinChange.typeId,
+                skinChange.ports,
+                skinChange.types,
+              ),
+              objects,
+            ),
+          ).map((issue, i) => (
+            <p className="error" key={i}>
+              {issue}
+            </p>
+          ))}
+          <button
+            className="primary"
+            disabled={
+              !!modelErrors(
+                packDocument(
+                  skinCandidate(
+                    skinChange.nodeId,
+                    skinChange.typeId,
+                    skinChange.ports,
+                    skinChange.types,
+                  ),
+                  objects,
+                ),
+              ).length
+            }
+            onClick={() => {
+              change(
+                skinCandidate(
+                  skinChange.nodeId,
+                  skinChange.typeId,
+                  skinChange.ports,
+                  skinChange.types,
+                ),
+              );
+              setSkinChange(null);
+            }}
+          >
+            Применить отображение
+          </button>
+        </Modal>
+      )}
+      {historical && (
+        <Modal title="Снимок диаграммы" onClose={() => setHistorical(null)}>
+          <p className="muted">
+            Объекты показаны в состоянии на момент сохранения. Восстановление диаграммы использует
+            актуальные общие данные модели.
+          </p>
+          <div className="history-preview">
+            <DiagramPreview
+              document={
+                historical.schemaVersion === 2
+                  ? displayedView(projectDocument(historical), historical.objects)
+                  : historical
+              }
+            />
+          </div>
+          {historical.schemaVersion === 2 && (
+            <ul>
+              {historical.objects.map((o) => (
+                <li key={o.id}>
+                  {o.name} · версия объекта {o.revision}
+                </li>
+              ))}
+            </ul>
+          )}
+          <button
+            className="secondary"
+            onClick={() => download(`${name}-history.maket.json`, { name, document: historical })}
+          >
+            Экспорт снимка
+          </button>
+        </Modal>
+      )}
     </main>
+  );
+}
+
+// Shared fields commit on blur so typing creates one object revision.
+function PropertyInput({
+  value,
+  type,
+  shared,
+  onValue,
+}: {
+  value: string;
+  type: 'text' | 'number';
+  shared: boolean;
+  onValue: (value: string) => void;
+}) {
+  const [draft, setDraft] = useState(value);
+  const focused = useRef(false);
+  useEffect(() => {
+    if (!focused.current) setDraft(value);
+  }, [value]);
+  return (
+    <input
+      type={type}
+      value={shared ? draft : value}
+      maxLength={2000}
+      onFocus={() => {
+        focused.current = true;
+      }}
+      onChange={(e) => {
+        setDraft(e.target.value);
+        if (!shared) onValue(e.target.value);
+      }}
+      onBlur={() => {
+        focused.current = false;
+        if (shared && draft !== value) onValue(draft);
+      }}
+      onKeyDown={(e) => {
+        if (shared && e.key === 'Enter') {
+          e.preventDefault();
+          e.currentTarget.blur();
+        }
+      }}
+    />
+  );
+}
+
+function PropertyCheckbox({
+  value,
+  onValue,
+}: {
+  value: boolean;
+  onValue: (value: boolean) => void | Promise<boolean | void>;
+}) {
+  const [draft, setDraft] = useState(value);
+  useEffect(() => setDraft(value), [value]);
+  return (
+    <input
+      type="checkbox"
+      checked={draft}
+      onChange={async (e) => {
+        const checked = e.target.checked;
+        setDraft(checked);
+        if ((await onValue(checked)) === false) setDraft(value);
+      }}
+    />
   );
 }

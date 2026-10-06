@@ -16,6 +16,8 @@ const property = z.object({
   type: z.enum(['string', 'number', 'boolean']),
   required: z.boolean().default(false),
   visible: z.boolean().optional(),
+  scope: z.enum(['object', 'representation']).optional(),
+  objectKey: identifier.optional(),
   default: z.union([z.string().max(2000), z.number().finite(), z.boolean()]).optional(),
 });
 export const notationSchema = z
@@ -127,6 +129,8 @@ export const diagramSchema = z.object({
       z.object({
         id: identifier,
         typeId: identifier,
+        objectId: identifier.optional(),
+        profiles: z.record(z.string().max(201), values).optional(),
         size: z
           .object({ width: z.number().min(40).max(2000), height: z.number().min(30).max(1600) })
           .optional(),

@@ -1,6 +1,13 @@
 'use client';
-import { createContext, memo, useContext, useRef, useState } from 'react';
-import { Handle, NodeResizer, Position, type Node, type NodeProps } from '@xyflow/react';
+import { createContext, memo, useContext, useRef, useState, useLayoutEffect } from 'react';
+import {
+  Handle,
+  NodeResizer,
+  Position,
+  useUpdateNodeInternals,
+  type Node,
+  type NodeProps,
+} from '@xyflow/react';
 import type { NotationDocument } from '@/lib/notation';
 import {
   contrastColor,
@@ -11,10 +18,12 @@ import {
   type DiagramNode,
 } from '@/lib/appearance';
 import { NodeShape } from './node-shape';
+import { effectiveNode, type ModelObject } from '@/lib/model';
 export type ShapeData = {
   definition: NotationDocument['nodeTypes'][number];
   node: DiagramNode;
   shapes?: CustomShape[];
+  object?: ModelObject;
 };
 export type ShapeNode = Node<ShapeData, 'notation'>;
 export const NodeActionsContext = createContext<{
@@ -31,12 +40,16 @@ export const DiagramNodeView = memo(function DiagramNodeView({
   const [editing, setEditing] = useState(false),
     [draft, setDraft] = useState('');
   const active = useRef(false);
-  const { definition: t, node, shapes } = data,
+  const { definition: t, shapes, object } = data,
+    node = effectiveNode(data.node, t, object),
     a = nodeAppearance(node, t),
     title = nodeLabel(node, t);
   const attrs = a.showAttributes !== false ? visibleProperties(node, t) : [];
   const inputs = t.ports.filter((p) => p.direction === 'input'),
     outputs = t.ports.filter((p) => p.direction === 'output');
+  const updateInternals = useUpdateNodeInternals();
+  const portSignature = t.ports.map((p) => `${p.id}:${p.direction}`).join(',');
+  useLayoutEffect(() => updateInternals(id), [id, portSignature, updateInternals]);
   const rotation = a.textRotation ?? 0;
   const vertical = Math.abs(rotation) === 90;
   function finish(cancel = false) {
@@ -48,7 +61,7 @@ export const DiagramNodeView = memo(function DiagramNodeView({
   }
   return (
     <div
-      className={`canvas-node ${selected ? 'selected' : ''}`}
+      className={`canvas-node ${selected ? 'selected' : ''} ${object?.archived ? 'archived-object' : ''}`}
       style={{ width: a.width, height: a.height }}
       onDoubleClick={(e) => {
         if (
@@ -76,6 +89,7 @@ export const DiagramNodeView = memo(function DiagramNodeView({
         onResizeEnd={() => actions.end()}
       />
       <NodeShape appearance={a} shapes={shapes} />
+      {object?.archived && <span className="archived-marker">Архив</span>}
       <div
         className={`node-content ${a.shape === 'diamond' ? 'diamond-content' : ''}`}
         style={{

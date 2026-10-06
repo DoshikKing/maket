@@ -18,6 +18,7 @@ model User {
   tokens AuthToken[]
   diagrams Diagram[]
   notations Notation[]
+  modelSpace ModelSpace?
 }
 model Session {
   id String @id
@@ -52,6 +53,7 @@ model NotationVersion {
   document Json
   createdAt DateTime @default(now())
   diagrams Diagram[]
+  bindings DiagramNotation[]
   @@unique([notationId, number])
 }
 model Diagram {
@@ -61,6 +63,10 @@ model Diagram {
   notationVersionId String?
   notationVersion NotationVersion? @relation(fields: [notationVersionId], references: [id], onDelete: Restrict)
   name String
+  modelSpaceId String?
+  modelSpace ModelSpace? @relation(fields: [modelSpaceId], references: [id], onDelete: Cascade)
+  usages DiagramObjectUsage[]
+  bindings DiagramNotation[]
   revision Int @default(1)
   document Json
   createdAt DateTime @default(now())
@@ -82,4 +88,59 @@ model RateLimit {
   key String @id
   count Int @default(1)
   expiresAt DateTime
+}
+
+model ModelSpace {
+  id String @id @default(cuid())
+  ownerId String @unique
+  owner User @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  name String @default("Личная модель")
+  revision Int @default(1)
+  objects ModelObject[]
+  diagrams Diagram[]
+}
+model ModelObject {
+  id String @id @default(cuid())
+  spaceId String
+  space ModelSpace @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  parentId String?
+  parent ModelObject? @relation("ObjectTree", fields: [spaceId, parentId], references: [spaceId, id], onDelete: NoAction, onUpdate: NoAction)
+  children ModelObject[] @relation("ObjectTree")
+  name String
+  description String @default("")
+  attributes Json @default("{}")
+  archived Boolean @default(false)
+  revision Int @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  revisions ModelObjectRevision[]
+  usages DiagramObjectUsage[]
+  @@unique([spaceId, id])
+  @@index([spaceId, parentId])
+}
+model ModelObjectRevision {
+  id String @id @default(cuid())
+  objectId String
+  object ModelObject @relation(fields: [objectId], references: [id], onDelete: Cascade)
+  number Int
+  snapshot Json
+  createdAt DateTime @default(now())
+  @@unique([objectId, number])
+}
+model DiagramObjectUsage {
+  diagramId String
+  diagram Diagram @relation(fields: [diagramId], references: [id], onDelete: Cascade)
+  objectId String
+  object ModelObject @relation(fields: [objectId], references: [id], onDelete: Cascade)
+  count Int
+  @@id([diagramId, objectId])
+  @@index([objectId])
+}
+model DiagramNotation {
+  diagramId String
+  diagram Diagram @relation(fields: [diagramId], references: [id], onDelete: Cascade)
+  bindingId String
+  versionId String?
+  version NotationVersion? @relation(fields: [versionId], references: [id], onDelete: Restrict)
+  @@id([diagramId, bindingId])
 }

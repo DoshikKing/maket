@@ -3,7 +3,7 @@ import { test, expect, type APIRequestContext } from '@playwright/test';
 import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { readFile } from 'node:fs/promises';
-import { builtinNotation, type DiagramDocument } from '../../src/lib/notation';
+import { builtinNotation } from '../../src/lib/notation';
 const db = new PrismaClient({
   adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL }),
 });
@@ -84,14 +84,34 @@ test('diagram lifecycle, immutable notation, optimistic concurrency, restoration
   });
   expect(created.status()).toBe(201);
   const diagram = await created.json();
-  const document: DiagramDocument = diagram.document;
+  const document = diagram.document;
+  const objects = [];
+  for (const name of ['Заказ', 'Оплата'])
+    objects.push(await (await request.post('/api/objects', { data: { name } })).json());
+  const bindingId = document.bindings[0].id;
+  document.objects = objects;
   document.nodes = [
-    { id: 'a', typeId: 'process', position: { x: 0, y: 0 }, properties: { title: 'Заказ' } },
-    { id: 'b', typeId: 'process', position: { x: 250, y: 0 }, properties: { title: 'Оплата' } },
+    {
+      id: 'a',
+      objectId: objects[0].id,
+      bindingId,
+      typeId: 'process',
+      position: { x: 0, y: 0 },
+      properties: { title: 'Заказ' },
+    },
+    {
+      id: 'b',
+      objectId: objects[1].id,
+      bindingId,
+      typeId: 'process',
+      position: { x: 250, y: 0 },
+      properties: { title: 'Оплата' },
+    },
   ];
   document.edges = [
     {
       id: 'e',
+      bindingId,
       typeId: 'flow',
       source: 'a',
       target: 'b',
@@ -118,7 +138,7 @@ test('diagram lifecycle, immutable notation, optimistic concurrency, restoration
     ).status(),
   ).toBe(400);
   const changed = structuredClone(document);
-  changed.notation.name = 'Подмена';
+  changed.bindings[0].document.name = 'Подмена';
   expect(
     (
       await request.put(`/api/diagrams/${diagram.id}`, { data: { revision: 2, document: changed } })
@@ -139,7 +159,11 @@ test('diagram lifecycle, immutable notation, optimistic concurrency, restoration
     data: { name: 'Импорт', document: JSON.parse(JSON.stringify(document)) },
   });
   expect(imported.status()).toBe(201);
-  expect((await imported.json()).document).toEqual(document);
+  const copy = (await imported.json()).document;
+  expect(copy.schemaVersion).toBe(2);
+  expect(copy.nodes).toHaveLength(2);
+  expect(copy.objects.map((o: { name: string }) => o.name)).toEqual(['Заказ', 'Оплата']);
+  expect(copy.nodes[0].objectId).not.toBe(document.nodes[0].objectId);
   const other = await playwright.request.newContext({ baseURL: 'http://localhost:3000' });
   await register(other);
   for (const method of ['get', 'delete'] as const)
@@ -167,8 +191,8 @@ test('notation updates do not change existing diagrams; references prevent delet
   n.nodeTypes[0].appearance.fill = '#aabbcc';
   expect((await request.put(`/api/notations/${notation.id}`, { data: n })).status()).toBe(200);
   const old = await (await request.get(`/api/diagrams/${d.id}`)).json();
-  expect(old.document.notation.version).toBe('1.0.0');
-  expect(old.document.notation.nodeTypes[0].appearance.fill).not.toBe('#aabbcc');
+  expect(old.document.bindings[0].document.version).toBe('1.0.0');
+  expect(old.document.bindings[0].document.nodeTypes[0].appearance.fill).not.toBe('#aabbcc');
   expect((await request.put(`/api/notations/${notation.id}`, { data: n })).status()).toBe(400);
   expect((await request.delete(`/api/notations/${notation.id}`)).status()).toBe(409);
   expect(
@@ -192,7 +216,10 @@ test('browser: login, create, connect, edit, undo, save, reopen and export', asy
   await page.getByLabel('Название', { exact: true }).fill('Заказ — браузерный тест');
   await page.getByRole('button', { name: 'Открыть редактор' }).click();
   await expect(page).toHaveURL(/\/diagrams\//);
-  await page.getByRole('button', { name: 'Процесс', exact: true }).click();
+  await page
+    .getByRole('region', { name: 'Палитра Блок-схема' })
+    .getByRole('button', { name: 'Процесс', exact: true })
+    .click();
   await page.getByRole('button', { name: 'Начало / конец', exact: true }).click();
   const node = page.locator('.react-flow__node').first();
   await node.click();
@@ -219,7 +246,10 @@ test('browser: login, create, connect, edit, undo, save, reopen and export', asy
   await expect(page.locator('.react-flow__node')).toHaveCount(2);
   await expect(page.locator('.react-flow__edge')).toHaveCount(1);
   await expect(page.locator('.node-label').first()).toHaveText('Получить заказ');
-  await page.getByRole('button', { name: 'Процесс', exact: true }).click();
+  await page
+    .getByRole('region', { name: 'Палитра Блок-схема' })
+    .getByRole('button', { name: 'Процесс', exact: true })
+    .click();
   await expect(page.locator('.react-flow__node')).toHaveCount(3);
   await page.getByRole('button', { name: 'Отменить', exact: true }).click();
   await expect(page.locator('.react-flow__node')).toHaveCount(2);
