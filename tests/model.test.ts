@@ -8,6 +8,7 @@ import {
   projectDocument,
   packDocument,
   effectiveNode,
+  effectiveEdge,
   hierarchyError,
   objectClosure,
   type ModelDocument,
@@ -81,6 +82,81 @@ describe('cross-notation model', () => {
     });
     d.nodes[1].typeId = 'decision';
     expect(connectionTypeForSource(projectDocument(d), 'n2', 'a:flow', 'yes')).toBe('b:dependency');
+  });
+  it('round-trips relation identities and validates object endpoints independently of skins', () => {
+    const d = document();
+    d.nodes[1].bindingId = 'a';
+    d.relations = [
+      {
+        id: 'relation',
+        sourceId: 'object',
+        targetId: 'object',
+        name: 'Связь',
+        description: '',
+        attributes: {},
+        revision: 1,
+        archived: false,
+      },
+    ];
+    d.edges = [
+      {
+        id: 'e',
+        relationId: 'relation',
+        bindingId: 'a',
+        typeId: 'flow',
+        source: 'n1',
+        target: 'n2',
+        sourcePort: 'out',
+        targetPort: 'in',
+        properties: { label: 'Локальная подпись' },
+      },
+    ];
+    expect(modelErrors(d)).toEqual([]);
+    expect(packDocument(projectDocument(d), d.objects)).toEqual(d);
+    d.relations[0].sourceId = 'missing';
+    expect(modelErrors(d)).toContain('Участники стрелки не соответствуют связи модели');
+    d.relations = [];
+    expect(modelErrors(d)).toContain('Стрелка ссылается на отсутствующую связь модели');
+  });
+  it('binds common relation attributes while preserving local arrow captions', () => {
+    const t = structuredClone(builtinNotation.edgeTypes[0]);
+    t.properties.push({
+      key: 'role',
+      objectKey: 'responsibility',
+      label: 'Роль',
+      type: 'string',
+      required: false,
+      scope: 'object',
+    });
+    const e = {
+      id: 'e',
+      typeId: 'flow',
+      source: 'a',
+      target: 'b',
+      sourcePort: 'out',
+      targetPort: 'in',
+      properties: { label: 'Подпись', role: 'Устаревшее' },
+    };
+    const r = {
+      id: 'r',
+      sourceId: 'object',
+      targetId: 'object',
+      name: 'Общая связь',
+      description: '',
+      attributes: { responsibility: 'Владелец' },
+      archived: false,
+      revision: 1,
+    };
+    expect(effectiveEdge(e, t, r).properties).toEqual({ label: 'Подпись', role: 'Владелец' });
+    expect(e.properties.role).toBe('Устаревшее');
+    const copy = {
+      ...object,
+      id: 'copy',
+      copiedFrom: { id: 'deleted-origin', name: 'Удалённый оригинал' },
+    };
+    expect(
+      modelDiagramSchema.parse({ ...document(), objects: [object, copy] }).objects[1].copiedFrom,
+    ).toEqual(copy.copiedFrom);
   });
   it('inherits shared name and bound values without mutating local data', () => {
     const d = document(),

@@ -818,3 +818,328 @@ test('browser: draw a connection between representations in a secondary notation
   await expect(page.locator('.react-flow__edge')).toHaveCount(3);
   await expect(chooser).toHaveValue('universal:association');
 });
+
+test('relation model: shared arrows, independent copies, ownership, snapshots and restoration', async ({
+  request,
+  playwright,
+}) => {
+  await login(request);
+  const source = await object(request, 'Заказ'),
+    target = await object(request, 'Исполнитель');
+  let d = await create(request);
+  d = await place(request, d, source.id);
+  d = await place(request, d, target.id);
+  d = await place(request, d, source.id);
+  const created = await request.post('/api/relations', {
+    data: {
+      name: 'Участие',
+      sourceId: source.id,
+      targetId: target.id,
+      attributes: { role: 'owner' },
+    },
+  });
+  expect(created.status(), await created.text()).toBe(201);
+  let relation = await created.json();
+  const copyResponse = await request.post('/api/relations', {
+    data: {
+      name: 'Копия участия',
+      sourceId: source.id,
+      targetId: target.id,
+      attributes: { role: 'owner' },
+      copyOf: relation.id,
+    },
+  });
+  expect(copyResponse.status()).toBe(201);
+  const copiedRelation = await copyResponse.json();
+  expect(copiedRelation.copiedFrom).toEqual({ id: relation.id, name: 'Участие' });
+  const edge = (id: string, node: string) => ({
+    id,
+    relationId: relation.id,
+    bindingId: d.document.bindings[0].id,
+    typeId: 'flow',
+    source: node,
+    target: d.document.nodes[1].id,
+    sourcePort: 'out',
+    targetPort: 'in',
+    properties: { label: id },
+  });
+  d = await save(request, d, {
+    ...d.document,
+    relations: [relation],
+    edges: [edge('first', d.document.nodes[0].id), edge('second', d.document.nodes[2].id)],
+  });
+  const historyNumber = d.revision;
+  expect((await (await request.get(`/api/relations/${relation.id}/usages`)).json())[0].count).toBe(
+    2,
+  );
+  expect(
+    (await request.delete(`/api/relations/${relation.id}`, { data: { revision: 1 } })).status(),
+  ).toBe(409);
+  const duplicate = await (
+    await request.post(`/api/diagrams/${d.id}/duplicate`, { data: {} })
+  ).json();
+  expect(duplicate.document.edges.map((e: { relationId: string }) => e.relationId)).toEqual([
+    relation.id,
+    relation.id,
+  ]);
+  const imported = await request.post('/api/diagrams', {
+    data: { name: 'Клон модели', document: d.document },
+  });
+  expect(imported.status(), await imported.text()).toBe(201);
+  const clone = await imported.json();
+  expect(clone.document.relations).toHaveLength(1);
+  expect(clone.document.relations[0].id).not.toBe(relation.id);
+  expect(clone.document.edges[0].relationId).toBe(clone.document.edges[1].relationId);
+  expect(clone.document.relations[0]).toMatchObject({
+    sourceId: clone.document.nodes[0].objectId,
+    targetId: clone.document.nodes[1].objectId,
+    copiedFrom: { id: relation.id, name: relation.name },
+  });
+  relation = await (
+    await request.patch(`/api/relations/${relation.id}`, {
+      data: { revision: 1, name: 'Ответственный', attributes: { role: 'lead' } },
+    })
+  ).json();
+  expect(relation.revision).toBe(2);
+  expect(
+    (
+      await request.put(`/api/diagrams/${d.id}`, {
+        data: { revision: d.revision, document: d.document },
+      })
+    ).status(),
+  ).toBe(409);
+  const live = await (await request.get(`/api/diagrams/${d.id}`)).json();
+  expect(live.document.relations[0].name).toBe('Ответственный');
+  expect(
+    live.document.edges.map((e: { properties: { label: string } }) => e.properties.label),
+  ).toEqual(['first', 'second']);
+  const historical = await (
+    await request.get(`/api/diagrams/${d.id}/history?number=${historyNumber}`)
+  ).json();
+  expect(historical.document.relations[0].name).toBe('Участие');
+  const invalid = structuredClone(live.document);
+  invalid.edges[0].target = invalid.nodes[0].id;
+  expect(
+    (
+      await request.put(`/api/diagrams/${d.id}`, {
+        data: { revision: d.revision, document: invalid },
+      })
+    ).status(),
+  ).toBe(400);
+  const other = await playwright.request.newContext({ baseURL: 'http://localhost:3000' });
+  await login(other);
+  expect((await other.get(`/api/relations/${relation.id}`)).status()).toBe(404);
+  expect(
+    (
+      await other.patch(`/api/relations/${relation.id}`, { data: { revision: 2, name: 'Чужая' } })
+    ).status(),
+  ).toBe(404);
+  expect(
+    (await other.delete(`/api/relations/${relation.id}`, { data: { revision: 2 } })).status(),
+  ).toBe(404);
+  expect(
+    (
+      await other.post('/api/relations', {
+        data: { name: 'Чужая', sourceId: source.id, targetId: target.id },
+      })
+    ).status(),
+  ).toBe(404);
+  expect(
+    (
+      await other.post('/api/objects', { data: { name: 'Чужая копия', copyOf: source.id } })
+    ).status(),
+  ).toBe(404);
+  await other.dispose();
+  relation = await (
+    await request.patch(`/api/relations/${relation.id}`, { data: { revision: 2, archived: true } })
+  ).json();
+  d = await (await request.get(`/api/diagrams/${d.id}`)).json();
+  const archivedImport = await request.post('/api/diagrams', {
+    data: { name: 'Импорт архивной связи', document: d.document },
+  });
+  expect(archivedImport.status(), await archivedImport.text()).toBe(201);
+  expect((await archivedImport.json()).document.relations[0].archived).toBe(true);
+  const more = structuredClone(d.document);
+  more.edges.push({ ...more.edges[0], id: 'third' });
+  expect(
+    (
+      await request.put(`/api/diagrams/${d.id}`, { data: { revision: d.revision, document: more } })
+    ).status(),
+  ).toBe(400);
+  d = await save(request, d, { ...d.document, edges: [] });
+  expect(
+    (await request.delete(`/api/objects/${source.id}`, { data: { revision: 1 } })).status(),
+  ).toBe(409);
+  expect(
+    (await request.delete(`/api/relations/${relation.id}`, { data: { revision: 3 } })).status(),
+  ).toBe(409); // another diagram still uses it
+  expect((await request.delete(`/api/diagrams/${duplicate.id}`)).status()).toBe(200);
+  expect(
+    (await request.delete(`/api/relations/${relation.id}`, { data: { revision: 2 } })).status(),
+  ).toBe(409);
+  expect(
+    (await request.delete(`/api/relations/${relation.id}`, { data: { revision: 3 } })).status(),
+  ).toBe(200);
+  const retainedCopy = await (await request.get(`/api/relations/${copiedRelation.id}`)).json();
+  expect(retainedCopy).toMatchObject({
+    name: 'Копия участия',
+    archived: false,
+    copiedFrom: { id: relation.id, name: 'Участие' },
+  });
+  expect(
+    (
+      await request.delete(`/api/relations/${copiedRelation.id}`, { data: { revision: 1 } })
+    ).status(),
+  ).toBe(200);
+  d = await save(request, d, { ...d.document, nodes: [], edges: [], objects: [], relations: [] });
+  expect(
+    (await request.delete(`/api/objects/${source.id}`, { data: { revision: 1 } })).status(),
+  ).toBe(200);
+  expect(
+    (await request.delete(`/api/objects/${target.id}`, { data: { revision: 1 } })).status(),
+  ).toBe(200);
+  const restored = await request.post(`/api/diagrams/${d.id}/restore`, {
+    data: { revision: d.revision, number: historyNumber },
+  });
+  expect(restored.status(), await restored.text()).toBe(200);
+  const restoredDiagram = await restored.json();
+  expect(restoredDiagram.document.relations[0]).toMatchObject({
+    id: relation.id,
+    sourceId: source.id,
+    targetId: target.id,
+    name: 'Участие',
+  });
+  expect(restoredDiagram.document.edges.map((e: { relationId: string }) => e.relationId)).toEqual([
+    relation.id,
+    relation.id,
+  ]);
+  expect(restoredDiagram.document.relations[0].incarnation).not.toBe(relation.incarnation);
+  const origin = await object(request, 'Оригинал');
+  const copied = await (
+    await request.post('/api/objects', { data: { name: 'Копия', copyOf: origin.id } })
+  ).json();
+  expect(copied.copiedFrom).toEqual({ id: origin.id, name: 'Оригинал' });
+  await request.patch(`/api/objects/${origin.id}`, { data: { revision: 1, name: 'Переименован' } });
+  expect((await (await request.get(`/api/objects/${copied.id}`)).json()).name).toBe('Копия');
+  expect(
+    (await request.delete(`/api/objects/${origin.id}`, { data: { revision: 2 } })).status(),
+  ).toBe(200);
+  expect((await (await request.get(`/api/objects/${copied.id}`)).json()).copiedFrom).toEqual({
+    id: origin.id,
+    name: 'Оригинал',
+  });
+});
+
+test('legacy v2 arrows are migrated once into independent model relations', async ({ request }) => {
+  await login(request);
+  let d = await create(request);
+  d = await place(request, d);
+  d = await place(request, d);
+  const old = {
+    ...d.document,
+    edges: [
+      {
+        id: 'old-arrow',
+        bindingId: d.document.bindings[0].id,
+        typeId: 'flow',
+        source: d.document.nodes[0].id,
+        target: d.document.nodes[1].id,
+        sourcePort: 'out',
+        targetPort: 'in',
+        properties: { label: 'Старая связь' },
+      },
+    ],
+  } as Partial<ModelDocument>;
+  delete old.relations;
+  await db.diagram.update({ where: { id: d.id }, data: { document: old as object } });
+  await db.diagramRevision.update({
+    where: { diagramId_number: { diagramId: d.id, number: d.revision } },
+    data: { document: old as object },
+  });
+  const migrated = await (await request.get(`/api/diagrams/${d.id}`)).json();
+  expect(migrated.revision).toBe(d.revision + 1);
+  expect(migrated.document.relations[0].name).toBe('Старая связь');
+  const id = migrated.document.edges[0].relationId;
+  expect((await (await request.get(`/api/diagrams/${d.id}`)).json()).revision).toBe(
+    migrated.revision,
+  );
+  expect((await (await request.get('/api/model')).json()).relations).toHaveLength(1);
+  const restored = await request.post(`/api/diagrams/${d.id}/restore`, {
+    data: { revision: migrated.revision, number: d.revision },
+  });
+  expect(restored.status(), await restored.text()).toBe(200);
+  expect((await restored.json()).document.edges[0].relationId).toBe(id);
+});
+
+test('browser: relation explorer, nested references, shared arrow placement and copy provenance', async ({
+  page,
+  request,
+}) => {
+  await login(request, page);
+  const source = await object(request, 'Заказ'),
+    target = await object(request, 'Исполнитель');
+  let d = await create(request);
+  d = await place(request, d, source.id);
+  d = await place(request, d, target.id);
+  await page.goto(`/diagrams/${d.id}`);
+  await expect(page.locator('.react-flow__node')).toHaveCount(2);
+  await page.getByRole('button', { name: 'Создать связь модели', exact: true }).click();
+  await page.getByLabel('Имя связи', { exact: true }).fill('Ответственность');
+  await page.getByLabel('Источник связи', { exact: true }).selectOption(source.id);
+  await page.getByLabel('Назначение связи', { exact: true }).selectOption(target.id);
+  await page.getByRole('button', { name: 'Сохранить связь', exact: true }).click();
+  await expect(page.locator('[data-model-relation-id]')).toHaveCount(1);
+  const relation = (await (await request.get('/api/model')).json()).relations[0];
+  const row = page.locator(`[data-model-relation-id="${relation.id}"]`);
+  await expect(row).toBeVisible();
+  await expect(page.locator(`[data-relation-reference="${relation.id}"]`)).toHaveCount(2);
+  for (let i = 0; i < 2; i++) {
+    await row
+      .getByRole('button', { name: 'Разместить связь Ответственность', exact: true })
+      .click();
+    await page.getByRole('button', { name: 'Разместить стрелку', exact: true }).click();
+    await expect(page.locator('.react-flow__edge')).toHaveCount(i + 1);
+    await expect(page.getByText(/Сохранено · ревизия/)).toBeVisible({ timeout: 15000 });
+  }
+  const saved = await (await request.get(`/api/diagrams/${d.id}`)).json();
+  expect(saved.document.edges.map((e: { relationId: string }) => e.relationId)).toEqual([
+    relation.id,
+    relation.id,
+  ]);
+  await row.getByRole('button', { name: 'Изменить связь Ответственность', exact: true }).click();
+  await page.getByLabel('Имя связи', { exact: true }).fill('Владелец заказа');
+  await page.getByRole('button', { name: 'Сохранить связь', exact: true }).click();
+  await expect(row.locator('.object-tree-name')).toContainText('Владелец заказа');
+  await expect(page.locator(`[data-relation-reference="${relation.id}"]`)).toHaveCount(2);
+  const sourceRow = page.locator(`[data-object-id="${source.id}"]`);
+  await sourceRow.getByRole('button', { name: 'Копировать объект Заказ', exact: true }).click();
+  await expect(page.locator('.object-tree-row[data-object-id]')).toHaveCount(3);
+  const copied = (await (await request.get('/api/model')).json()).objects.find(
+    (o: ModelObject) => o.copiedFrom?.id === source.id,
+  );
+  await page
+    .locator(`[data-object-id="${copied.id}"]`)
+    .getByRole('button', { name: 'Изменить объект Заказ — копия', exact: true })
+    .click();
+  await expect(page.locator('.copy-origin')).toContainText('Заказ');
+  await expect(page.locator('.copy-origin')).toContainText(source.id);
+  await page.getByRole('button', { name: 'Закрыть', exact: true }).click();
+  page.on('dialog', (dialog) => dialog.accept());
+  await row
+    .getByRole('button', { name: 'Удалить связь модели Владелец заказа', exact: true })
+    .click();
+  await expect(page.locator('.relation-browser [role="alert"]')).toContainText('используется');
+  for (let i = 1; i >= 0; i--) {
+    await row.getByRole('button', { name: 'Найти связь Владелец заказа', exact: true }).click();
+    await page.getByRole('button', { name: 'Удалить связь', exact: true }).click();
+    await expect(page.locator('.react-flow__edge')).toHaveCount(i);
+  }
+  await row
+    .getByRole('button', { name: 'Удалить связь модели Владелец заказа', exact: true })
+    .click();
+  await expect(row).toHaveCount(0);
+  await expect(page.locator(`[data-relation-reference="${relation.id}"]`)).toHaveCount(0);
+  await page.reload();
+  await expect(page.locator('.react-flow__edge')).toHaveCount(0);
+  await expect(page.locator('[data-model-relation-id]')).toHaveCount(0);
+});

@@ -2485,3 +2485,51 @@ body {
   width: 100%;
   height: 100%;
 }
+
+.relation-browser {
+  border-top: 1px solid var(--border);
+  margin-top: 20px;
+  padding-top: 14px;
+}
+.relation-browser input {
+  font-size: 11px;
+  margin-bottom: 8px;
+}
+.relation-browser .object-tree-name small {
+  color: var(--muted);
+  font-size: 10px;
+  display: block;
+}
+.object-relation-reference {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding-top: 4px;
+  padding-bottom: 4px;
+  font-size: 10px;
+  color: var(--muted);
+}
+.object-relation-reference button {
+  background: transparent;
+  border: 0;
+  color: inherit;
+  text-align: left;
+}
+.object-relation-reference button:first-child {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.object-relation-reference small {
+  display: block;
+}
+.object-relation-reference.archived {
+  opacity: 0.6;
+}
+.copy-origin {
+  overflow-wrap: anywhere;
+}
+.relation-history {
+  margin-top: 18px;
+}

@@ -66,6 +66,7 @@ model Diagram {
   modelSpaceId String?
   modelSpace ModelSpace? @relation(fields: [modelSpaceId], references: [id], onDelete: Cascade)
   usages DiagramObjectUsage[]
+  relationUsages DiagramRelationUsage[]
   bindings DiagramNotation[]
   revision Int @default(1)
   document Json
@@ -97,12 +98,16 @@ model ModelSpace {
   name String @default("Личная модель")
   revision Int @default(1)
   objects ModelObject[]
+  relations ModelRelation[]
   diagrams Diagram[]
 }
 model ModelObject {
   id String @id @default(cuid())
   spaceId String
   space ModelSpace @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  copiedFrom Json?
+  outgoing ModelRelation[] @relation("RelationSource")
+  incoming ModelRelation[] @relation("RelationTarget")
   parentId String?
   parent ModelObject? @relation("ObjectTree", fields: [spaceId, parentId], references: [spaceId, id], onDelete: NoAction, onUpdate: NoAction)
   children ModelObject[] @relation("ObjectTree")
@@ -143,4 +148,45 @@ model DiagramNotation {
   versionId String?
   version NotationVersion? @relation(fields: [versionId], references: [id], onDelete: Restrict)
   @@id([diagramId, bindingId])
+}
+
+model ModelRelation {
+  id String @id @default(cuid())
+  spaceId String
+  space ModelSpace @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  sourceId String
+  source ModelObject @relation("RelationSource", fields: [spaceId, sourceId], references: [spaceId, id], onDelete: NoAction, onUpdate: NoAction)
+  targetId String
+  target ModelObject @relation("RelationTarget", fields: [spaceId, targetId], references: [spaceId, id], onDelete: NoAction, onUpdate: NoAction)
+  name String
+  description String @default("")
+  attributes Json @default("{}")
+  copiedFrom Json?
+  archived Boolean @default(false)
+  revision Int @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  revisions ModelRelationRevision[]
+  usages DiagramRelationUsage[]
+  @@unique([spaceId, id])
+  @@index([spaceId, sourceId])
+  @@index([spaceId, targetId])
+}
+model ModelRelationRevision {
+  id String @id @default(cuid())
+  relationId String
+  relation ModelRelation @relation(fields: [relationId], references: [id], onDelete: Cascade)
+  number Int
+  snapshot Json
+  createdAt DateTime @default(now())
+  @@unique([relationId, number])
+}
+model DiagramRelationUsage {
+  diagramId String
+  diagram Diagram @relation(fields: [diagramId], references: [id], onDelete: Cascade)
+  relationId String
+  relation ModelRelation @relation(fields: [relationId], references: [id], onDelete: Cascade)
+  count Int
+  @@id([diagramId, relationId])
+  @@index([relationId])
 }

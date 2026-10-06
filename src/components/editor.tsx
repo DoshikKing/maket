@@ -52,6 +52,7 @@ import {
   type NodeOverride,
   type EdgeOverride,
 } from '@/lib/appearance';
+import { RelationBrowser, RelationEditor, RelationPlacement } from './relation-browser';
 import { ObjectTree, ObjectEditor } from './object-tree';
 import { DiagramPreview, type NotationItem } from './library';
 import {
@@ -61,6 +62,8 @@ import {
   packDocument,
   modelErrors,
   effectiveNode,
+  effectiveEdge,
+  type ModelRelation,
   qualify,
   splitType,
   portableDiagramSchema,
@@ -78,6 +81,7 @@ type Diagram = {
   revision: number;
   document: ViewDocument;
   objects: ModelObject[];
+  relations: ModelRelation[];
 };
 
 export function EditorPage({ id }: { id: string }) {
@@ -90,6 +94,7 @@ export function EditorPage({ id }: { id: string }) {
           ...d,
           document: projectDocument(d.document),
           objects: mergeModelObjects(space.objects, d.document.objects),
+          relations: mergeModelObjects(space.relations ?? [], d.document.relations ?? []),
         }),
       )
       .catch((e) => setError(e.message));
@@ -124,6 +129,9 @@ function Editor({ initial }: { initial: Diagram }) {
     [blocked, setBlocked] = useState(false),
     [interacting, setInteracting] = useState(false),
     [objects, setObjects] = useState(initial.objects),
+    [relations, setRelations] = useState(initial.relations),
+    [relationEditing, setRelationEditing] = useState<ModelRelation | 'new' | null>(null),
+    [relationPlacement, setRelationPlacement] = useState<ModelRelation | null>(null),
     [objectEditing, setObjectEditing] = useState<ModelObject | null>(null),
     [commandBusy, setCommandBusy] = useState(false),
     [objectSaving, setObjectSaving] = useState(false),
@@ -153,6 +161,28 @@ function Editor({ initial }: { initial: Diagram }) {
     refreshSequence = useRef(0);
   const objectsRef = useRef(objects);
   objectsRef.current = objects;
+  const relationsRef = useRef(relations);
+  relationsRef.current = relations;
+  const allRelations = useMemo(
+    () =>
+      mergeModelObjects(
+        (document.relations ?? []).filter((r) => document.edges.some((e) => e.relationId === r.id)),
+        relations,
+      ),
+    [relations, document.relations, document.edges],
+  );
+  const relationLookup = useMemo(() => new Map(allRelations.map((r) => [r.id, r])), [allRelations]);
+  const mergeRelations = useCallback((updates: ModelRelation[], replace = false) => {
+    const next = mergeModelObjects(relationsRef.current, updates, replace);
+    if (
+      next.length === relationsRef.current.length &&
+      next.every((r, i) => r === relationsRef.current[i])
+    )
+      return;
+    objectGeneration.current++;
+    relationsRef.current = next;
+    setRelations(next);
+  }, []);
   const objectLookup = useMemo(() => new Map(objects.map((o) => [o.id, o])), [objects]);
   const mergeObjects = useCallback((updates: ModelObject[], replace = false) => {
     const previous = new Map(objectsRef.current.map((o) => [o.id, o]));
@@ -168,12 +198,14 @@ function Editor({ initial }: { initial: Diagram }) {
       sequence = ++refreshSequence.current;
     try {
       const space = await api<Space>('model');
-      if (generation === objectGeneration.current && sequence === refreshSequence.current)
+      if (generation === objectGeneration.current && sequence === refreshSequence.current) {
         mergeObjects(space.objects, true);
+        mergeRelations(space.relations ?? [], true);
+      }
     } catch (err) {
       setError((err as Error).message);
     }
-  }, [mergeObjects]);
+  }, [mergeObjects, mergeRelations]);
   useEffect(() => {
     const refresh = () => {
       if (!window.document.hidden) void refreshObjects();
@@ -187,7 +219,10 @@ function Editor({ initial }: { initial: Diagram }) {
   }, [refreshObjects]);
   const serialized = useMemo(() => JSON.stringify(document), [document]);
   const dirty = serialized !== savedDoc;
-  const errors = useMemo(() => modelErrors(packDocument(document, objects)), [document, objects]);
+  const errors = useMemo(
+    () => modelErrors(packDocument(document, objects, relations)),
+    [document, objects, relations],
+  );
   const change = useCallback((next: DiagramDocument, record = true) => {
     if (JSON.stringify(next) === JSON.stringify(docRef.current)) return;
     if (record) {
@@ -205,7 +240,7 @@ function Editor({ initial }: { initial: Diagram }) {
       await objectWrites.current;
       if (gesture.current || savingRef.current) return false;
       const snapshot = docRef.current;
-      const packed = packDocument(snapshot, objectsRef.current);
+      const packed = packDocument(snapshot, objectsRef.current, relationsRef.current);
       const issues = modelErrors(packed);
       if (issues.length) {
         setError(issues.join('; '));
@@ -219,6 +254,7 @@ function Editor({ initial }: { initial: Diagram }) {
           revision: revisionRef.current,
           document: packed,
         });
+        mergeRelations(result.document.relations ?? []);
         revisionRef.current = result.revision;
         setRevision(result.revision);
         setSavedDoc(JSON.stringify(snapshot));
@@ -364,6 +400,7 @@ function Editor({ initial }: { initial: Diagram }) {
   function adopt(result: ModelDiagram, record = true) {
     const next = projectDocument(result.document);
     mergeObjects(result.document.objects);
+    mergeRelations(result.document.relations ?? []);
     change(next, record);
     setSavedDoc(JSON.stringify(next));
     revisionRef.current = result.revision;
@@ -512,19 +549,40 @@ function Editor({ initial }: { initial: Diagram }) {
   }): DiagramDocument {
     const current = docRef.current;
     const typeId = connectionTypeForSource(current, c.source, edgeType, c.sourceHandle);
+    const definition = current.notation.edgeTypes.find((t) => t.id === typeId);
+    const values = defaults(definition?.properties ?? []);
+    const relationId = crypto.randomUUID();
+    const relation: ModelRelation = {
+      id: relationId,
+      sourceId: current.nodes.find((n) => n.id === c.source)!.objectId!,
+      targetId: current.nodes.find((n) => n.id === c.target)!.objectId!,
+      name: definition?.name ?? 'Связь',
+      description: '',
+      archived: false,
+      revision: 1,
+      attributes: Object.fromEntries(
+        (definition?.properties ?? [])
+          .filter((p) => p.scope === 'object' && values[p.key] !== undefined)
+          .map((p) => [p.objectKey ?? p.key, values[p.key]]),
+      ),
+    };
     return {
       ...current,
+      relations: [...(current.relations ?? []), relation],
       edges: [
         ...current.edges,
         {
           id: `edge-${crypto.randomUUID()}`,
+          relationId,
           typeId,
           source: c.source,
           target: c.target,
           sourcePort: c.sourceHandle ?? '',
           targetPort: c.targetHandle ?? '',
-          properties: defaults(
-            current.notation.edgeTypes.find((t) => t.id === typeId)?.properties ?? [],
+          properties: Object.fromEntries(
+            Object.entries(values).filter(
+              ([key]) => definition?.properties.find((p) => p.key === key)?.scope !== 'object',
+            ),
           ),
         },
       ],
@@ -600,7 +658,13 @@ function Editor({ initial }: { initial: Diagram }) {
           sourceHandle: e.sourcePort,
           targetHandle: e.targetPort,
           type: a.routing === 'bezier' ? 'default' : a.routing,
-          label: String(e.properties.label ?? ''),
+          label: String(
+            effectiveEdge(
+              e,
+              document.notation.edgeTypes.find((t) => t.id === e.typeId)!,
+              relationLookup.get(e.relationId ?? ''),
+            ).properties.label ?? '',
+          ),
           selected: selected?.kind === 'edge' && selected.id === e.id,
           markerEnd: a.targetMarker === 'none' ? undefined : markerId(initial.id, e.id, 'end'),
           markerStart:
@@ -615,7 +679,14 @@ function Editor({ initial }: { initial: Diagram }) {
           },
         };
       }),
-    [document.edges, styledEdges, selected, initial.id],
+    [
+      document.edges,
+      styledEdges,
+      selected,
+      initial.id,
+      relationLookup,
+      document.notation.edgeTypes,
+    ],
   );
   function deleteItems(nodeIds: string[], edgeIds: string[]) {
     change({
@@ -683,6 +754,28 @@ function Editor({ initial }: { initial: Diagram }) {
     setRedo(redo.slice(0, -1));
     change(next, false);
   }
+  function locateRelation(id: string) {
+    const edge = docRef.current.edges.find((e) => e.relationId === id);
+    if (edge) {
+      setSelected({ kind: 'edge', id: edge.id });
+      void flow.fitView({
+        nodes: [{ id: edge.source }, { id: edge.target }],
+        padding: 0.3,
+        maxZoom: 1,
+      });
+    } else {
+      const r = relationLookup.get(id);
+      if (r) void editRelation(r);
+    }
+  }
+  async function editRelation(r?: ModelRelation) {
+    try {
+      if (r && !(await flush())) throw new Error('Сначала сохраните диаграмму');
+      setRelationEditing(r ? (relationsRef.current.find((x) => x.id === r.id) ?? r) : 'new');
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }
   const rawSelectedObject =
     selected?.kind === 'node'
       ? document.nodes.find((n) => n.id === selected.id)
@@ -701,7 +794,15 @@ function Editor({ initial }: { initial: Diagram }) {
           definition as (typeof document.notation.nodeTypes)[number],
           objectLookup.get((rawSelectedObject as LegacyDocument['nodes'][number]).objectId ?? ''),
         )
-      : rawSelectedObject;
+      : rawSelectedObject && definition && selected?.kind === 'edge'
+        ? effectiveEdge(
+            rawSelectedObject as LegacyDocument['edges'][number],
+            definition as (typeof document.notation.edgeTypes)[number],
+            relationLookup.get(
+              (rawSelectedObject as ViewDocument['edges'][number]).relationId ?? '',
+            ),
+          )
+        : rawSelectedObject;
   const selectedNode =
     selected?.kind === 'node' ? document.nodes.find((n) => n.id === selected.id) : undefined;
   const selectedEdge =
@@ -715,6 +816,45 @@ function Editor({ initial }: { initial: Diagram }) {
   function propertyChange(key: string, value: string | number | boolean) {
     if (!selected) return;
     const p = definition?.properties.find((p) => p.key === key);
+    if (selected.kind === 'edge' && p?.scope === 'object') {
+      const relationId = selectedEdge?.relationId;
+      setObjectSaving(true);
+      const operation = objectWrites.current
+        .then(async () => {
+          const r = relationsRef.current.find((r) => r.id === relationId);
+          if (!r) {
+            const current = docRef.current;
+            const draft = current.relations?.find((x) => x.id === relationId);
+            if (!draft) throw new Error('Связь модели не найдена');
+            change({
+              ...current,
+              relations: current.relations?.map((x) =>
+                x.id === relationId
+                  ? { ...x, attributes: { ...x.attributes, [p.objectKey ?? p.key]: value } }
+                  : x,
+              ),
+            });
+            return true;
+          }
+          mergeRelations([
+            await api<ModelRelation>(`relations/${r.id}`, 'PATCH', {
+              revision: r.revision,
+              incarnation: r.incarnation,
+              attributes: { ...r.attributes, [p.objectKey ?? p.key]: value },
+            }),
+          ]);
+          return true;
+        })
+        .catch((err) => {
+          setError(err.message);
+          return false;
+        });
+      objectWrites.current = operation;
+      void operation.finally(() => {
+        if (objectWrites.current === operation) setObjectSaving(false);
+      });
+      return operation;
+    }
     if (selected.kind === 'node' && p?.scope === 'object') {
       const objectId = selectedNode?.objectId;
       setObjectSaving(true);
@@ -844,7 +984,7 @@ function Editor({ initial }: { initial: Diagram }) {
           : '';
     }
     const next = skinCandidate(nodeId, typeId, ports, types),
-      issues = modelErrors(packDocument(next, objectsRef.current));
+      issues = modelErrors(packDocument(next, objectsRef.current, relationsRef.current));
     if (issues.length) setSkinChange({ nodeId, typeId, ports, types });
     else change(next);
   }
@@ -948,7 +1088,7 @@ function Editor({ initial }: { initial: Diagram }) {
             onClick={() =>
               download(`${name}.maket.json`, {
                 name,
-                document: packDocument(docRef.current, objectsRef.current),
+                document: packDocument(docRef.current, objectsRef.current, relationsRef.current),
               })
             }
           >
@@ -973,6 +1113,48 @@ function Editor({ initial }: { initial: Diagram }) {
       <div className="editor-body model-editor-body">
         <ObjectTree
           objects={objects}
+          relations={allRelations}
+          onRelationLocate={locateRelation}
+          onRelationEdit={(r) => void editRelation(r)}
+          relationsPanel={
+            <RelationBrowser
+              relations={allRelations}
+              objects={objects}
+              counts={
+                new Map(
+                  allRelations.map((r) => [
+                    r.id,
+                    document.edges.filter((e) => e.relationId === r.id).length,
+                  ]),
+                )
+              }
+              onEdit={(r) => void editRelation(r)}
+              onLocate={locateRelation}
+              onPlace={(r) => setRelationPlacement(r)}
+              onSaved={(r) => mergeRelations([r])}
+              onBeforeWrite={async () => {
+                if (!(await flush())) throw new Error('Сначала сохраните диаграмму');
+              }}
+              onRemove={async (r) => {
+                setCommandBusy(true);
+                try {
+                  if (!(await flush())) throw new Error('Сначала завершите сохранение диаграммы');
+                  const current = relationsRef.current.find((x) => x.id === r.id) ?? r;
+                  await api(`relations/${r.id}`, 'DELETE', {
+                    revision: current.revision,
+                    incarnation: current.incarnation,
+                  });
+                  mergeRelations(
+                    relationsRef.current.filter((x) => x.id !== r.id),
+                    true,
+                  );
+                } finally {
+                  setCommandBusy(false);
+                }
+              }}
+            />
+          }
+
           counts={
             new Map(
               objects.map((o) => [o.id, document.nodes.filter((n) => n.objectId === o.id).length]),
@@ -1153,7 +1335,11 @@ function Editor({ initial }: { initial: Diagram }) {
                     throw new Error('Другой набор нотаций. Используйте импорт через библиотеку.');
                   if (parsed.nodes.some((n) => !objectLookup.has(n.objectId)))
                     throw new Error('Объекты файла отсутствуют в модели. Используйте библиотеку.');
-                  const next = packDocument(projectDocument(parsed), objectsRef.current);
+                  const next = packDocument(
+                    projectDocument(parsed),
+                    objectsRef.current,
+                    relationsRef.current,
+                  );
                   const issues = modelErrors(next);
                   if (issues.length) throw new Error(issues.join('; '));
                   change(projectDocument(next));
@@ -1220,7 +1406,9 @@ function Editor({ initial }: { initial: Diagram }) {
               }}
               onConnect={(c) => {
                 const next = candidate(c);
-                const issues = modelErrors(packDocument(next, objectsRef.current));
+                const issues = modelErrors(
+                  packDocument(next, objectsRef.current, relationsRef.current),
+                );
                 if (issues.length) setError(issues.join('; '));
                 else {
                   setEdgeType(next.edges[next.edges.length - 1].typeId);
@@ -1228,7 +1416,8 @@ function Editor({ initial }: { initial: Diagram }) {
                 }
               }}
               isValidConnection={(c) =>
-                modelErrors(packDocument(candidate(c), objectsRef.current)).length === 0
+                modelErrors(packDocument(candidate(c), objectsRef.current, relationsRef.current))
+                  .length === 0
               }
               snapToGrid={user.settings.snapToGrid}
               snapGrid={[20, 20]}
@@ -1509,7 +1698,51 @@ function Editor({ initial }: { initial: Diagram }) {
               )}
               {selectedEdge && (
                 <div className="inspector-appearance form-stack">
-                  <h3>Оформление связи</h3>
+                  <h3>Связь модели</h3>
+                  <p className="small-text">
+                    {relationLookup.get(selectedEdge.relationId ?? '')?.name ?? 'Связь'} · общая для
+                    всех стрелок
+                  </p>
+                  <button
+                    className="secondary small"
+                    onClick={() => {
+                      const r = relationLookup.get(selectedEdge.relationId ?? '');
+                      if (r) void editRelation(r);
+                    }}
+                  >
+                    Общие свойства связи
+                  </button>
+                  <label>
+                    Использовать связь модели
+                    <select
+                      aria-label="Использовать связь модели"
+                      value={selectedEdge.relationId ?? ''}
+                      onChange={(e) =>
+                        change({
+                          ...docRef.current,
+                          edges: docRef.current.edges.map((x) =>
+                            x.id === selectedEdge.id ? { ...x, relationId: e.target.value } : x,
+                          ),
+                        })
+                      }
+                    >
+                      {allRelations
+                        .filter(
+                          (r) =>
+                            (!r.archived || r.id === selectedEdge.relationId) &&
+                            r.sourceId ===
+                              document.nodes.find((n) => n.id === selectedEdge.source)?.objectId &&
+                            r.targetId ===
+                              document.nodes.find((n) => n.id === selectedEdge.target)?.objectId,
+                        )
+                        .map((r) => (
+                          <option key={r.id} value={r.id}>
+                            {r.name}
+                          </option>
+                        ))}
+                    </select>
+                  </label>
+                  <h3>Оформление стрелки</h3>
                   <EdgeAppearanceControls
                     value={edgeAppearance(
                       document.notation.edgeTypes.find((t) => t.id === selectedEdge.typeId)!
@@ -1631,6 +1864,38 @@ function Editor({ initial }: { initial: Diagram }) {
             ))}
           </div>
         </Modal>
+      )}
+      {relationEditing && (
+        <RelationEditor
+          key={
+            relationEditing === 'new' ? 'new' : `${relationEditing.id}:${relationEditing.revision}`
+          }
+          relation={relationEditing === 'new' ? undefined : relationEditing}
+          objects={objects}
+          onSaved={(r) => mergeRelations([r])}
+          onClose={() => setRelationEditing(null)}
+        />
+      )}
+      {relationPlacement && (
+        <RelationPlacement
+          relation={relationPlacement}
+          document={document}
+          onClose={() => setRelationPlacement(null)}
+          onPlace={async (edge) => {
+            if (!(await flush())) throw new Error('Сначала сохраните диаграмму');
+            const next = {
+              ...docRef.current,
+              edges: [...docRef.current.edges, edge],
+              relations: mergeModelObjects(docRef.current.relations ?? [], [relationPlacement]),
+            };
+            const issues = modelErrors(
+              packDocument(next, objectsRef.current, relationsRef.current),
+            );
+            if (issues.length) throw new Error(issues.join('; '));
+            change(next);
+            setSelected({ kind: 'edge', id: edge.id });
+          }}
+        />
       )}
       {objectEditing && (
         <ObjectEditor
@@ -1842,6 +2107,7 @@ function Editor({ initial }: { initial: Diagram }) {
                 skinChange.types,
               ),
               objects,
+              relations,
             ),
           ).map((issue, i) => (
             <p className="error" key={i}>
@@ -1860,6 +2126,7 @@ function Editor({ initial }: { initial: Diagram }) {
                     skinChange.types,
                   ),
                   objects,
+                  relations,
                 ),
               ).length
             }

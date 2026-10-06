@@ -11,7 +11,8 @@ import {
   Trash2,
 } from 'lucide-react';
 import { api, date } from '@/lib/client';
-import { attributesSchema, type ModelObject } from '@/lib/model';
+import { attributesSchema, type ModelObject, type ModelRelation } from '@/lib/model';
+import { CopyOrigin } from './copy-origin';
 import { Modal } from './modal';
 export function ObjectEditor({
   object,
@@ -59,6 +60,7 @@ export function ObjectEditor({
       <p className="muted small-text">
         Имя и атрибуты общие для всех представлений объекта. Вложенность организует дерево.
       </p>
+      <CopyOrigin origin={object?.copiedFrom} />
       <form
         className="form-stack"
         onSubmit={async (e) => {
@@ -322,8 +324,16 @@ export function ObjectTree({
   onSaved,
   onRefresh,
   onRemove,
+  relations = [],
+  onRelationLocate,
+  onRelationEdit,
+  relationsPanel,
 }: {
   objects: ModelObject[];
+  relations?: ModelRelation[];
+  onRelationLocate?: (id: string) => void;
+  onRelationEdit?: (r: ModelRelation) => void;
+  relationsPanel?: React.ReactNode;
   counts: Map<string, number>;
   selectedId?: string;
   onPlace: (id: string) => void;
@@ -369,7 +379,8 @@ export function ObjectTree({
     return objects
       .filter((o) => o.parentId === parentId && visible.has(o.id))
       .map((o) => {
-        const children = objects.some((c) => c.parentId === o.id),
+        const linked = relations.filter((r) => r.sourceId === o.id || r.targetId === o.id);
+        const children = objects.some((c) => c.parentId === o.id) || linked.length > 0,
           closed = collapsed.has(o.id) && !query;
         return (
           <div
@@ -463,6 +474,7 @@ export function ObjectTree({
                       onSaved(
                         await api<ModelObject>('objects', 'POST', {
                           name: `${o.name.slice(0, 90)} — копия`,
+                          copyOf: o.id,
                           description: o.description,
                           attributes: o.attributes,
                           parentId: null,
@@ -526,7 +538,41 @@ export function ObjectTree({
                 </button>
               </div>
             </div>
-            {children && !closed && <div role="group">{branch(o.id, depth + 1)}</div>}
+            {children && !closed && (
+              <div role="group">
+                {branch(o.id, depth + 1)}
+                {linked.map((r) => (
+                  <div
+                    role="treeitem"
+                    key={r.id}
+                    data-relation-reference={r.id}
+                    className={`object-relation-reference ${r.archived ? 'archived' : ''}`}
+                    style={{ paddingLeft: 20 + (depth + 1) * 12 }}
+                  >
+                    <button
+                      title={r.name}
+                      onClick={() => onRelationLocate?.(r.id)}
+                      onDoubleClick={() => onRelationEdit?.(r)}
+                    >
+                      {r.sourceId === o.id ? '→' : '←'} {r.name}
+                      <small>
+                        {
+                          objects.find(
+                            (x) => x.id === (r.sourceId === o.id ? r.targetId : r.sourceId),
+                          )?.name
+                        }
+                      </small>
+                    </button>
+                    <button
+                      aria-label={`Свойства вложенной связи ${r.name}`}
+                      onClick={() => onRelationEdit?.(r)}
+                    >
+                      <Pencil size={12} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         );
       });
@@ -584,6 +630,7 @@ export function ObjectTree({
           {error}
         </div>
       )}
+      {relationsPanel}
       {editing && (
         <ObjectEditor
           object={editing.object}

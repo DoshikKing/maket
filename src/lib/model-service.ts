@@ -21,17 +21,9 @@ import {
   type ModelObject,
   type NotationBinding,
 } from './model';
-export class ModelError extends Error {
-  constructor(
-    public status: number,
-    message: string,
-  ) {
-    super(message);
-  }
-}
-export function reject(status: number, message: string): never {
-  throw new ModelError(status, message);
-}
+export { ModelError, reject } from './model-errors';
+import { reject } from './model-errors';
+import { materializeRelations, relationSnapshot, createRelation } from './relation-service';
 type Tx = Prisma.TransactionClient;
 const json = (v: unknown) => v as Prisma.InputJsonValue;
 const uuid = () => randomUUID();
@@ -44,6 +36,7 @@ export const snapshot = (o: {
   archived: boolean;
   revision: number;
   createdAt?: Date;
+  copiedFrom?: unknown;
 }): ModelObject => objectSnapshotSchema.parse({ ...o, incarnation: o.createdAt?.toISOString() });
 async function recordObject(tx: Tx, object: Parameters<typeof snapshot>[0]) {
   await tx.modelObjectRevision.create({
@@ -60,10 +53,17 @@ async function createObject(
     parentId?: string | null;
     attributes?: ModelObject['attributes'];
     archived?: boolean;
+    copiedFrom?: ModelObject['copiedFrom'];
   },
 ) {
   const object = await tx.modelObject.create({
-    data: { ...data, name: data.name.trim(), spaceId, attributes: json(data.attributes ?? {}) },
+    data: {
+      ...data,
+      copiedFrom: data.copiedFrom ? json(data.copiedFrom) : undefined,
+      name: data.name.trim(),
+      spaceId,
+      attributes: json(data.attributes ?? {}),
+    },
   });
   await recordObject(tx, object);
   return snapshot(object);
@@ -74,7 +74,13 @@ async function liveDocument(tx: Tx, document: ModelDocument): Promise<ModelDocum
     document.nodes.map((n) => n.objectId),
     all.map(snapshot),
   );
-  return { ...document, objects };
+  const relationIds = document.edges.flatMap((e) => (e.relationId ? [e.relationId] : []));
+  const relations = (
+    await tx.modelRelation.findMany({
+      where: { spaceId: document.modelSpaceId, id: { in: relationIds } },
+    })
+  ).map(relationSnapshot);
+  return { ...document, objects, relations };
 }
 async function indexes(tx: Tx, diagramId: string, document: ModelDocument) {
   await tx.diagramObjectUsage.deleteMany({ where: { diagramId } });
@@ -83,6 +89,14 @@ async function indexes(tx: Tx, diagramId: string, document: ModelDocument) {
   if (counts.size)
     await tx.diagramObjectUsage.createMany({
       data: [...counts].map(([objectId, count]) => ({ diagramId, objectId, count })),
+    });
+  await tx.diagramRelationUsage.deleteMany({ where: { diagramId } });
+  const relationCounts = new Map<string, number>();
+  for (const e of document.edges)
+    if (e.relationId) relationCounts.set(e.relationId, (relationCounts.get(e.relationId) ?? 0) + 1);
+  if (relationCounts.size)
+    await tx.diagramRelationUsage.createMany({
+      data: [...relationCounts].map(([relationId, count]) => ({ diagramId, relationId, count })),
     });
   await tx.diagramNotation.deleteMany({ where: { diagramId } });
   await tx.diagramNotation.createMany({
@@ -183,15 +197,24 @@ export async function ensureModel(ownerId: string) {
         create: { ownerId },
         update: { revision: { increment: 0 } },
       });
-      const diagrams = await tx.diagram.findMany({ where: { ownerId, modelSpaceId: null } });
+      const allDiagrams = await tx.diagram.findMany({ where: { ownerId } });
+      const diagrams = allDiagrams.filter(
+        (d) =>
+          !d.modelSpaceId ||
+          !Array.isArray((d.document as unknown as ModelDocument).relations) ||
+          (d.document as unknown as ModelDocument).edges.some((e) => !e.relationId),
+      );
       for (const diagram of diagrams) {
-        const document = await legacy(
-          tx,
-          diagramSchema.parse(diagram.document),
-          space.id,
-          diagram.id,
-          diagram.notationVersionId,
-        );
+        let document = diagram.modelSpaceId
+          ? modelDiagramSchema.parse(diagram.document)
+          : await legacy(
+              tx,
+              diagramSchema.parse(diagram.document),
+              space.id,
+              diagram.id,
+              diagram.notationVersionId,
+            );
+        document = await materializeRelations(tx, document, diagram.id, undefined, true);
         await tx.diagram.update({ where: { id: diagram.id }, data: { modelSpaceId: space.id } });
         await commit(tx, diagram, document, diagram.revision, 'migration');
       }
@@ -201,8 +224,13 @@ export async function ensureModel(ownerId: string) {
           data: { revision: { increment: 1 } },
         });
       return {
-        ...space,
-        revision: space.revision + (diagrams.length ? 1 : 0),
+        ...(await tx.modelSpace.findUniqueOrThrow({ where: { id: space.id } })),
+        relations: (
+          await tx.modelRelation.findMany({
+            where: { spaceId: space.id },
+            orderBy: { createdAt: 'asc' },
+          })
+        ).map(relationSnapshot),
         objects: (
           await tx.modelObject.findMany({
             where: { spaceId: space.id },
@@ -265,6 +293,7 @@ export async function newDiagram(
   const space = await ensureModel(ownerId);
   return db.$transaction(
     async (tx) => {
+      await tx.modelSpace.update({ where: { id: space.id }, data: { revision: { increment: 0 } } });
       let document: ModelDocument;
       if (input.document) {
         if ((input.document as { schemaVersion?: number }).schemaVersion === 1)
@@ -290,11 +319,30 @@ export async function newDiagram(
                 description: o.description,
                 attributes: o.attributes,
                 archived: o.archived,
+                copiedFrom: { id: o.id, name: o.name },
               }),
             );
           }
+          const relationIds = new Map((imported.relations ?? []).map((r) => [r.id, uuid()]));
+          const relations = [];
+          for (const r of imported.relations ?? [])
+            relations.push(
+              await createRelation(
+                tx,
+                space.id,
+                {
+                  ...r,
+                  id: relationIds.get(r.id)!,
+                  sourceId: ids.get(r.sourceId)!,
+                  targetId: ids.get(r.targetId)!,
+                  copiedFrom: { id: r.id, name: r.name },
+                },
+                true,
+              ),
+            );
           document = {
             ...imported,
+            relations,
             modelSpaceId: space.id,
             objects,
             bindings: imported.bindings.map((b) => ({
@@ -317,6 +365,7 @@ export async function newDiagram(
             })),
             edges: imported.edges.map((e) => ({
               ...e,
+              relationId: e.relationId ? relationIds.get(e.relationId) : undefined,
               bindingId: e.bindingId ? bindings.get(e.bindingId)! : null,
             })),
           };
@@ -332,6 +381,7 @@ export async function newDiagram(
           nodes: [],
           edges: [],
         };
+      document = await materializeRelations(tx, document, undefined, undefined, !!input.document);
       valid(document);
       const d = await tx.diagram.create({
         data: {
@@ -481,10 +531,12 @@ export async function saveModelDiagram(
             description: o.description,
             attributes: o.attributes,
             archived: o.archived,
+            copiedFrom: o.copiedFrom,
           });
           present.add(o.id);
         }
       }
+      next = await materializeRelations(tx, next, diagramId, current, restoreNumber !== undefined);
       const live = await liveDocument(tx, next);
       const prior = new Set(current.nodes.map((n) => `${n.id}:${n.objectId}`));
       for (const n of live.nodes) {
@@ -493,6 +545,16 @@ export async function saveModelDiagram(
         if (o.archived && !prior.has(`${n.id}:${n.objectId}`) && restoreNumber === undefined)
           reject(400, 'Архивный объект нельзя размещать заново');
       }
+      if (restoreNumber === undefined)
+        for (const r of (raw as ModelDocument).relations ?? []) {
+          const actual = live.relations?.find((x) => x.id === r.id);
+          if (
+            actual &&
+            (actual.revision !== r.revision ||
+              (r.incarnation && actual.incarnation !== r.incarnation))
+          )
+            reject(409, 'Связь изменена в другой вкладке. Обновите модель');
+        }
       // Stale shared data must not silently change a revision snapshot. Restoration deliberately uses current objects.
       if (restoreNumber === undefined)
         for (const o of next.objects) {
@@ -590,6 +652,7 @@ export async function addObject(
     description?: string;
     parentId?: string | null;
     attributes?: ModelObject['attributes'];
+    copyOf?: string;
   },
 ) {
   const space = await ensureModel(ownerId);
@@ -602,7 +665,14 @@ export async function addObject(
       }))
     )
       reject(400, 'Активный родительский объект не найден');
-    return createObject(tx, space.id, input);
+    const { copyOf, ...data } = input;
+    let copiedFrom: ModelObject['copiedFrom'];
+    if (copyOf) {
+      const origin = await tx.modelObject.findFirst({ where: { id: copyOf, spaceId: space.id } });
+      if (!origin) reject(404, 'Исходный объект не найден');
+      copiedFrom = { id: origin.id, name: origin.name };
+    }
+    return createObject(tx, space.id, { ...data, copiedFrom });
   });
 }
 export async function deleteObject(
@@ -622,6 +692,12 @@ export async function deleteObject(
       reject(409, 'Объект изменён в другой вкладке. Обновите модель');
     if (await tx.modelObject.count({ where: { spaceId: space.id, parentId: objectId } }))
       reject(409, 'У объекта есть дочерние объекты. Сначала переместите или удалите их');
+    if (
+      await tx.modelRelation.count({
+        where: { spaceId: space.id, OR: [{ sourceId: objectId }, { targetId: objectId }] },
+      })
+    )
+      reject(409, 'У объекта есть связи модели. Сначала удалите их в разделе «Связи»');
     const usages = await tx.diagramObjectUsage.findMany({
       where: { objectId },
       include: { diagram: { select: { name: true } } },

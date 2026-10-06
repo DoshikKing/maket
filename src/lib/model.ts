@@ -13,6 +13,7 @@ const id = z
 export const attributesSchema = z
   .record(id, z.union([z.string().max(2000), z.number().finite(), z.boolean()]))
   .refine((v) => Object.keys(v).length <= 100, 'Не больше 100 атрибутов');
+export const copyOriginSchema = z.object({ id, name: z.string().min(1).max(100) });
 export const objectSnapshotSchema = z.object({
   id,
   parentId: id.nullable(),
@@ -22,8 +23,13 @@ export const objectSnapshotSchema = z.object({
   archived: z.boolean(),
   revision: z.number().int().positive(),
   incarnation: z.string().datetime().optional(),
+  copiedFrom: copyOriginSchema.nullable().optional(),
 });
 export type ModelObject = z.infer<typeof objectSnapshotSchema>;
+export const relationSnapshotSchema = objectSnapshotSchema
+  .omit({ parentId: true })
+  .extend({ sourceId: id, targetId: id });
+export type ModelRelation = z.infer<typeof relationSnapshotSchema>;
 export const bindingSchema = z.object({
   id: id.refine((v) => v !== 'universal', 'Зарезервированный идентификатор подключения'),
   versionId: id.nullable(),
@@ -35,25 +41,44 @@ export const modelDiagramSchema = z.object({
   modelSpaceId: id,
   bindings: z.array(bindingSchema).min(1).max(12),
   objects: z.array(objectSnapshotSchema).max(5000),
+  relations: z.array(relationSnapshotSchema).max(10000).optional(),
   nodes: z
     .array(diagramSchema.shape.nodes.element.extend({ objectId: id, bindingId: id }))
     .max(1000),
-  edges: z.array(diagramSchema.shape.edges.element.extend({ bindingId: id.nullable() })).max(3000),
+  edges: z
+    .array(
+      diagramSchema.shape.edges.element.extend({
+        bindingId: id.nullable(),
+        relationId: id.optional(),
+      }),
+    )
+    .max(3000),
 });
 export type ModelDocument = z.infer<typeof modelDiagramSchema>;
 export const portableDiagramSchema = z.discriminatedUnion('schemaVersion', [
   diagramSchema,
   modelDiagramSchema,
 ]);
-export type ViewDocument = DiagramDocument & { modelSpaceId: string; bindings: NotationBinding[] };
+export type ViewDocument = Omit<DiagramDocument, 'edges'> & {
+  modelSpaceId: string;
+  bindings: NotationBinding[];
+  relations?: ModelRelation[];
+  edges: (DiagramDocument['edges'][number] & { relationId?: string })[];
+};
 export type ModelDiagram = { id: string; name: string; revision: number; document: ModelDocument };
-export type Space = { id: string; name: string; revision: number; objects: ModelObject[] };
+export type Space = {
+  id: string;
+  name: string;
+  revision: number;
+  objects: ModelObject[];
+  relations?: ModelRelation[];
+};
 // Preserve both object identity and tree order; delayed responses cannot roll back shared data.
-export function mergeModelObjects(
-  previous: ModelObject[],
-  updates: ModelObject[],
+export function mergeModelObjects<T extends { id: string; revision: number; incarnation?: string }>(
+  previous: T[],
+  updates: T[],
   replace = false,
-): ModelObject[] {
+): T[] {
   const old = new Map(previous.map((o) => [o.id, o])),
     incoming = new Map(updates.map((o) => [o.id, o]));
   return (replace ? updates : [...previous, ...updates.filter((o) => !old.has(o.id))]).map((o) => {
@@ -176,10 +201,33 @@ export function effectiveNode(
       : {}),
   };
 }
+export function effectiveEdge(
+  e: DiagramDocument['edges'][number],
+  t: NotationDocument['edgeTypes'][number],
+  relation?: ModelRelation,
+) {
+  if (!relation) return e;
+  const properties = { ...e.properties };
+  for (const p of t.properties)
+    if (p.scope === 'object') {
+      const value = relation.attributes[p.objectKey ?? p.key];
+      if (value !== undefined) properties[p.key] = value;
+      else if (p.default !== undefined) properties[p.key] = p.default;
+      else delete properties[p.key];
+    }
+  return { ...e, properties };
+}
 export function displayedView(d: ViewDocument, objects: ModelObject[]): DiagramDocument {
   const lookup = new Map(objects.map((o) => [o.id, o]));
   return {
     ...d,
+    edges: d.edges.map((e) =>
+      effectiveEdge(
+        e,
+        d.notation.edgeTypes.find((t) => t.id === e.typeId)!,
+        d.relations?.find((r) => r.id === e.relationId),
+      ),
+    ),
     nodes: d.nodes.map((n) =>
       effectiveNode(
         n,
@@ -201,11 +249,22 @@ export function objectClosure(ids: string[], objects: ModelObject[]): ModelObjec
   }
   return [...included].map((id) => lookup.get(id)).filter((o): o is ModelObject => !!o);
 }
-export function packDocument(d: ViewDocument, objects: ModelObject[]): ModelDocument {
+export function packDocument(
+  d: ViewDocument,
+  objects: ModelObject[],
+  relations: ModelRelation[] = d.relations ?? [],
+): ModelDocument {
   return {
     schemaVersion: 2,
     modelSpaceId: d.modelSpaceId,
     bindings: d.bindings,
+    ...(d.relations || relations.length
+      ? {
+          relations: mergeModelObjects(d.relations ?? [], relations).filter((r) =>
+            d.edges.some((e) => e.relationId === r.id),
+          ),
+        }
+      : {}),
     objects: objectClosure(
       d.nodes.map((n) => n.objectId!),
       objects,
@@ -275,6 +334,21 @@ export function modelErrors(d: ModelDocument): string[] {
       errors.push('Неизвестное отображение связи');
   if (errors.length) return [...new Set(errors)];
   const view = displayedView(projectDocument(d), d.objects);
+  const relations = new Map((d.relations ?? []).map((r) => [r.id, r]));
+  if (relations.size !== (d.relations ?? []).length) errors.push('Повторяющиеся связи модели');
+  for (const r of relations.values())
+    if (!objects.has(r.sourceId) || !objects.has(r.targetId))
+      errors.push('Связь ссылается на отсутствующий объект');
+  for (const e of d.edges) {
+    if (!e.relationId) continue; // Older v2 files are upgraded on the server.
+    const r = relations.get(e.relationId);
+    if (!r) errors.push('Стрелка ссылается на отсутствующую связь модели');
+    else if (
+      d.nodes.find((n) => n.id === e.source)?.objectId !== r.sourceId ||
+      d.nodes.find((n) => n.id === e.target)?.objectId !== r.targetId
+    )
+      errors.push('Участники стрелки не соответствуют связи модели');
+  }
   // Universal connections are graphical annotations; notation connections stay within their own binding.
   const normal = { ...view, edges: view.edges.filter((e) => e.typeId !== 'universal:association') };
   errors.push(...diagramErrors(normal));

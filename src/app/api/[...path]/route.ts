@@ -29,6 +29,12 @@ import {
   snapshot,
   addRepresentation,
 } from '@/lib/model-service';
+import {
+  addRelation,
+  updateRelation,
+  deleteRelation,
+  relationSnapshot,
+} from '@/lib/relation-service';
 export const runtime = 'nodejs';
 const nameSchema = z.string().trim().min(1).max(100);
 const credentials = z.object({
@@ -290,6 +296,68 @@ async function handle(req: NextRequest, context: { params: Promise<{ path: strin
       }
     }
     if (resource === 'model' && method === 'GET') return json(await ensureModel(user.id));
+    if (resource === 'relations') {
+      const space = await ensureModel(user.id);
+      if (method === 'POST' && !id) {
+        const input = z
+          .object({
+            name: nameSchema,
+            sourceId: z.string(),
+            targetId: z.string(),
+            description: z.string().max(4000).optional(),
+            attributes: attributesSchema.optional(),
+            copyOf: z.string().optional(),
+          })
+          .parse(await body(req));
+        return json(await addRelation(user.id, input), 201);
+      }
+      if (!id) fail(405, 'Укажите идентификатор связи');
+      const relation = await db.modelRelation.findFirst({ where: { id, spaceId: space.id } });
+      if (!relation) fail(404, 'Связь не найдена');
+      if (method === 'GET' && action === 'usages')
+        return json(
+          await db.diagramRelationUsage.findMany({
+            where: { relationId: id },
+            select: { count: true, diagram: { select: { id: true, name: true } } },
+          }),
+        );
+      if (method === 'GET' && action === 'revisions')
+        return json(
+          await db.modelRelationRevision.findMany({
+            where: { relationId: id },
+            select: { number: true, createdAt: true, snapshot: true },
+            orderBy: { number: 'desc' },
+            take: 100,
+          }),
+        );
+      if (method === 'GET' && !action) return json(relationSnapshot(relation));
+      const guard = z.object({
+        revision: z.number().int().positive(),
+        incarnation: z.string().datetime().optional(),
+      });
+      if (method === 'DELETE' && !action)
+        return json(await deleteRelation(user.id, id, guard.parse(await body(req))));
+      if (method === 'PATCH' && !action)
+        return json(
+          await updateRelation(
+            user.id,
+            id,
+            guard
+              .extend({
+                name: nameSchema.optional(),
+                description: z.string().max(4000).optional(),
+                attributes: attributesSchema.optional(),
+                archived: z.boolean().optional(),
+              })
+              .parse(await body(req)),
+          ),
+        );
+      if (method === 'POST' && action === 'restore') {
+        const input = guard.extend({ number: z.number().int().positive() }).parse(await body(req));
+        return json(await updateRelation(user.id, id, input, input.number));
+      }
+      fail(405, 'Метод не поддерживается');
+    }
     if (resource === 'objects') {
       if (method === 'POST' && !id) {
         const input = z
@@ -298,6 +366,7 @@ async function handle(req: NextRequest, context: { params: Promise<{ path: strin
             description: z.string().max(4000).optional(),
             parentId: z.string().nullable().optional(),
             attributes: attributesSchema.optional(),
+            copyOf: z.string().optional(),
           })
           .parse(await body(req));
         return json(await addObject(user.id, input), 201);
