@@ -18,6 +18,14 @@ import {
 import { api, date, readJson } from '@/lib/client';
 import { DiagramDocument, diagramSchema } from '@/lib/notation';
 import { Modal } from './modal';
+import { NodeShape } from './node-shape';
+import {
+  contrastColor,
+  nodeAppearance,
+  nodeLabel,
+  edgeAppearance,
+  lineDash,
+} from '@/lib/appearance';
 type Item = {
   id: string;
   name: string;
@@ -347,20 +355,13 @@ function DiagramPreview({ document: d }: { document: DiagramDocument }) {
     );
   const minX = Math.min(...d.nodes.map((n) => n.position.x)),
     minY = Math.min(...d.nodes.map((n) => n.position.y));
-  const maxX = Math.max(
-      ...d.nodes.map(
-        (n) =>
-          n.position.x +
-          (d.notation.nodeTypes.find((t) => t.id === n.typeId)?.appearance.width ?? 180),
-      ),
-    ),
-    maxY = Math.max(
-      ...d.nodes.map(
-        (n) =>
-          n.position.y +
-          (d.notation.nodeTypes.find((t) => t.id === n.typeId)?.appearance.height ?? 80),
-      ),
+  const appearance = (n: DiagramDocument['nodes'][number]) =>
+    nodeAppearance(
+      n,
+      d.notation.nodeTypes.find((t) => t.id === n.typeId)!,
     );
+  const maxX = Math.max(...d.nodes.map((n) => n.position.x + appearance(n).width)),
+    maxY = Math.max(...d.nodes.map((n) => n.position.y + appearance(n).height));
   return (
     <svg
       className="preview-svg"
@@ -373,48 +374,53 @@ function DiagramPreview({ document: d }: { document: DiagramDocument }) {
         return a && b ? (
           <path
             key={e.id}
-            d={`M${a.position.x + 80},${a.position.y + 40} L${b.position.x + 80},${b.position.y + 40}`}
-            stroke="#94a3b8"
-            strokeWidth="2"
+            d={`M${a.position.x + appearance(a).width},${a.position.y + appearance(a).height / 2} L${b.position.x},${b.position.y + appearance(b).height / 2}`}
+            stroke={
+              edgeAppearance(
+                d.notation.edgeTypes.find((t) => t.id === e.typeId)!.appearance,
+                e.appearance,
+              ).color
+            }
+            strokeWidth={
+              edgeAppearance(
+                d.notation.edgeTypes.find((t) => t.id === e.typeId)!.appearance,
+                e.appearance,
+              ).width
+            }
+            strokeDasharray={lineDash(
+              edgeAppearance(
+                d.notation.edgeTypes.find((t) => t.id === e.typeId)!.appearance,
+                e.appearance,
+              ),
+            )}
           />
         ) : null;
       })}
-      {d.nodes.map((n) => {
-        const t = d.notation.nodeTypes.find((t) => t.id === n.typeId);
-        if (!t) return null;
-        const { width: w, height: h, fill, stroke, shape } = t.appearance;
-        return (
-          <g key={n.id} transform={`translate(${n.position.x},${n.position.y})`}>
-            {shape === 'ellipse' ? (
-              <ellipse cx={w / 2} cy={h / 2} rx={w / 2} ry={h / 2} fill={fill} stroke={stroke} />
-            ) : shape === 'diamond' ? (
-              <polygon
-                points={`${w / 2},0 ${w},${h / 2} ${w / 2},${h} 0,${h / 2}`}
-                fill={fill}
-                stroke={stroke}
-              />
-            ) : (
-              <rect
-                width={w}
-                height={h}
-                rx={shape === 'rounded' ? 12 : 0}
-                fill={fill}
-                stroke={stroke}
-              />
-            )}
-            <text
-              x={w / 2}
-              y={h / 2}
-              textAnchor="middle"
-              dominantBaseline="middle"
-              fontSize="12"
-              fill="#334155"
-            >
-              {String(n.properties.title ?? t.name).slice(0, 24)}
-            </text>
-          </g>
-        );
-      })}
+      {[...d.nodes]
+        .sort((a, b) => (a.layer ?? 0) - (b.layer ?? 0))
+        .map((n) => {
+          const t = d.notation.nodeTypes.find((t) => t.id === n.typeId);
+          if (!t) return null;
+          const a = nodeAppearance(n, t),
+            w = a.width,
+            h = a.height;
+          return (
+            <g key={n.id} transform={`translate(${n.position.x},${n.position.y})`}>
+              <NodeShape appearance={a} shapes={d.notation.shapes} className="preview-shape" />
+              <text
+                x={w / 2}
+                y={h / 2}
+                textAnchor="middle"
+                dominantBaseline="middle"
+                fontSize={a.fontSize ?? 12}
+                transform={`rotate(${a.textRotation ?? 0},${w / 2},${h / 2})`}
+                fill={a.shape === 'text' ? 'var(--text)' : contrastColor(a.fill)}
+              >
+                {nodeLabel(n, t).slice(0, 24)}
+              </text>
+            </g>
+          );
+        })}
     </svg>
   );
 }

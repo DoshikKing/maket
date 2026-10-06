@@ -1,14 +1,21 @@
 import { z } from 'zod';
+import {
+  nodeAppearanceSchema,
+  nodeOverrideSchema,
+  edgeAppearanceSchema,
+  edgeOverrideSchema,
+  shapeSchema,
+} from './appearance';
 const identifier = z
   .string()
   .regex(/^[a-zA-Z0-9_-]+$/)
   .max(100);
-const color = z.string().regex(/^#[0-9a-fA-F]{6}$/);
 const property = z.object({
   key: identifier,
   label: z.string().min(1).max(100),
   type: z.enum(['string', 'number', 'boolean']),
   required: z.boolean().default(false),
+  visible: z.boolean().optional(),
   default: z.union([z.string().max(2000), z.number().finite(), z.boolean()]).optional(),
 });
 export const notationSchema = z
@@ -18,18 +25,13 @@ export const notationSchema = z
     version: z.string().regex(/^\d+\.\d+\.\d+$/),
     name: z.string().min(1).max(100),
     description: z.string().max(2000).default(''),
+    shapes: z.array(shapeSchema).max(50).optional(),
     nodeTypes: z
       .array(
         z.object({
           id: identifier,
           name: z.string().min(1).max(100),
-          appearance: z.object({
-            shape: z.enum(['rectangle', 'rounded', 'diamond', 'ellipse', 'text']),
-            width: z.number().min(40).max(600),
-            height: z.number().min(30).max(400),
-            fill: color,
-            stroke: color,
-          }),
+          appearance: nodeAppearanceSchema,
           properties: z.array(property).max(30),
           ports: z
             .array(
@@ -49,11 +51,7 @@ export const notationSchema = z
         z.object({
           id: identifier,
           name: z.string().min(1).max(100),
-          appearance: z.object({
-            line: z.enum(['solid', 'dashed']),
-            targetMarker: z.enum(['arrow', 'none']),
-            color: color.default('#64748b'),
-          }),
+          appearance: edgeAppearanceSchema,
           properties: z.array(property).max(30).default([]),
         }),
       )
@@ -76,7 +74,14 @@ export const notationSchema = z
       error('Идентификаторы элементов должны быть уникальны');
     if (new Set(n.edgeTypes.map((x) => x.id)).size !== n.edgeTypes.length)
       error('Идентификаторы связей должны быть уникальны');
+    if (new Set((n.shapes ?? []).map((s) => s.id)).size !== (n.shapes ?? []).length)
+      error('Идентификаторы форм должны быть уникальны');
     for (const node of n.nodeTypes) {
+      if (
+        node.appearance.shape === 'custom' &&
+        !(n.shapes ?? []).some((s) => s.id === node.appearance.shapeId)
+      )
+        error(`Неизвестная пользовательская форма: ${node.id}`);
       if (new Set(node.ports.map((x) => x.id)).size !== node.ports.length)
         error(`Повторяющиеся порты: ${node.id}`);
       if (new Set(node.properties.map((x) => x.key)).size !== node.properties.length)
@@ -86,9 +91,12 @@ export const notationSchema = z
       for (const p of type.properties)
         if (p.default !== undefined && typeof p.default !== p.type)
           error(`Неверное значение по умолчанию: ${p.key}`);
-    for (const e of n.edgeTypes)
+    for (const e of n.edgeTypes) {
+      if (e.appearance.line === 'custom' && !e.appearance.dashPattern)
+        error('Для пользовательской линии задайте dashPattern');
       if (new Set(e.properties.map((x) => x.key)).size !== e.properties.length)
         error(`Повторяющиеся свойства: ${e.id}`);
+    }
     for (const rule of n.connectionRules) {
       if (!n.edgeTypes.some((x) => x.id === rule.edgeType))
         error('Правило ссылается на неизвестную связь');
@@ -119,6 +127,12 @@ export const diagramSchema = z.object({
       z.object({
         id: identifier,
         typeId: identifier,
+        size: z
+          .object({ width: z.number().min(40).max(2000), height: z.number().min(30).max(1600) })
+          .optional(),
+        layer: z.number().int().min(-1000000).max(1000000).optional(),
+        label: z.string().max(2000).optional(),
+        appearance: nodeOverrideSchema.optional(),
         position: z.object({ x: z.number().finite(), y: z.number().finite() }),
         properties: values,
       }),
@@ -131,6 +145,7 @@ export const diagramSchema = z.object({
         typeId: identifier,
         source: identifier,
         target: identifier,
+        appearance: edgeOverrideSchema.optional(),
         sourcePort: identifier,
         targetPort: identifier,
         properties: values,
@@ -164,7 +179,15 @@ export function diagramErrors(d: DiagramDocument): string[] {
   for (const node of d.nodes) {
     const type = d.notation.nodeTypes.find((x) => x.id === node.typeId);
     if (!type) errors.push('Неизвестный тип элемента');
-    else check(node.properties, type.properties, node.id);
+    else {
+      check(node.properties, type.properties, node.id);
+      const appearance = { ...type.appearance, ...node.appearance };
+      if (
+        appearance.shape === 'custom' &&
+        !d.notation.shapes?.some((s) => s.id === appearance.shapeId)
+      )
+        errors.push('Неизвестная пользовательская форма элемента');
+    }
   }
   for (const edge of d.edges) {
     const type = d.notation.edgeTypes.find((x) => x.id === edge.typeId);
@@ -173,6 +196,9 @@ export function diagramErrors(d: DiagramDocument): string[] {
       continue;
     }
     check(edge.properties, type.properties, edge.id);
+    const appearance = { ...type.appearance, ...edge.appearance };
+    if (appearance.line === 'custom' && !appearance.dashPattern)
+      errors.push('Для пользовательской линии задайте dashPattern');
     const source = d.nodes.find((x) => x.id === edge.source),
       target = d.nodes.find((x) => x.id === edge.target);
     if (!source || !target) {

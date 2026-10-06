@@ -16,6 +16,15 @@ import { api, download, readJson } from '@/lib/client';
 import { builtinNotation, notationSchema, NotationDocument } from '@/lib/notation';
 import { NotationItem } from './library';
 import { Modal } from './modal';
+import { ShapeDesigner } from './shape-designer';
+import { NodeShape } from './node-shape';
+import { NumberField, TextAppearanceControls, EdgeAppearanceControls } from './appearance-controls';
+import {
+  shapePoints,
+  type CustomShape,
+  type NodeOverride,
+  type EdgeOverride,
+} from '@/lib/appearance';
 const copy = (n: NotationDocument) => ({
   ...structuredClone(n),
   id: `notation-${crypto.randomUUID()}`,
@@ -120,12 +129,12 @@ export function NotationsPage() {
               </p>
               <div className="notation-samples">
                 {n.document.nodeTypes.slice(0, 4).map((t) => (
-                  <div
-                    key={t.id}
-                    title={t.name}
-                    className={`sample-shape ${t.appearance.shape}`}
-                    style={{ background: t.appearance.fill, borderColor: t.appearance.stroke }}
-                  >
+                  <div key={t.id} title={t.name} className="notation-sample-render">
+                    <NodeShape
+                      appearance={{ ...t.appearance, width: 65, height: 38, strokeWidth: 1 }}
+                      shapes={n.document.shapes}
+                      className="shape-library-preview"
+                    />
                     <span>{t.name}</span>
                   </div>
                 ))}
@@ -200,6 +209,7 @@ export function NotationsPage() {
         <Modal
           title={editing.id ? 'Новая версия нотации' : 'Создать нотацию'}
           onClose={() => setEditing(null)}
+          className="notation-modal"
         >
           <NotationEditor
             initial={editing.document}
@@ -232,7 +242,8 @@ function NotationEditor({
     [text, setText] = useState(JSON.stringify(initial, null, 2)),
     [tab, setTab] = useState('visual'),
     [error, setError] = useState(''),
-    [busy, setBusy] = useState(false);
+    [busy, setBusy] = useState(false),
+    [designer, setDesigner] = useState<{ nodeId?: string; shape: CustomShape } | null>(null);
   const update = (n: NotationDocument) => {
     setDocument(n);
     setText(JSON.stringify(n, null, 2));
@@ -336,6 +347,93 @@ function NotationEditor({
             />
           </label>
           <div className="section-title">
+            <h3>Пользовательские формы</h3>
+            <button
+              type="button"
+              className="secondary small"
+              onClick={() =>
+                setDesigner({
+                  shape: {
+                    id: `shape-${crypto.randomUUID().slice(0, 8)}`,
+                    name: 'Новая форма',
+                    baseShape: 'rectangle',
+                    points: shapePoints('rectangle'),
+                    rounding: 0,
+                  },
+                })
+              }
+            >
+              Создать форму
+            </button>
+          </div>
+          <div className="custom-shape-library">
+            {document.shapes?.map((shape) => (
+              <div className="custom-shape-item" key={shape.id}>
+                <NodeShape
+                  appearance={{
+                    shape: 'custom',
+                    shapeId: shape.id,
+                    width: 60,
+                    height: 40,
+                    fill: '#eef2ff',
+                    stroke: '#6366f1',
+                  }}
+                  shapes={document.shapes}
+                  className="shape-library-preview"
+                />
+                <strong>{shape.name}</strong>
+                <button
+                  type="button"
+                  className="secondary small"
+                  onClick={() => setDesigner({ shape: structuredClone(shape) })}
+                >
+                  Изменить форму
+                </button>
+                <button
+                  type="button"
+                  className="icon-button danger"
+                  aria-label={`Удалить форму ${shape.name}`}
+                  disabled={document.nodeTypes.some(
+                    (n) => n.appearance.shape === 'custom' && n.appearance.shapeId === shape.id,
+                  )}
+                  onClick={() =>
+                    update({
+                      ...document,
+                      shapes: document.shapes?.filter((s) => s.id !== shape.id),
+                    })
+                  }
+                >
+                  <Trash2 size={15} />
+                </button>
+              </div>
+            ))}
+          </div>
+          {designer && (
+            <ShapeDesigner
+              key={designer.shape.id}
+              initial={designer.shape}
+              onCancel={() => setDesigner(null)}
+              onSave={(shape) => {
+                const exists = document.shapes?.some((s) => s.id === shape.id);
+                update({
+                  ...document,
+                  shapes: exists
+                    ? document.shapes!.map((s) => (s.id === shape.id ? shape : s))
+                    : [...(document.shapes ?? []), shape],
+                  nodeTypes: document.nodeTypes.map((n) =>
+                    n.id === designer.nodeId
+                      ? {
+                          ...n,
+                          appearance: { ...n.appearance, shape: 'custom', shapeId: shape.id },
+                        }
+                      : n,
+                  ),
+                });
+                setDesigner(null);
+              }}
+            />
+          )}
+          <div className="section-title">
             <h3>Элементы</h3>
             <button
               type="button"
@@ -400,12 +498,22 @@ function NotationEditor({
                   <label>
                     Форма
                     <select
-                      value={node.appearance.shape}
+                      aria-label={`Форма ${node.name}`}
+                      value={
+                        node.appearance.shape === 'custom'
+                          ? `custom:${node.appearance.shapeId}`
+                          : node.appearance.shape
+                      }
                       onChange={(e) =>
                         change({
                           appearance: {
                             ...node.appearance,
-                            shape: e.target.value as typeof node.appearance.shape,
+                            shape: e.target.value.startsWith('custom:')
+                              ? 'custom'
+                              : (e.target.value as typeof node.appearance.shape),
+                            shapeId: e.target.value.startsWith('custom:')
+                              ? e.target.value.slice(7)
+                              : undefined,
                           },
                         })
                       }
@@ -419,6 +527,11 @@ function NotationEditor({
                       ].map(([v, t]) => (
                         <option key={v} value={v}>
                           {t}
+                        </option>
+                      ))}
+                      {document.shapes?.map((shape) => (
+                        <option key={shape.id} value={`custom:${shape.id}`}>
+                          {shape.name}
                         </option>
                       ))}
                     </select>
@@ -490,6 +603,77 @@ function NotationEditor({
                     <Trash2 size={16} />
                   </button>
                 </div>
+                <button
+                  type="button"
+                  className="secondary small"
+                  onClick={() => {
+                    const original = document.shapes?.find((s) => s.id === node.appearance.shapeId);
+                    const base =
+                      node.appearance.shape === 'text' || node.appearance.shape === 'custom'
+                        ? 'rectangle'
+                        : node.appearance.shape;
+                    setDesigner({
+                      nodeId: node.id,
+                      shape: {
+                        ...(original ?? {
+                          baseShape: base,
+                          points: shapePoints(base),
+                          rounding: base === 'rounded' ? 15 : base === 'ellipse' ? 45 : 0,
+                        }),
+                        id: `shape-${crypto.randomUUID().slice(0, 8)}`,
+                        name: `Форма: ${node.name}`,
+                      },
+                    });
+                  }}
+                >
+                  Модифицировать базовую форму
+                </button>
+                <div className="node-type-preview">
+                  <NodeShape
+                    appearance={{ ...node.appearance, width: 180, height: 100 }}
+                    shapes={document.shapes}
+                    className="shape-library-preview"
+                  />
+                  <span
+                    style={{
+                      fontSize: node.appearance.fontSize ?? 12,
+                      transform: `rotate(${node.appearance.textRotation ?? 0}deg)`,
+                    }}
+                  >
+                    {String(node.properties.find((p) => p.key === 'title')?.default ?? node.name)}
+                  </span>
+                </div>
+                <TextAppearanceControls
+                  value={node.appearance}
+                  onChange={(patch: NodeOverride) =>
+                    change({ appearance: { ...node.appearance, ...patch } })
+                  }
+                />
+                <details>
+                  <summary>Отображение атрибутов</summary>
+                  <div className="attribute-visibility">
+                    {node.properties
+                      .filter((p) => p.key !== 'title')
+                      .map((p) => (
+                        <label key={p.key} className="inline-check">
+                          <input
+                            type="checkbox"
+                            checked={p.visible !== false}
+                            onChange={(e) =>
+                              change({
+                                properties: node.properties.map((item) =>
+                                  item.key === p.key
+                                    ? { ...item, visible: e.target.checked }
+                                    : item,
+                                ),
+                              })
+                            }
+                          />
+                          {p.label}
+                        </label>
+                      ))}
+                  </div>
+                </details>
                 <details>
                   <summary>
                     Свойства и порты ({node.properties.length} / {node.ports.length})
@@ -507,6 +691,22 @@ function NotationEditor({
           <div className="section-title">
             <h3>Связи и правила</h3>
           </div>
+          {document.edgeTypes.map((edge, index) => (
+            <fieldset className="node-config" key={edge.id}>
+              <legend>{edge.name}</legend>
+              <EdgeAppearanceControls
+                value={edge.appearance}
+                onChange={(patch: EdgeOverride) =>
+                  update({
+                    ...document,
+                    edgeTypes: document.edgeTypes.map((e, i) =>
+                      i === index ? { ...e, appearance: { ...e.appearance, ...patch } } : e,
+                    ),
+                  })
+                }
+              />
+            </fieldset>
+          ))}
           <p className="muted">
             {document.edgeTypes.map((e) => e.name).join(', ')} · {document.connectionRules.length}{' '}
             правил. Новые элементы не соединяются, пока вы не добавите правила.

@@ -8,14 +8,8 @@ import {
   Background,
   Controls,
   MiniMap,
-  Handle,
-  Position,
-  MarkerType,
   useReactFlow,
   useNodesInitialized,
-  type Node,
-  type NodeProps,
-  type Connection,
   type NodeChange,
   type EdgeChange,
   BackgroundVariant,
@@ -40,87 +34,30 @@ import {
 import { api, date, download, readJson } from '@/lib/client';
 import {
   type DiagramDocument,
-  type NotationDocument,
   defaults,
   diagramErrors,
   diagramSchema,
 } from '@/lib/notation';
 import { useUser } from './workspace';
 import { Modal } from './modal';
+import {
+  diagramNodeTypes,
+  NodeActionsContext,
+  type ShapeNode,
+  type ShapeData,
+} from './diagram-node';
+import { EdgeMarkers, markerId } from './edge-markers';
+import { NumberField, TextAppearanceControls, EdgeAppearanceControls } from './appearance-controls';
+import {
+  nodeAppearance,
+  edgeAppearance,
+  lineDash,
+  moveLayer,
+  baseShapes,
+  type NodeOverride,
+  type EdgeOverride,
+} from '@/lib/appearance';
 type Diagram = { id: string; name: string; revision: number; document: DiagramDocument };
-type ShapeData = {
-  definition: NotationDocument['nodeTypes'][number];
-  properties: Record<string, string | number | boolean>;
-};
-type ShapeNode = Node<ShapeData, 'notation'>;
-function NotationNode({ data, selected }: NodeProps<ShapeNode>) {
-  const { definition: t, properties } = data;
-  const a = t.appearance;
-  const inputs = t.ports.filter((p) => p.direction === 'input'),
-    outputs = t.ports.filter((p) => p.direction === 'output');
-  return (
-    <div
-      className={`canvas-node ${selected ? 'selected' : ''}`}
-      style={{ width: a.width, height: a.height }}
-    >
-      <svg width={a.width} height={a.height} className="node-shape" aria-hidden="true">
-        {a.shape === 'ellipse' ? (
-          <ellipse
-            cx={a.width / 2}
-            cy={a.height / 2}
-            rx={a.width / 2 - 2}
-            ry={a.height / 2 - 2}
-            fill={a.fill}
-            stroke={a.stroke}
-            strokeWidth={2}
-          />
-        ) : a.shape === 'diamond' ? (
-          <polygon
-            points={`${a.width / 2},2 ${a.width - 2},${a.height / 2} ${a.width / 2},${a.height - 2} 2,${a.height / 2}`}
-            fill={a.fill}
-            stroke={a.stroke}
-            strokeWidth={2}
-          />
-        ) : a.shape !== 'text' ? (
-          <rect
-            x={2}
-            y={2}
-            width={a.width - 4}
-            height={a.height - 4}
-            rx={a.shape === 'rounded' ? 12 : 0}
-            fill={a.fill}
-            stroke={a.stroke}
-            strokeWidth={2}
-          />
-        ) : null}
-      </svg>
-      <div className={`node-label ${a.shape === 'diamond' ? 'diamond-label' : ''}`}>
-        {String(properties.title ?? t.name)}
-      </div>
-      {inputs.map((p, i) => (
-        <Handle
-          key={p.id}
-          type="target"
-          position={Position.Left}
-          id={p.id}
-          style={{ top: `${((i + 1) / (inputs.length + 1)) * 100}%` }}
-          title={p.id}
-        />
-      ))}
-      {outputs.map((p, i) => (
-        <Handle
-          key={p.id}
-          type="source"
-          position={Position.Right}
-          id={p.id}
-          style={{ top: `${((i + 1) / (outputs.length + 1)) * 100}%` }}
-          title={p.id}
-        />
-      ))}
-    </div>
-  );
-}
-const nodeTypes = { notation: NotationNode };
 export function EditorPage({ id }: { id: string }) {
   const [diagram, setDiagram] = useState<Diagram | null>(null),
     [error, setError] = useState('');
@@ -156,13 +93,15 @@ function Editor({ initial }: { initial: Diagram }) {
     [savedDoc, setSavedDoc] = useState(JSON.stringify(initial.document)),
     [undo, setUndo] = useState<DiagramDocument[]>([]),
     [redo, setRedo] = useState<DiagramDocument[]>([]),
-    [blocked, setBlocked] = useState(false);
+    [blocked, setBlocked] = useState(false),
+    [interacting, setInteracting] = useState(false);
   const docRef = useRef(document),
     revisionRef = useRef(revision),
     savingRef = useRef(false),
-    dragStart = useRef<DiagramDocument | null>(null),
+    gesture = useRef<DiagramDocument | null>(null),
     file = useRef<HTMLInputElement>(null);
-  const dirty = JSON.stringify(document) !== savedDoc;
+  const serialized = useMemo(() => JSON.stringify(document), [document]);
+  const dirty = serialized !== savedDoc;
   const errors = useMemo(() => diagramErrors(document), [document]);
   const change = useCallback((next: DiagramDocument, record = true) => {
     if (JSON.stringify(next) === JSON.stringify(docRef.current)) return;
@@ -174,42 +113,56 @@ function Editor({ initial }: { initial: Diagram }) {
     setDocument(next);
     setError('');
   }, []);
-  async function save(retry = false): Promise<boolean> {
-    if (savingRef.current || (blocked && !retry)) return false;
-    const snapshot = docRef.current;
-    const issues = diagramErrors(snapshot);
-    if (issues.length) {
-      setError(issues.join('; '));
-      return false;
-    }
-    savingRef.current = true;
-    setSaving(true);
-    setError('');
-    try {
-      const result = await api<Diagram>(`diagrams/${initial.id}`, 'PUT', {
-        revision: revisionRef.current,
-        document: snapshot,
-      });
-      revisionRef.current = result.revision;
-      setRevision(result.revision);
-      setSavedDoc(JSON.stringify(snapshot));
-      setBlocked(false);
-      return JSON.stringify(docRef.current) === JSON.stringify(snapshot);
-    } catch (e) {
-      const message = (e as Error).message;
-      setError(message);
-      setBlocked(true);
-      return false;
-    } finally {
-      savingRef.current = false;
-      setSaving(false);
-    }
-  }
+  const save = useCallback(
+    async (retry = false): Promise<boolean> => {
+      if (gesture.current || savingRef.current || (blocked && !retry)) return false;
+      const snapshot = docRef.current;
+      const issues = diagramErrors(snapshot);
+      if (issues.length) {
+        setError(issues.join('; '));
+        return false;
+      }
+      savingRef.current = true;
+      setSaving(true);
+      setError('');
+      try {
+        const result = await api<Diagram>(`diagrams/${initial.id}`, 'PUT', {
+          revision: revisionRef.current,
+          document: snapshot,
+        });
+        revisionRef.current = result.revision;
+        setRevision(result.revision);
+        setSavedDoc(JSON.stringify(snapshot));
+        setBlocked(false);
+        return JSON.stringify(docRef.current) === JSON.stringify(snapshot);
+      } catch (e) {
+        const message = (e as Error).message;
+        setError(message);
+        setBlocked(true);
+        return false;
+      } finally {
+        savingRef.current = false;
+        setSaving(false);
+      }
+    },
+    [initial.id, blocked],
+  );
   useEffect(() => {
-    if (!dirty || !user.settings.autosave || errors.length || blocked || saving) return;
+    if (!dirty || interacting || !user.settings.autosave || errors.length || blocked || saving)
+      return;
     const timer = setTimeout(() => void save(), 1500);
     return () => clearTimeout(timer);
-  });
+  }, [
+    serialized,
+    savedDoc,
+    dirty,
+    interacting,
+    user.settings.autosave,
+    errors.length,
+    blocked,
+    saving,
+    save,
+  ]);
   useEffect(() => {
     const warn = (e: BeforeUnloadEvent) => {
       if (dirty) {
@@ -249,6 +202,84 @@ function Editor({ initial }: { initial: Diagram }) {
     window.document.addEventListener('click', navigate, true);
     return () => window.document.removeEventListener('click', navigate, true);
   });
+  const beginGesture = useCallback((_kind: 'drag' | 'resize' | 'text') => {
+    if (gesture.current) return;
+    gesture.current = structuredClone(docRef.current);
+    setInteracting(true);
+  }, []);
+  const endGesture = useCallback(() => {
+    queueMicrotask(() => {
+      const previous = gesture.current;
+      if (previous && JSON.stringify(previous) !== JSON.stringify(docRef.current)) {
+        setUndo((u) => [...u.slice(-49), previous]);
+        setRedo([]);
+      }
+      gesture.current = null;
+      setInteracting(false);
+    });
+  }, []);
+  const setNodeLabel = useCallback(
+    (id: string, text: string) => {
+      const node = docRef.current.nodes.find((n) => n.id === id);
+      if (!node) return;
+      const type = docRef.current.notation.nodeTypes.find((t) => t.id === node.typeId)!;
+      const hasTitle = type.properties.some((p) => p.key === 'title' && p.type === 'string');
+      change(
+        {
+          ...docRef.current,
+          nodes: docRef.current.nodes.map((n) =>
+            n.id === id
+              ? hasTitle
+                ? { ...n, label: undefined, properties: { ...n.properties, title: text } }
+                : { ...n, label: text }
+              : n,
+          ),
+        },
+        false,
+      );
+    },
+    [change],
+  );
+  const nodeActions = useMemo(
+    () => ({ begin: beginGesture, end: endGesture, label: setNodeLabel }),
+    [beginGesture, endGesture, setNodeLabel],
+  );
+  function updateNodeAppearance(patch: NodeOverride) {
+    if (selected?.kind !== 'node') return;
+    change({
+      ...docRef.current,
+      nodes: docRef.current.nodes.map((n) =>
+        n.id === selected.id ? { ...n, appearance: { ...n.appearance, ...patch } } : n,
+      ),
+    });
+  }
+  function updateEdgeAppearance(patch: EdgeOverride) {
+    if (selected?.kind !== 'edge') return;
+    change({
+      ...docRef.current,
+      edges: docRef.current.edges.map((e) =>
+        e.id === selected.id ? { ...e, appearance: { ...e.appearance, ...patch } } : e,
+      ),
+    });
+  }
+  function updateNodeSize(axis: 'width' | 'height', value: number) {
+    if (selected?.kind !== 'node') return;
+    change({
+      ...docRef.current,
+      nodes: docRef.current.nodes.map((n) => {
+        if (n.id !== selected.id) return n;
+        const a = nodeAppearance(
+          n,
+          docRef.current.notation.nodeTypes.find((t) => t.id === n.typeId)!,
+        );
+        return { ...n, size: { width: a.width, height: a.height, [axis]: value } };
+      }),
+    });
+  }
+  function reorderNode(id: string, direction: 'front' | 'back' | 'forward' | 'backward') {
+    const nodes = moveLayer(docRef.current.nodes, id, direction);
+    if (nodes !== docRef.current.nodes) change({ ...docRef.current, nodes });
+  }
   function addNode(typeId: string) {
     const definition = document.notation.nodeTypes.find((t) => t.id === typeId)!;
     const container = window.document.querySelector('.flow-container')!.getBoundingClientRect();
@@ -274,7 +305,10 @@ function Editor({ initial }: { initial: Diagram }) {
             (Math.max(height, ...document.notation.nodeTypes.map((t) => t.appearance.height)) + 40),
       };
       const overlap = document.nodes.some((n) => {
-        const a = document.notation.nodeTypes.find((t) => t.id === n.typeId)!.appearance;
+        const a = nodeAppearance(
+          n,
+          document.notation.nodeTypes.find((t) => t.id === n.typeId)!,
+        );
         return (
           position.x < n.position.x + a.width + 25 &&
           position.x + width + 25 > n.position.x &&
@@ -318,41 +352,87 @@ function Editor({ initial }: { initial: Diagram }) {
       ],
     };
   }
+  const flowRef = useRef(flow);
+  flowRef.current = flow;
+  const fittedIds = useRef('');
+  const nodeIds = document.nodes.map((n) => n.id).join(',');
   useEffect(() => {
-    if (nodesInitialized) void flow.fitView({ padding: 0.25, maxZoom: 1, duration: 0 });
-  }, [nodesInitialized, document.nodes.length, flow]);
-  const nodes: ShapeNode[] = document.nodes.map((n) => ({
-    id: n.id,
-    type: 'notation',
-    position: n.position,
-    data: {
-      definition: document.notation.nodeTypes.find((t) => t.id === n.typeId)!,
-      properties: n.properties,
-    },
-    selected: selected?.kind === 'node' && selected.id === n.id,
-  }));
-  const edges = document.edges.map((e) => {
-    const type = document.notation.edgeTypes.find((t) => t.id === e.typeId)!;
-    return {
-      id: e.id,
-      source: e.source,
-      target: e.target,
-      sourceHandle: e.sourcePort,
-      targetHandle: e.targetPort,
-      type: 'smoothstep',
-      label: String(e.properties.label ?? ''),
-      selected: selected?.kind === 'edge' && selected.id === e.id,
-      markerEnd:
-        type.appearance.targetMarker === 'arrow'
-          ? { type: MarkerType.ArrowClosed, color: type.appearance.color }
-          : undefined,
-      style: {
-        stroke: type.appearance.color,
-        strokeWidth: 2,
-        strokeDasharray: type.appearance.line === 'dashed' ? '6 4' : undefined,
-      },
-    };
-  });
+    if (nodesInitialized && nodeIds !== fittedIds.current) {
+      fittedIds.current = nodeIds;
+      void flowRef.current.fitView({ padding: 0.25, maxZoom: 1, duration: 0 });
+    }
+  }, [nodesInitialized, nodeIds]);
+  const nodeCache = useRef(new Map<string, ShapeNode>());
+  const nodes = useMemo(() => {
+    const result = document.nodes.map((n) => {
+      const definition = document.notation.nodeTypes.find((t) => t.id === n.typeId)!;
+      const isSelected = selected?.kind === 'node' && selected.id === n.id;
+      const previous = nodeCache.current.get(n.id);
+      if (
+        previous?.data.node === n &&
+        previous.data.definition === definition &&
+        previous.data.shapes === document.notation.shapes &&
+        previous.selected === isSelected
+      )
+        return previous;
+      const a = nodeAppearance(n, definition);
+      const next: ShapeNode = {
+        id: n.id,
+        type: 'notation',
+        position: n.position,
+        width: a.width,
+        height: a.height,
+        style: { width: a.width, height: a.height },
+        zIndex: n.layer ?? 0,
+        data: { definition, node: n, shapes: document.notation.shapes },
+        selected: isSelected,
+      };
+      nodeCache.current.set(n.id, next);
+      return next;
+    });
+    const ids = new Set(document.nodes.map((n) => n.id));
+    for (const id of nodeCache.current.keys()) if (!ids.has(id)) nodeCache.current.delete(id);
+    return result;
+  }, [document.nodes, document.notation, selected]);
+  const styledEdges = useMemo(
+    () =>
+      document.edges.map((e) => ({
+        id: e.id,
+        appearance: edgeAppearance(
+          document.notation.edgeTypes.find((t) => t.id === e.typeId)!.appearance,
+          e.appearance,
+        ),
+      })),
+    [document.edges, document.notation],
+  );
+  const edges = useMemo(
+    () =>
+      document.edges.map((e, i) => {
+        const a = styledEdges[i].appearance;
+        return {
+          id: e.id,
+          source: e.source,
+          target: e.target,
+          sourceHandle: e.sourcePort,
+          targetHandle: e.targetPort,
+          type: a.routing === 'bezier' ? 'default' : a.routing,
+          label: String(e.properties.label ?? ''),
+          selected: selected?.kind === 'edge' && selected.id === e.id,
+          markerEnd: a.targetMarker === 'none' ? undefined : markerId(initial.id, e.id, 'end'),
+          markerStart:
+            (a.sourceMarker ?? 'none') === 'none' ? undefined : markerId(initial.id, e.id, 'start'),
+          labelStyle: { fontSize: a.fontSize, fill: 'var(--text)' },
+          labelBgStyle: { fill: 'var(--panel)' },
+          style: {
+            stroke: a.color,
+            strokeWidth: a.width,
+            strokeDasharray: lineDash(a),
+            strokeLinecap: a.line === 'dotted' ? ('round' as const) : ('butt' as const),
+          },
+        };
+      }),
+    [document.edges, styledEdges, selected, initial.id],
+  );
   function deleteItems(nodeIds: string[], edgeIds: string[]) {
     change({
       ...docRef.current,
@@ -370,19 +450,35 @@ function Editor({ initial }: { initial: Diagram }) {
       deleteItems(removed, []);
       return;
     }
-    const positions = changes.filter((c) => c.type === 'position');
-    if (positions.length)
-      change(
-        {
-          ...docRef.current,
-          nodes: docRef.current.nodes.map((n) => {
-            const pos = positions.find((c) => c.id === n.id);
-            return pos?.type === 'position' && pos.position ? { ...n, position: pos.position } : n;
-          }),
-        },
-        false,
-      );
+    let changed = false;
+    const updated = docRef.current.nodes.map((n) => {
+      let next = n;
+      for (const c of changes) {
+        if (!('id' in c) || c.id !== n.id) continue;
+        if (
+          c.type === 'position' &&
+          c.position &&
+          (c.position.x !== n.position.x || c.position.y !== n.position.y)
+        ) {
+          next = { ...next, position: c.position };
+          changed = true;
+        }
+        if (c.type === 'dimensions' && c.dimensions && c.setAttributes) {
+          const a = nodeAppearance(
+            next,
+            docRef.current.notation.nodeTypes.find((t) => t.id === n.typeId)!,
+          );
+          if (a.width !== c.dimensions.width || a.height !== c.dimensions.height) {
+            next = { ...next, size: { width: c.dimensions.width, height: c.dimensions.height } };
+            changed = true;
+          }
+        }
+      }
+      return next;
+    });
+    if (changed) change({ ...docRef.current, nodes: updated }, false);
   }
+
   function edgesChanged(changes: EdgeChange[]) {
     const ids = changes.filter((c) => c.type === 'remove').map((c) => c.id);
     if (ids.length) deleteItems([], ids);
@@ -412,6 +508,16 @@ function Editor({ initial }: { initial: Diagram }) {
       ? document.notation.nodeTypes.find((t) => t.id === selectedObject.typeId)
       : document.notation.edgeTypes.find((t) => t.id === selectedObject.typeId)
     : undefined;
+  const selectedNode =
+    selected?.kind === 'node' ? document.nodes.find((n) => n.id === selected.id) : undefined;
+  const selectedEdge =
+    selected?.kind === 'edge' ? document.edges.find((e) => e.id === selected.id) : undefined;
+  const selectedNodeAppearance = selectedNode
+    ? nodeAppearance(
+        selectedNode,
+        document.notation.nodeTypes.find((t) => t.id === selectedNode.typeId)!,
+      )
+    : undefined;
   function propertyChange(key: string, value: string | number | boolean) {
     if (!selected) return;
     change({
@@ -420,7 +526,13 @@ function Editor({ initial }: { initial: Diagram }) {
         ? docRef.current.nodes
         : docRef.current.edges
       ).map((x) =>
-        x.id === selected.id ? { ...x, properties: { ...x.properties, [key]: value } } : x,
+        x.id === selected.id
+          ? {
+              ...x,
+              ...(selected.kind === 'node' && key === 'title' ? { label: undefined } : {}),
+              properties: { ...x.properties, [key]: value },
+            }
+          : x,
       ),
     } as DiagramDocument);
   }
@@ -483,7 +595,7 @@ function Editor({ initial }: { initial: Diagram }) {
             className="icon-button"
             title="Отменить"
             aria-label="Отменить"
-            disabled={!undo.length}
+            disabled={interacting || !undo.length}
             onClick={undoAction}
           >
             <Undo2 size={18} />
@@ -492,7 +604,7 @@ function Editor({ initial }: { initial: Diagram }) {
             className="icon-button"
             title="Повторить"
             aria-label="Повторить"
-            disabled={!redo.length}
+            disabled={interacting || !redo.length}
             onClick={redoAction}
           >
             <Redo2 size={18} />
@@ -512,7 +624,7 @@ function Editor({ initial }: { initial: Diagram }) {
           <button
             className="primary small"
             onClick={() => void save(true)}
-            disabled={saving || (!dirty && !blocked)}
+            disabled={interacting || saving || (!dirty && !blocked)}
           >
             <Save size={16} />
             {blocked ? 'Повторить' : 'Сохранить'}
@@ -560,6 +672,29 @@ function Editor({ initial }: { initial: Diagram }) {
           <p className="muted small-text">
             Перетащите связь от правого порта к левому. Разрешены только связи по правилам нотации.
           </p>
+          <div className="palette-section">СЛОИ</div>
+          <div className="layers-panel" aria-label="Слои диаграммы">
+            {[...document.nodes]
+              .sort((a, b) => (a.layer ?? 0) - (b.layer ?? 0))
+              .reverse()
+              .map((n) => (
+                <button
+                  className={selected?.kind === 'node' && selected.id === n.id ? 'selected' : ''}
+                  key={n.id}
+                  onClick={() => setSelected({ kind: 'node', id: n.id })}
+                >
+                  <span>
+                    {String(
+                      n.label ??
+                        n.properties.title ??
+                        document.notation.nodeTypes.find((t) => t.id === n.typeId)?.name,
+                    )}
+                  </span>
+                  <small>{n.layer ?? 0}</small>
+                </button>
+              ))}
+            {!document.nodes.length && <span className="muted small-text">Пока нет элементов</span>}
+          </div>
           <div className="palette-bottom">
             <input
               type="file"
@@ -599,53 +734,59 @@ function Editor({ initial }: { initial: Diagram }) {
           </div>
         </aside>
         <div className="flow-container">
-          <ReactFlow<ShapeNode>
-            nodes={nodes}
-            edges={edges}
-            nodeTypes={nodeTypes}
-            onNodesChange={nodesChanged}
-            onEdgesChange={edgesChanged}
-            onNodeClick={(_, n) => setSelected({ kind: 'node', id: n.id })}
-            onEdgeClick={(_, e) => setSelected({ kind: 'edge', id: e.id })}
-            onPaneClick={() => setSelected(null)}
-            onNodeDragStart={() => {
-              dragStart.current = structuredClone(docRef.current);
-            }}
-            onNodeDragStop={() => {
-              if (
-                dragStart.current &&
-                JSON.stringify(dragStart.current) !== JSON.stringify(docRef.current)
-              ) {
-                const previous = dragStart.current;
-                setUndo((u) => [...u.slice(-49), previous]);
-                setRedo([]);
-              }
-              dragStart.current = null;
-            }}
-            onConnect={(c) => {
-              const next = candidate(c);
-              const issues = diagramErrors(next);
-              if (issues.length) setError(issues.join('; '));
-              else change(next);
-            }}
-            isValidConnection={(c) => diagramErrors(candidate(c)).length === 0}
-            snapToGrid={user.settings.snapToGrid}
-            snapGrid={[20, 20]}
-            fitView
-            fitViewOptions={{ padding: 0.25, maxZoom: 1 }}
-            deleteKeyCode={['Backspace', 'Delete']}
-            minZoom={0.2}
-            maxZoom={2}
-          >
-            <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="#cbd0df" />
-            <Controls showInteractive={false} />
-            <MiniMap
-              pannable
-              zoomable
-              nodeColor={(n) => (n.data as ShapeData).definition.appearance.fill}
-              nodeStrokeColor={(n) => (n.data as ShapeData).definition.appearance.stroke}
-            />
-          </ReactFlow>
+          <NodeActionsContext.Provider value={nodeActions}>
+            <ReactFlow<ShapeNode>
+              nodes={nodes}
+              edges={edges}
+              nodeTypes={diagramNodeTypes}
+              colorMode={user.settings.theme}
+              elevateNodesOnSelect={false}
+              elevateEdgesOnSelect={false}
+              onNodesChange={nodesChanged}
+              onEdgesChange={edgesChanged}
+              onNodeClick={(_, n) => setSelected({ kind: 'node', id: n.id })}
+              onEdgeClick={(_, e) => setSelected({ kind: 'edge', id: e.id })}
+              onPaneClick={() => setSelected(null)}
+              onNodeDragStart={() => beginGesture('drag')}
+              onNodeDragStop={endGesture}
+              onConnect={(c) => {
+                const next = candidate(c);
+                const issues = diagramErrors(next);
+                if (issues.length) setError(issues.join('; '));
+                else change(next);
+              }}
+              isValidConnection={(c) => diagramErrors(candidate(c)).length === 0}
+              snapToGrid={user.settings.snapToGrid}
+              snapGrid={[20, 20]}
+              fitView
+              fitViewOptions={{ padding: 0.25, maxZoom: 1 }}
+              deleteKeyCode={['Backspace', 'Delete']}
+              minZoom={0.2}
+              maxZoom={2}
+            >
+              <EdgeMarkers diagramId={initial.id} edges={styledEdges} />
+              <Background
+                variant={BackgroundVariant.Dots}
+                gap={20}
+                size={1}
+                color="var(--canvas-dots)"
+              />
+              <Controls showInteractive={false} />
+              <MiniMap
+                pannable
+                maskColor="var(--minimap-mask)"
+                bgColor="var(--panel)"
+                zoomable
+                nodeColor={(n) =>
+                  nodeAppearance((n.data as ShapeData).node, (n.data as ShapeData).definition).fill
+                }
+                nodeStrokeColor={(n) =>
+                  nodeAppearance((n.data as ShapeData).node, (n.data as ShapeData).definition)
+                    .stroke
+                }
+              />
+            </ReactFlow>
+          </NodeActionsContext.Provider>
           {!document.nodes.length && (
             <div className="canvas-empty">
               <span>
@@ -706,6 +847,140 @@ function Editor({ initial }: { initial: Diagram }) {
                   <p className="muted">У этого типа нет дополнительных свойств.</p>
                 )}
               </div>
+              {selectedNode && selectedNodeAppearance && (
+                <div className="inspector-appearance form-stack">
+                  <h3>Размер и слои</h3>
+                  <div className="appearance-grid">
+                    <NumberField
+                      label="Ширина объекта"
+                      value={selectedNodeAppearance.width}
+                      min={40}
+                      max={2000}
+                      onChange={(v) => updateNodeSize('width', v)}
+                    />
+                    <NumberField
+                      label="Высота объекта"
+                      value={selectedNodeAppearance.height}
+                      min={30}
+                      max={1600}
+                      onChange={(v) => updateNodeSize('height', v)}
+                    />
+                  </div>
+                  <NumberField
+                    label="Уровень слоя"
+                    value={selectedNode.layer ?? 0}
+                    min={-1000000}
+                    max={1000000}
+                    onChange={(layer) =>
+                      change({
+                        ...docRef.current,
+                        nodes: docRef.current.nodes.map((n) =>
+                          n.id === selectedNode.id ? { ...n, layer: Math.round(layer) } : n,
+                        ),
+                      })
+                    }
+                  />
+                  <div className="layer-actions">
+                    <button
+                      className="secondary small"
+                      onClick={() => reorderNode(selectedNode.id, 'front')}
+                    >
+                      На передний план
+                    </button>
+                    <button
+                      className="secondary small"
+                      onClick={() => reorderNode(selectedNode.id, 'back')}
+                    >
+                      На задний план
+                    </button>
+                    <button
+                      className="secondary small"
+                      onClick={() => reorderNode(selectedNode.id, 'forward')}
+                    >
+                      На уровень выше
+                    </button>
+                    <button
+                      className="secondary small"
+                      onClick={() => reorderNode(selectedNode.id, 'backward')}
+                    >
+                      На уровень ниже
+                    </button>
+                  </div>
+                  <h3>Оформление объекта</h3>
+                  <label>
+                    Форма объекта
+                    <select
+                      aria-label="Форма объекта"
+                      value={
+                        selectedNodeAppearance.shape === 'custom'
+                          ? `custom:${selectedNodeAppearance.shapeId}`
+                          : selectedNodeAppearance.shape
+                      }
+                      onChange={(e) =>
+                        updateNodeAppearance(
+                          e.target.value.startsWith('custom:')
+                            ? { shape: 'custom', shapeId: e.target.value.slice(7) }
+                            : {
+                                shape: e.target.value as NodeOverride['shape'],
+                                shapeId: undefined,
+                              },
+                        )
+                      }
+                    >
+                      {baseShapes.map((shape, i) => (
+                        <option value={shape} key={shape}>
+                          {['Прямоугольник', 'Скруглённый', 'Ромб', 'Эллипс', 'Текст'][i]}
+                        </option>
+                      ))}
+                      {document.notation.shapes?.map((s) => (
+                        <option value={`custom:${s.id}`} key={s.id}>
+                          {s.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <div className="appearance-grid">
+                    <label>
+                      Заливка объекта
+                      <input
+                        type="color"
+                        aria-label="Заливка объекта"
+                        value={selectedNodeAppearance.fill}
+                        onChange={(e) => updateNodeAppearance({ fill: e.target.value })}
+                      />
+                    </label>
+                    <label>
+                      Контур объекта
+                      <input
+                        type="color"
+                        aria-label="Контур объекта"
+                        value={selectedNodeAppearance.stroke}
+                        onChange={(e) => updateNodeAppearance({ stroke: e.target.value })}
+                      />
+                    </label>
+                  </div>
+                  <TextAppearanceControls
+                    value={selectedNodeAppearance}
+                    onChange={updateNodeAppearance}
+                  />
+                  <small className="muted">
+                    Двойной щелчок — изменить текст. Enter — сохранить, Esc — отменить.
+                  </small>
+                </div>
+              )}
+              {selectedEdge && (
+                <div className="inspector-appearance form-stack">
+                  <h3>Оформление связи</h3>
+                  <EdgeAppearanceControls
+                    value={edgeAppearance(
+                      document.notation.edgeTypes.find((t) => t.id === selectedEdge.typeId)!
+                        .appearance,
+                      selectedEdge.appearance,
+                    )}
+                    onChange={updateEdgeAppearance}
+                  />
+                </div>
+              )}
               <div className="inspector-meta">
                 <small>ID</small>
                 <code>{selectedObject.id.slice(0, 22)}…</code>

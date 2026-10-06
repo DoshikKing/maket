@@ -1,5 +1,5 @@
 'use client';
-import { createContext, useContext, useState } from 'react';
+import { createContext, useContext, useState, useLayoutEffect } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { Workflow, Library, Shapes, Settings, LogOut, ChevronRight, Sparkles } from 'lucide-react';
@@ -25,6 +25,12 @@ export function Workspace({
   const pathname = usePathname(),
     router = useRouter();
   const [error, setError] = useState('');
+  useLayoutEffect(() => {
+    document.documentElement.dataset.theme = user.settings.theme;
+    return () => {
+      delete document.documentElement.dataset.theme;
+    };
+  }, [user.settings.theme]);
   const editor = pathname.startsWith('/diagrams/');
   const links = [
     { href: '/library', label: 'Библиотека', icon: Library },
