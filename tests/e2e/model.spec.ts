@@ -608,3 +608,113 @@ test('browser: mandatory local and shared properties are collected before atomic
   expect(updated.attributes.owner).toBe('Борис');
   expect(updated.revision).toBe(2);
 });
+test('object deletion checks ownership, revisions, children and usage; history recreates deleted objects', async ({
+  request,
+  playwright,
+}) => {
+  await login(request);
+  expect((await (await request.get('/api/model')).json()).objects).toHaveLength(0);
+  let d = await create(request);
+  expect((await (await request.get('/api/model')).json()).objects).toHaveLength(0);
+  const parent = await object(request, 'Родитель'),
+    child = await object(request, 'Удаляемый', parent.id);
+  expect(
+    (await request.delete(`/api/objects/${parent.id}`, { data: { revision: 1 } })).status(),
+  ).toBe(409);
+  d = await place(request, d, child.id);
+  const historyNumber = d.revision;
+  expect(
+    (await request.delete(`/api/objects/${child.id}`, { data: { revision: 1 } })).status(),
+  ).toBe(409);
+  d = await save(request, d, { ...d.document, nodes: [], edges: [], objects: [] });
+  expect(
+    (await request.delete(`/api/objects/${child.id}`, { data: { revision: 2 } })).status(),
+  ).toBe(409);
+  const other = await playwright.request.newContext({ baseURL: 'http://localhost:3000' });
+  await login(other);
+  expect((await other.delete(`/api/objects/${child.id}`, { data: { revision: 1 } })).status()).toBe(
+    404,
+  );
+  await other.dispose();
+  expect(
+    (await request.delete(`/api/objects/${child.id}`, { data: { revision: 1 } })).status(),
+  ).toBe(200);
+  expect((await request.get(`/api/objects/${child.id}`)).status()).toBe(404);
+  expect((await (await request.get('/api/model')).json()).objects).toHaveLength(1);
+  const historical = await (
+    await request.get(`/api/diagrams/${d.id}/history?number=${historyNumber}`)
+  ).json();
+  expect(historical.document.objects.find((o: ModelObject) => o.id === child.id).name).toBe(
+    'Удаляемый',
+  );
+  const restored = await request.post(`/api/diagrams/${d.id}/restore`, {
+    data: { revision: d.revision, number: historyNumber },
+  });
+  expect(restored.status(), await restored.text()).toBe(200);
+  expect((await restored.json()).document.nodes[0].objectId).toBe(child.id);
+  const recreated = await (await request.get(`/api/objects/${child.id}`)).json();
+  expect(recreated.incarnation).toBeTruthy();
+  expect(recreated.incarnation).not.toBe(child.incarnation);
+  expect(
+    (
+      await request.patch(`/api/objects/${child.id}`, {
+        data: { revision: 1, incarnation: child.incarnation, name: 'Устаревшее изменение' },
+      })
+    ).status(),
+  ).toBe(409);
+  expect(
+    (
+      await request.delete(`/api/objects/${child.id}`, {
+        data: { revision: 1, incarnation: child.incarnation },
+      })
+    ).status(),
+  ).toBe(409);
+
+  const raceObject = await object(request, 'Параллельное удаление'),
+    raceDiagram = await create(request);
+  const attempts = await Promise.all([
+    request.delete(`/api/objects/${raceObject.id}`, { data: { revision: 1 } }),
+    request.post(`/api/diagrams/${raceDiagram.id}/representations`, {
+      data: {
+        revision: 1,
+        bindingId: raceDiagram.document.bindings[0].id,
+        typeId: 'process',
+        objectId: raceObject.id,
+        position: { x: 0, y: 0 },
+      },
+    }),
+  ]);
+  expect([
+    [200, 404],
+    [409, 201],
+  ]).toContainEqual(attempts.map((r) => r.status()));
+});
+test('browser: delete an unused tree object, including saving removal of its representation first', async ({
+  request,
+  page,
+}) => {
+  await login(request, page);
+  let d = await create(request);
+  const o = await object(request, 'Удалить из дерева');
+  d = await place(request, d, o.id);
+  await page.goto(`/diagrams/${d.id}`);
+  await expect(page.locator('.react-flow__node')).toHaveCount(1);
+  const treeRow = page.locator(`.object-tree-row[data-object-id="${o.id}"]`);
+  page.on('dialog', (dialog) => dialog.accept());
+  await treeRow
+    .getByRole('button', { name: 'Удалить объект Удалить из дерева', exact: true })
+    .click();
+  await expect(page.locator('.object-panel [role="alert"]')).toContainText('используется');
+  await expect(treeRow).toBeVisible();
+  await page.locator('.react-flow__node').click();
+  await page.getByRole('button', { name: 'Удалить элемент', exact: true }).click();
+  await expect(page.locator('.react-flow__node')).toHaveCount(0);
+  await treeRow
+    .getByRole('button', { name: 'Удалить объект Удалить из дерева', exact: true })
+    .click();
+  await expect(treeRow).toHaveCount(0);
+  await expect(page.locator('[role="treeitem"]')).toHaveCount(0);
+  expect((await request.get(`/api/objects/${o.id}`)).status()).toBe(404);
+  await page.reload();
+  await expect(page.locator('[role="treeitem"]')).toHaveCount(0);
+});

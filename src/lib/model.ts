@@ -21,6 +21,7 @@ export const objectSnapshotSchema = z.object({
   attributes: attributesSchema,
   archived: z.boolean(),
   revision: z.number().int().positive(),
+  incarnation: z.string().datetime().optional(),
 });
 export type ModelObject = z.infer<typeof objectSnapshotSchema>;
 export const bindingSchema = z.object({
@@ -58,7 +59,10 @@ export function mergeModelObjects(
   return (replace ? updates : [...previous, ...updates.filter((o) => !old.has(o.id))]).map((o) => {
     const before = old.get(o.id),
       next = incoming.get(o.id);
-    return before && (!next || before.revision >= next.revision) ? before : (next ?? o);
+    return before &&
+      (!next || (before.incarnation === next.incarnation && before.revision >= next.revision))
+      ? before
+      : (next ?? o);
   });
 }
 export const qualify = (bindingId: string, typeId: string) => `${bindingId}:${typeId}`;

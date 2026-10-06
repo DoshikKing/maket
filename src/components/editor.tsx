@@ -469,6 +469,7 @@ function Editor({ initial }: { initial: Diagram }) {
         mergeObjects([
           await api<ModelObject>(`objects/${objectId}`, 'PATCH', {
             revision: current.revision,
+            incarnation: current.incarnation,
             attributes: {
               ...current.attributes,
               ...Object.fromEntries(shared.map((p) => [p.objectKey ?? p.key, properties![p.key]])),
@@ -720,6 +721,7 @@ function Editor({ initial }: { initial: Diagram }) {
           if (!object) return;
           const updated = await api<ModelObject>(`objects/${object.id}`, 'PATCH', {
             revision: object.revision,
+            incarnation: object.incarnation,
             attributes: { ...object.attributes, [p.objectKey ?? p.key]: value },
           });
           mergeObjects([updated]);
@@ -976,6 +978,23 @@ function Editor({ initial }: { initial: Diagram }) {
           selectedId={selectedNode?.objectId}
           onSaved={(o) => mergeObjects([o])}
           onRefresh={() => void refreshObjects()}
+          onRemove={async (o) => {
+            setCommandBusy(true);
+            try {
+              if (!(await flush()))
+                throw new Error('Сначала завершите сохранение диаграммы, затем повторите удаление');
+              await api(`objects/${o.id}`, 'DELETE', {
+                revision: o.revision,
+                incarnation: o.incarnation,
+              });
+              mergeObjects(
+                objectsRef.current.filter((x) => x.id !== o.id),
+                true,
+              );
+            } finally {
+              setCommandBusy(false);
+            }
+          }}
           onPlace={(id) => void addNode(placementType, id)}
           onLocate={(id) => {
             const n = docRef.current.nodes.find((n) => n.objectId === id);

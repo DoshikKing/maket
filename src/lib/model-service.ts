@@ -43,7 +43,8 @@ export const snapshot = (o: {
   attributes: unknown;
   archived: boolean;
   revision: number;
-}): ModelObject => objectSnapshotSchema.parse(o);
+  createdAt?: Date;
+}): ModelObject => objectSnapshotSchema.parse({ ...o, incarnation: o.createdAt?.toISOString() });
 async function recordObject(tx: Tx, object: Parameters<typeof snapshot>[0]) {
   await tx.modelObjectRevision.create({
     data: { objectId: object.id, number: object.revision, snapshot: json(snapshot(object)) },
@@ -399,6 +400,10 @@ export async function saveModelDiagram(
       const d = await tx.diagram.findFirst({ where: { id: diagramId, ownerId } });
       if (!d) reject(404, 'Диаграмма не найдена');
       const current = modelDiagramSchema.parse(d.document);
+      await tx.modelSpace.update({
+        where: { id: current.modelSpaceId },
+        data: { revision: { increment: 0 } },
+      });
       if (restoreNumber !== undefined) {
         const r = await tx.diagramRevision.findUnique({
           where: { diagramId_number: { diagramId, number: restoreNumber } },
@@ -450,6 +455,36 @@ export async function saveModelDiagram(
       if (next.modelSpaceId !== current.modelSpaceId)
         reject(400, 'Пространство диаграммы нельзя менять');
       await checkBindings(tx, ownerId, diagramId, current, next);
+      if (restoreNumber !== undefined) {
+        // Historical snapshots remain self-contained even after an unused object is deleted.
+        const known = await tx.modelObject.findMany({
+          where: { id: { in: next.objects.map((o) => o.id) } },
+          select: { id: true, spaceId: true },
+        });
+        if (known.some((o) => o.spaceId !== current.modelSpaceId))
+          reject(409, 'Идентификатор исторического объекта занят в другом пространстве');
+        const present = new Set(known.map((o) => o.id)),
+          pending = next.objects.filter((o) => !present.has(o.id));
+        if (pending.length)
+          await tx.modelSpace.update({
+            where: { id: current.modelSpaceId },
+            data: { revision: { increment: 1 } },
+          });
+        while (pending.length) {
+          const i = pending.findIndex((o) => !o.parentId || present.has(o.parentId));
+          if (i < 0) reject(400, 'Не удалось восстановить дерево объектов');
+          const [o] = pending.splice(i, 1);
+          await createObject(tx, current.modelSpaceId, {
+            id: o.id,
+            name: o.name,
+            parentId: o.parentId,
+            description: o.description,
+            attributes: o.attributes,
+            archived: o.archived,
+          });
+          present.add(o.id);
+        }
+      }
       const live = await liveDocument(tx, next);
       const prior = new Set(current.nodes.map((n) => `${n.id}:${n.objectId}`));
       for (const n of live.nodes) {
@@ -527,9 +562,13 @@ export async function attachNotation(
   });
 }
 export async function duplicateModelDiagram(ownerId: string, diagramId: string) {
-  const original = await getDiagram(ownerId, diagramId);
-  const document = modelDiagramSchema.parse(original.document);
+  const space = await ensureModel(ownerId);
   return db.$transaction(async (tx) => {
+    await tx.modelSpace.update({ where: { id: space.id }, data: { revision: { increment: 0 } } });
+    const original = await tx.diagram.findFirst({ where: { id: diagramId, ownerId } });
+    if (!original) reject(404, 'Диаграмма не найдена');
+    const document = await liveDocument(tx, modelDiagramSchema.parse(original.document));
+    valid(document);
     const d = await tx.diagram.create({
       data: {
         ownerId,
@@ -566,11 +605,42 @@ export async function addObject(
     return createObject(tx, space.id, input);
   });
 }
+export async function deleteObject(
+  ownerId: string,
+  objectId: string,
+  expected: number,
+  incarnation?: string,
+) {
+  const space = await ensureModel(ownerId);
+  return db.$transaction(async (tx) => {
+    await tx.modelSpace.update({ where: { id: space.id }, data: { revision: { increment: 1 } } });
+    const object = await tx.modelObject.findFirst({ where: { id: objectId, spaceId: space.id } });
+    if (!object) reject(404, 'Объект не найден');
+    if (incarnation && incarnation !== object.createdAt.toISOString())
+      reject(409, 'Объект был удалён и восстановлен. Обновите модель');
+    if (object.revision !== expected)
+      reject(409, 'Объект изменён в другой вкладке. Обновите модель');
+    if (await tx.modelObject.count({ where: { spaceId: space.id, parentId: objectId } }))
+      reject(409, 'У объекта есть дочерние объекты. Сначала переместите или удалите их');
+    const usages = await tx.diagramObjectUsage.findMany({
+      where: { objectId },
+      include: { diagram: { select: { name: true } } },
+    });
+    if (usages.length)
+      reject(
+        409,
+        `Объект используется в диаграммах: ${usages.map((u) => u.diagram.name).join(', ')}. Сначала удалите его представления и сохраните диаграммы`,
+      );
+    await tx.modelObject.delete({ where: { id: objectId } });
+    return { ok: true };
+  });
+}
 export async function updateObject(
   ownerId: string,
   objectId: string,
   input: {
     revision: number;
+    incarnation?: string;
     name?: string;
     description?: string;
     parentId?: string | null;
@@ -584,7 +654,10 @@ export async function updateObject(
     await tx.modelSpace.update({ where: { id: space.id }, data: { revision: { increment: 1 } } });
     const current = await tx.modelObject.findFirst({ where: { id: objectId, spaceId: space.id } });
     if (!current) reject(404, 'Объект не найден');
-    let data = { ...input };
+    if (input.incarnation && input.incarnation !== current.createdAt.toISOString())
+      reject(409, 'Объект был удалён и восстановлен. Обновите модель');
+    const { incarnation: _incarnation, ...fields } = input;
+    let data = { ...fields };
     delete (data as Partial<typeof input>).revision;
     if (restoreNumber !== undefined) {
       const r = await tx.modelObjectRevision.findUnique({
@@ -641,7 +714,12 @@ export async function addRepresentation(
   return db.$transaction(async (tx) => {
     const d = await tx.diagram.findFirst({ where: { id: diagramId, ownerId } });
     if (!d) reject(404, 'Диаграмма не найдена');
-    let document = await liveDocument(tx, modelDiagramSchema.parse(d.document));
+    const stored = modelDiagramSchema.parse(d.document);
+    await tx.modelSpace.update({
+      where: { id: stored.modelSpaceId },
+      data: { revision: { increment: 0 } },
+    });
+    let document = await liveDocument(tx, stored);
     const type = document.bindings
       .find((b) => b.id === input.bindingId)
       ?.document.nodeTypes.find((t) => t.id === input.typeId);

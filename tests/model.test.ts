@@ -225,4 +225,14 @@ describe('cross-notation model', () => {
     expect(mergeModelObjects(before, [changed])[0]).toBe(changed);
     expect(mergeModelObjects(before, [object], true)).toEqual([latest]);
   });
+  it('accepts a restored incarnation with a restarted revision counter', () => {
+    const old = { ...object, revision: 9, incarnation: '2026-10-06T10:00:00.000Z' },
+      restored = {
+        ...object,
+        revision: 1,
+        incarnation: '2026-10-06T11:00:00.000Z',
+        name: 'Восстановлен',
+      };
+    expect(mergeModelObjects([old], [restored])[0]).toBe(restored);
+  });
 });

@@ -25,6 +25,7 @@ import {
   attachNotation,
   addObject,
   updateObject,
+  deleteObject,
   snapshot,
   addRepresentation,
 } from '@/lib/model-service';
@@ -321,11 +322,21 @@ async function handle(req: NextRequest, context: { params: Promise<{ path: strin
             take: 100,
           }),
         );
+      if (method === 'DELETE' && !action) {
+        const { revision, incarnation } = z
+          .object({
+            revision: z.number().int().positive(),
+            incarnation: z.string().datetime().optional(),
+          })
+          .parse(await body(req));
+        return json(await deleteObject(user.id, id, revision, incarnation));
+      }
       if (method === 'GET') return json(snapshot(object));
       if (method === 'PATCH') {
         const input = z
           .object({
             revision: z.number().int().positive(),
+            incarnation: z.string().datetime().optional(),
             name: nameSchema.optional(),
             description: z.string().max(4000).optional(),
             parentId: z.string().nullable().optional(),
@@ -337,9 +348,20 @@ async function handle(req: NextRequest, context: { params: Promise<{ path: strin
       }
       if (method === 'POST' && action === 'restore') {
         const input = z
-          .object({ revision: z.number().int().positive(), number: z.number().int().positive() })
+          .object({
+            revision: z.number().int().positive(),
+            number: z.number().int().positive(),
+            incarnation: z.string().datetime().optional(),
+          })
           .parse(await body(req));
-        return json(await updateObject(user.id, id, { revision: input.revision }, input.number));
+        return json(
+          await updateObject(
+            user.id,
+            id,
+            { revision: input.revision, incarnation: input.incarnation },
+            input.number,
+          ),
+        );
       }
     }
     if (resource === 'diagrams') {

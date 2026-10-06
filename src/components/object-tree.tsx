@@ -1,6 +1,15 @@
 'use client';
 import { useState } from 'react';
-import { Plus, ChevronRight, RefreshCw, Copy, Archive, Pencil, LocateFixed } from 'lucide-react';
+import {
+  Plus,
+  ChevronRight,
+  RefreshCw,
+  Copy,
+  Archive,
+  Pencil,
+  LocateFixed,
+  Trash2,
+} from 'lucide-react';
 import { api, date } from '@/lib/client';
 import { attributesSchema, type ModelObject } from '@/lib/model';
 import { Modal } from './modal';
@@ -70,7 +79,7 @@ export function ObjectEditor({
                 description,
                 parentId: parent || null,
                 attributes: values,
-                ...(object ? { revision: object.revision } : {}),
+                ...(object ? { revision: object.revision, incarnation: object.incarnation } : {}),
               },
             );
             onSaved(result);
@@ -283,6 +292,7 @@ export function ObjectEditor({
                   try {
                     const result = await api<ModelObject>(`objects/${object.id}/restore`, 'POST', {
                       revision: object.revision,
+                      incarnation: object.incarnation,
                       number: r.number,
                     });
                     onSaved(result);
@@ -311,6 +321,7 @@ export function ObjectTree({
   onLocate,
   onSaved,
   onRefresh,
+  onRemove,
 }: {
   objects: ModelObject[];
   counts: Map<string, number>;
@@ -319,6 +330,7 @@ export function ObjectTree({
   onLocate: (id: string) => void;
   onSaved: (o: ModelObject) => void;
   onRefresh: () => void;
+  onRemove: (object: ModelObject) => Promise<void>;
 }) {
   const [query, setQuery] = useState(''),
     [collapsed, setCollapsed] = useState(new Set<string>()),
@@ -341,7 +353,13 @@ export function ObjectTree({
     const o = objects.find((o) => o.id === id);
     if (!o) return;
     try {
-      onSaved(await api<ModelObject>(`objects/${id}`, 'PATCH', { revision: o.revision, parentId }));
+      onSaved(
+        await api<ModelObject>(`objects/${id}`, 'PATCH', {
+          revision: o.revision,
+          incarnation: o.incarnation,
+          parentId,
+        }),
+      );
       setError('');
     } catch (err) {
       setError((err as Error).message);
@@ -475,6 +493,7 @@ export function ObjectTree({
                       onSaved(
                         await api<ModelObject>(`objects/${o.id}`, 'PATCH', {
                           revision: o.revision,
+                          incarnation: o.incarnation,
                           archived: !o.archived,
                         }),
                       );
@@ -484,6 +503,26 @@ export function ObjectTree({
                   }}
                 >
                   <Archive size={12} />
+                </button>
+                <button
+                  aria-label={`Удалить объект ${o.name}`}
+                  title="Удалить неиспользуемый объект"
+                  onClick={async () => {
+                    if (
+                      !confirm(
+                        `Удалить объект «${o.name}» и историю его общих свойств? Исторические снимки диаграмм сохранятся. Объекты с представлениями или детьми удалить нельзя.`,
+                      )
+                    )
+                      return;
+                    try {
+                      await onRemove(o);
+                      setError('');
+                    } catch (err) {
+                      setError((err as Error).message);
+                    }
+                  }}
+                >
+                  <Trash2 size={12} />
                 </button>
               </div>
             </div>
