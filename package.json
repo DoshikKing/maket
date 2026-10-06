@@ -12,7 +12,8 @@
     "db:migrate": "node scripts/migrate.mjs",
     "test:e2e": "playwright test",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "user:create-test": "node scripts/create-test-user.mjs"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^6.19.3",
