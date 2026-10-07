@@ -45,6 +45,7 @@ import { EdgeMarkers, markerId } from './edge-markers';
 import { NumberField, TextAppearanceControls, EdgeAppearanceControls } from './appearance-controls';
 import {
   nodeAppearance,
+  nodeLabel,
   edgeAppearance,
   lineDash,
   moveLayer,
@@ -807,6 +808,13 @@ function Editor({ initial }: { initial: Diagram }) {
     selected?.kind === 'node' ? document.nodes.find((n) => n.id === selected.id) : undefined;
   const selectedEdge =
     selected?.kind === 'edge' ? document.edges.find((e) => e.id === selected.id) : undefined;
+  const selectedNodeCaption =
+    selected?.kind === 'node' && selectedObject && definition
+      ? nodeLabel(
+          selectedObject as LegacyDocument['nodes'][number],
+          definition as (typeof document.notation.nodeTypes)[number],
+        )
+      : undefined;
   const selectedNodeAppearance = selectedNode
     ? nodeAppearance(
         selectedNode,
@@ -1474,8 +1482,8 @@ function Editor({ initial }: { initial: Diagram }) {
                   <GitBranch size={20} />
                 </span>
                 <div>
-                  <strong>{definition.name}</strong>
-                  <small>{selected?.kind === 'node' ? 'Элемент' : 'Соединение'}</small>
+                  <strong>{selectedNodeCaption ?? definition.name}</strong>
+                  <small>{selected?.kind === 'node' ? definition.name : 'Соединение'}</small>
                 </div>
               </div>
               {selectedNode?.objectId && objectLookup.get(selectedNode.objectId) && (
@@ -1561,7 +1569,14 @@ function Editor({ initial }: { initial: Diagram }) {
                         key={`${selected?.id}:${p.key}`}
                         shared={p.scope === 'object' && selected?.kind === 'node'}
                         type={p.type === 'number' ? 'number' : 'text'}
-                        value={String(selectedObject.properties[p.key] ?? '')}
+                        value={
+                          selectedNodeCaption !== undefined &&
+                          p.key === 'title' &&
+                          p.type === 'string' &&
+                          p.scope !== 'object'
+                            ? selectedNodeCaption
+                            : String(selectedObject.properties[p.key] ?? '')
+                        }
                         onValue={(value) =>
                           propertyChange(p.key, p.type === 'number' ? Number(value) : value)
                         }

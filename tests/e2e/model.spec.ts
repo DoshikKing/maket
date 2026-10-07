@@ -415,10 +415,19 @@ test('browser: create in tree, drop aliases, change shared name and local captio
   await first.dblclick();
   await page.getByLabel('Текст объекта', { exact: true }).fill('Местная подпись');
   await page.getByLabel('Текст объекта', { exact: true }).press('Enter');
+  await expect(page.locator('.inspector-type strong')).toHaveText('Местная подпись');
+  await expect(page.locator('.inspector').getByLabel('Название', { exact: false })).toHaveValue(
+    'Местная подпись',
+  );
   await row.getByRole('button', { name: 'Изменить объект Общий заказ', exact: true }).click();
   await page.getByLabel('Имя объекта', { exact: true }).fill('Новое общее имя');
   await page.getByRole('button', { name: 'Сохранить объект', exact: true }).click();
   await expect(first.locator('.node-label')).toHaveText('Местная подпись');
+  await expect(page.locator('.inspector-type strong')).toHaveText('Местная подпись');
+  await expect(page.locator('.inspector').getByLabel('Название', { exact: false })).toHaveValue(
+    'Местная подпись',
+  );
+  await expect(page.locator('.model-object-summary strong')).toHaveText('Новое общее имя');
   await expect(page.locator('.react-flow__node').nth(1).locator('.node-label')).toHaveText(
     'Новое общее имя',
   );
@@ -437,6 +446,15 @@ test('browser: create in tree, drop aliases, change shared name and local captio
   expect(
     (await (await request.get(`/api/diagrams/${d.id}`)).json()).document.nodes[0].objectId,
   ).toBe(objectId);
+  await first.click();
+  const caption = page.locator('.inspector').getByLabel('Название', { exact: false });
+  await expect(caption).toHaveValue('Местная подпись');
+  await caption.fill('Подпись из свойств');
+  await expect(first.locator('.node-label')).toHaveText('Подпись из свойств');
+  await expect(page.locator('.inspector-type strong')).toHaveText('Подпись из свойств');
+  await page.getByRole('button', { name: 'Сбросить локальную подпись', exact: true }).click();
+  await expect(caption).toHaveValue('Новое общее имя');
+  await expect(first.locator('.node-label')).toHaveText('Новое общее имя');
 });
 test('browser: cross-notation skin preview maps ports, preserves the edge and commits shared attributes once', async ({
   page,
@@ -1142,4 +1160,56 @@ test('browser: relation explorer, nested references, shared arrow placement and 
   await page.reload();
   await expect(page.locator('.react-flow__edge')).toHaveCount(0);
   await expect(page.locator('[data-model-relation-id]')).toHaveCount(0);
+});
+
+test('browser: drag arrows between different model objects and their aliases', async ({
+  page,
+  request,
+}) => {
+  await login(request, page);
+  const source = await object(request, 'Первый объект'),
+    target = await object(request, 'Второй объект');
+  let d = await create(request);
+  d = await place(request, d, source.id);
+  d = await place(request, d, target.id);
+  d = await place(request, d, source.id);
+  d = await place(request, d, target.id);
+  d = await save(request, d, {
+    ...d.document,
+    nodes: d.document.nodes.map((n, i) => ({
+      ...n,
+      position: { x: (i % 2) * 250, y: i < 2 ? 0 : 180 },
+    })),
+  });
+  await page.goto(`/diagrams/${d.id}`);
+  await expect(page.locator('.react-flow__node')).toHaveCount(4);
+  for (const [index, [from, to]] of [
+    [0, 1],
+    [2, 3],
+    [0, 2],
+  ].entries()) {
+    await page.locator('.react-flow__controls-fitview').click();
+    const a = (await page
+      .locator(`[data-id="${d.document.nodes[from].id}"] .source[data-handleid="out"]`)
+      .boundingBox())!;
+    const b = (await page
+      .locator(`[data-id="${d.document.nodes[to].id}"] .target[data-handleid="in"]`)
+      .boundingBox())!;
+    await page.mouse.move(a.x + a.width / 2, a.y + a.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 20 });
+    await page.mouse.up();
+    await expect(page.locator('.react-flow__edge')).toHaveCount(index + 1);
+    await expect(page.getByText(/Сохранено · ревизия/)).toBeVisible({ timeout: 15000 });
+  }
+  const saved = await (await request.get(`/api/diagrams/${d.id}`)).json();
+  expect(saved.document.relations).toHaveLength(3);
+  expect(
+    saved.document.relations.filter(
+      (r: { sourceId: string; targetId: string }) =>
+        r.sourceId === source.id && r.targetId === target.id,
+    ),
+  ).toHaveLength(2);
+  await page.reload();
+  await expect(page.locator('.react-flow__edge')).toHaveCount(3);
 });
