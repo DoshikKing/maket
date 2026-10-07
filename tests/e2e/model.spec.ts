@@ -834,6 +834,12 @@ test('browser: draw a connection between representations in a secondary notation
   await expect(
     page.getByText('Соединение запрещено правилами нотации', { exact: true }),
   ).toBeVisible();
+  const notice = page.locator('.connection-toast');
+  await notice.getByRole('button', { name: 'Закрыть уведомление' }).click();
+  await expect(notice).toHaveCount(0);
+  await connect(d.document.nodes[1].id, d.document.nodes[2].id, 'uml-out', 'in');
+  await expect(notice).toBeVisible();
+  await expect(notice).toHaveCount(0, { timeout: 5000 });
   await chooser.selectOption('universal:association');
   await connect(d.document.nodes[1].id, d.document.nodes[2].id, 'uml-out', 'in');
   await expect(page.locator('.react-flow__edge')).toHaveCount(3);

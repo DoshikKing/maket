@@ -31,6 +31,7 @@ import {
   ChevronDown,
   CheckCircle2,
   AlertCircle,
+  X,
 } from 'lucide-react';
 import { api, date, download, readJson } from '@/lib/client';
 import { type DiagramDocument as LegacyDocument, defaults } from '@/lib/notation';
@@ -120,6 +121,7 @@ function Editor({ initial }: { initial: Diagram }) {
     [selected, setSelected] = useState<{ kind: 'node' | 'edge'; id: string } | null>(null),
     [edgeType, setEdgeType] = useState(initial.document.notation.edgeTypes[0].id),
     [error, setError] = useState(''),
+    [connectionNotice, setConnectionNotice] = useState<{ message: string } | null>(null),
     [saving, setSaving] = useState(false),
     [historyOpen, setHistoryOpen] = useState(false),
     [revisions, setRevisions] = useState<{ number: number; createdAt: string; reason: string }[]>(
@@ -590,6 +592,11 @@ function Editor({ initial }: { initial: Diagram }) {
       ],
     };
   }
+  useEffect(() => {
+    if (!connectionNotice) return;
+    const timer = setTimeout(() => setConnectionNotice(null), 3000);
+    return () => clearTimeout(timer);
+  }, [connectionNotice]);
   const connectionEnded: OnConnectEnd = (_, state) => {
     if (state.isValid !== false || !state.fromHandle || !state.toHandle) return;
     const [source, target] =
@@ -597,7 +604,7 @@ function Editor({ initial }: { initial: Diagram }) {
         ? [state.fromHandle, state.toHandle]
         : [state.toHandle, state.fromHandle];
     if (source.type !== 'source' || target.type !== 'target') {
-      setError('Соедините выходной порт с входным');
+      setConnectionNotice({ message: 'Соедините выходной порт с входным' });
       return;
     }
     const issues = modelErrors(
@@ -612,7 +619,7 @@ function Editor({ initial }: { initial: Diagram }) {
         relationsRef.current,
       ),
     );
-    if (issues.length) setError(issues.join('; '));
+    if (issues.length) setConnectionNotice({ message: issues.join('; ') });
   };
   const flowRef = useRef(flow);
   flowRef.current = flow;
@@ -1143,6 +1150,20 @@ function Editor({ initial }: { initial: Diagram }) {
           {error}
         </div>
       )}
+      {connectionNotice && (
+        <div className="connection-toast" role="alert">
+          <AlertCircle size={20} aria-hidden="true" />
+          <span>{connectionNotice.message}</span>
+          <button
+            type="button"
+            className="icon-button"
+            aria-label="Закрыть уведомление"
+            onClick={() => setConnectionNotice(null)}
+          >
+            <X size={18} aria-hidden="true" />
+          </button>
+        </div>
+      )}
       <div className="editor-body model-editor-body">
         <ObjectTree
           objects={objects}
@@ -1442,7 +1463,7 @@ function Editor({ initial }: { initial: Diagram }) {
                 const issues = modelErrors(
                   packDocument(next, objectsRef.current, relationsRef.current),
                 );
-                if (issues.length) setError(issues.join('; '));
+                if (issues.length) setConnectionNotice({ message: issues.join('; ') });
                 else {
                   setEdgeType(next.edges[next.edges.length - 1].typeId);
                   change(next);
