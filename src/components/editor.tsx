@@ -44,6 +44,8 @@ import {
   type ShapeData,
 } from './diagram-node';
 import { EdgeMarkers, markerId } from './edge-markers';
+import { RelationAnchor, type RelationAnchorNode } from './relation-anchor';
+import { edgeGeometry } from '@/lib/diagram-geometry';
 import { NumberField, TextAppearanceControls, EdgeAppearanceControls } from './appearance-controls';
 import {
   nodeAppearance,
@@ -63,6 +65,8 @@ import {
   connectionTypeForSource,
   mergeModelObjects,
   packDocument,
+  participantId,
+  relationEntity,
   modelErrors,
   effectiveNode,
   effectiveEdge,
@@ -77,6 +81,7 @@ import {
   type ViewDocument,
   type ModelDocument,
 } from '@/lib/model';
+const canvasNodeTypes = { ...diagramNodeTypes, 'relation-anchor': RelationAnchor };
 type DiagramDocument = ViewDocument;
 type Diagram = {
   id: string;
@@ -552,14 +557,17 @@ function Editor({ initial }: { initial: Diagram }) {
     targetHandle?: string | null;
   }): DiagramDocument {
     const current = docRef.current;
-    const typeId = connectionTypeForSource(current, c.source, edgeType, c.sourceHandle);
+    const typeId = current.edges.some((e) => e.id === c.source || e.id === c.target)
+      ? 'universal:association'
+      : connectionTypeForSource(current, c.source, edgeType, c.sourceHandle);
     const definition = current.notation.edgeTypes.find((t) => t.id === typeId);
     const values = defaults(definition?.properties ?? []);
     const relationId = crypto.randomUUID();
     const relation: ModelRelation = {
       id: relationId,
-      sourceId: current.nodes.find((n) => n.id === c.source)!.objectId!,
-      targetId: current.nodes.find((n) => n.id === c.target)!.objectId!,
+      sourceId: participantId(current, c.source)!,
+      targetId: participantId(current, c.target)!,
+      parentId: null,
       name: definition?.name ?? 'Связь',
       description: '',
       archived: false,
@@ -632,7 +640,12 @@ function Editor({ initial }: { initial: Diagram }) {
     }
   }, [nodesInitialized, nodeIds]);
   const nodeCache = useRef(new Map<string, ShapeNode>());
-  const nodes = useMemo(() => {
+  const geometry = useMemo(
+    () => edgeGeometry(document),
+    [document.nodes, document.edges, document.notation],
+  );
+  type CanvasNode = ShapeNode | RelationAnchorNode;
+  const nodes = useMemo<CanvasNode[]>(() => {
     const result = document.nodes.map((n) => {
       const definition = document.notation.nodeTypes.find((t) => t.id === n.typeId)!;
       const isSelected = selected?.kind === 'node' && selected.id === n.id;
@@ -667,8 +680,34 @@ function Editor({ initial }: { initial: Diagram }) {
     });
     const ids = new Set(document.nodes.map((n) => n.id));
     for (const id of nodeCache.current.keys()) if (!ids.has(id)) nodeCache.current.delete(id);
-    return result;
-  }, [document.nodes, document.notation, selected, objectLookup]);
+    const anchors: RelationAnchorNode[] = document.edges.flatMap((e) => {
+      const center = geometry.get(e.id)?.center;
+      return center
+        ? [
+            {
+              id: e.id,
+              type: 'relation-anchor',
+              position: { x: center.x - 12, y: center.y - 8 },
+              width: 24,
+              height: 16,
+              draggable: false,
+              zIndex: 1,
+              selected: selected?.kind === 'edge' && selected.id === e.id,
+              data: { name: relationLookup.get(e.relationId ?? '')?.name ?? 'Связь' },
+            },
+          ]
+        : [];
+    });
+    return [...result, ...anchors];
+  }, [
+    document.nodes,
+    document.edges,
+    document.notation,
+    selected,
+    objectLookup,
+    geometry,
+    relationLookup,
+  ]);
   const styledEdges = useMemo(
     () =>
       document.edges.map((e) => ({
@@ -722,17 +761,24 @@ function Editor({ initial }: { initial: Diagram }) {
     ],
   );
   function deleteItems(nodeIds: string[], edgeIds: string[]) {
+    const removed = new Set([...nodeIds, ...edgeIds]);
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const e of docRef.current.edges)
+        if (!removed.has(e.id) && (removed.has(e.source) || removed.has(e.target))) {
+          removed.add(e.id);
+          changed = true;
+        }
+    }
     change({
       ...docRef.current,
-      nodes: docRef.current.nodes.filter((n) => !nodeIds.includes(n.id)),
-      edges: docRef.current.edges.filter(
-        (e) =>
-          !edgeIds.includes(e.id) && !nodeIds.includes(e.source) && !nodeIds.includes(e.target),
-      ),
+      nodes: docRef.current.nodes.filter((n) => !removed.has(n.id)),
+      edges: docRef.current.edges.filter((e) => !removed.has(e.id)),
     });
     setSelected(null);
   }
-  function nodesChanged(changes: NodeChange<ShapeNode>[]) {
+  function nodesChanged(changes: NodeChange<CanvasNode>[]) {
     const removed = changes.filter((c) => c.type === 'remove').map((c) => c.id);
     if (removed.length) {
       deleteItems(removed, []);
@@ -1170,10 +1216,15 @@ function Editor({ initial }: { initial: Diagram }) {
           relations={allRelations}
           onRelationLocate={locateRelation}
           onRelationEdit={(r) => void editRelation(r)}
-          relationsPanel={
+          onRelationPlace={setRelationPlacement}
+          onRelationSaved={(r) => mergeRelations([r])}
+          relationsPanel={(renderChildren, move, createChild) => (
             <RelationBrowser
               relations={allRelations}
-              objects={objects}
+              objects={[...objects, ...allRelations.map(relationEntity)]}
+              renderChildren={renderChildren}
+              onMove={move}
+              onCreateChild={createChild}
               counts={
                 new Map(
                   allRelations.map((r) => [
@@ -1207,12 +1258,17 @@ function Editor({ initial }: { initial: Diagram }) {
                 }
               }}
             />
-          }
+          )}
 
           counts={
-            new Map(
-              objects.map((o) => [o.id, document.nodes.filter((n) => n.objectId === o.id).length]),
-            )
+            new Map([
+              ...objects.map(
+                (o) => [o.id, document.nodes.filter((n) => n.objectId === o.id).length] as const,
+              ),
+              ...allRelations.map(
+                (r) => [r.id, document.edges.filter((e) => e.relationId === r.id).length] as const,
+              ),
+            ])
           }
           selectedId={selectedNode?.objectId}
           onSaved={(o) => mergeObjects([o])}
@@ -1420,7 +1476,10 @@ function Editor({ initial }: { initial: Diagram }) {
           onDragOver={(e) => {
             if (
               e.dataTransfer.types.some(
-                (t) => t === 'application/maket-object' || t === 'application/maket-type',
+                (t) =>
+                  t === 'application/maket-object' ||
+                  t === 'application/maket-type' ||
+                  t === 'application/maket-relation',
               )
             ) {
               e.preventDefault();
@@ -1429,6 +1488,12 @@ function Editor({ initial }: { initial: Diagram }) {
           }}
           onDrop={(e) => {
             e.preventDefault();
+            const relationId = e.dataTransfer.getData('application/maket-relation');
+            if (relationId) {
+              const r = relationLookup.get(relationId);
+              if (r) setRelationPlacement(r);
+              return;
+            }
             const objectId = e.dataTransfer.getData('application/maket-object'),
               typeId = e.dataTransfer.getData('application/maket-type');
             if (objectId || typeId)
@@ -1440,16 +1505,18 @@ function Editor({ initial }: { initial: Diagram }) {
           }}
         >
           <NodeActionsContext.Provider value={nodeActions}>
-            <ReactFlow<ShapeNode>
+            <ReactFlow<CanvasNode>
               nodes={nodes}
               edges={edges}
-              nodeTypes={diagramNodeTypes}
+              nodeTypes={canvasNodeTypes}
               colorMode={user.settings.theme}
               elevateNodesOnSelect={false}
               elevateEdgesOnSelect={false}
               onNodesChange={nodesChanged}
               onEdgesChange={edgesChanged}
-              onNodeClick={(_, n) => setSelected({ kind: 'node', id: n.id })}
+              onNodeClick={(_, n) =>
+                setSelected({ kind: n.type === 'relation-anchor' ? 'edge' : 'node', id: n.id })
+              }
               onEdgeClick={(_, e) => setSelected({ kind: 'edge', id: e.id })}
               onPaneClick={() => setSelected(null)}
               onNodeDragStart={() => beginGesture('drag')}
@@ -1495,11 +1562,16 @@ function Editor({ initial }: { initial: Diagram }) {
                 bgColor="var(--panel)"
                 zoomable
                 nodeColor={(n) =>
-                  nodeAppearance((n.data as ShapeData).node, (n.data as ShapeData).definition).fill
+                  n.type === 'relation-anchor'
+                    ? 'transparent'
+                    : nodeAppearance((n.data as ShapeData).node, (n.data as ShapeData).definition)
+                        .fill
                 }
                 nodeStrokeColor={(n) =>
-                  nodeAppearance((n.data as ShapeData).node, (n.data as ShapeData).definition)
-                    .stroke
+                  n.type === 'relation-anchor'
+                    ? 'transparent'
+                    : nodeAppearance((n.data as ShapeData).node, (n.data as ShapeData).definition)
+                        .stroke
                 }
               />
             </ReactFlow>
@@ -1934,7 +2006,7 @@ function Editor({ initial }: { initial: Diagram }) {
             relationEditing === 'new' ? 'new' : `${relationEditing.id}:${relationEditing.revision}`
           }
           relation={relationEditing === 'new' ? undefined : relationEditing}
-          objects={objects}
+          objects={[...objects, ...allRelations.map(relationEntity)]}
           onSaved={(r) => mergeRelations([r])}
           onClose={() => setRelationEditing(null)}
         />

@@ -26,6 +26,7 @@ export function RelationEditor({
     [description, setDescription] = useState(relation?.description ?? ''),
     [source, setSource] = useState(relation?.sourceId ?? ''),
     [target, setTarget] = useState(relation?.targetId ?? ''),
+    [parent, setParent] = useState(relation?.parentId ?? ''),
     [attributes, setAttributes] = useState(
       Object.entries(relation?.attributes ?? {}).map(([key, value]) => ({ key, value })),
     ),
@@ -45,8 +46,8 @@ export function RelationEditor({
       className="object-modal"
     >
       <p className="muted small-text">
-        Связь соединяет два объекта модели. Стрелки на диаграммах — её представления; их подписи и
-        оформление могут различаться.
+        Связь соединяет объекты или другие связи модели. Стрелки на диаграммах — её представления;
+        их подписи и оформление могут различаться.
       </p>
       <CopyOrigin origin={relation?.copiedFrom} />
       <form
@@ -69,6 +70,7 @@ export function RelationEditor({
                   name,
                   description,
                   attributes: values,
+                  parentId: parent || null,
                   ...(relation ? guard : { sourceId: source, targetId: target }),
                 },
               ),
@@ -81,6 +83,23 @@ export function RelationEditor({
           }
         }}
       >
+        <label>
+          Родитель связи
+          <select
+            aria-label="Родитель связи"
+            value={parent}
+            onChange={(e) => setParent(e.target.value)}
+          >
+            <option value="">Корень модели</option>
+            {objects
+              .filter((o) => o.id !== relation?.id && (!o.archived || o.id === parent))
+              .map((o) => (
+                <option key={o.id} value={o.id}>
+                  {o.name}
+                </option>
+              ))}
+          </select>
+        </label>
         <label>
           Имя связи
           <input
@@ -315,6 +334,9 @@ export function RelationBrowser({
   onSaved,
   onRemove,
   onBeforeWrite,
+  renderChildren,
+  onMove,
+  onCreateChild,
 }: {
   relations: ModelRelation[];
   objects: ModelObject[];
@@ -325,6 +347,9 @@ export function RelationBrowser({
   onSaved: (r: ModelRelation) => void;
   onRemove: (r: ModelRelation) => Promise<void>;
   onBeforeWrite: () => Promise<void>;
+  renderChildren?: (id: string) => React.ReactNode;
+  onMove?: (id: string, parent: string | null) => Promise<void>;
+  onCreateChild?: (id: string) => void;
 }) {
   const [query, setQuery] = useState(''),
     [error, setError] = useState('');
@@ -361,113 +386,148 @@ export function RelationBrowser({
             .includes(query.toLowerCase()),
         )
         .map((r) => (
-          <div
-            className={`object-tree-row ${r.archived ? 'archived' : ''}`}
-            data-model-relation-id={r.id}
-            key={r.id}
-          >
-            <button
-              className="object-tree-name"
-              onClick={() => onLocate(r.id)}
-              onDoubleClick={() => onEdit(r)}
-              title={r.name}
-            >
-              {r.name}
-              {r.archived && <small>Архив</small>}
-              <small>
-                {name(r.sourceId)} → {name(r.targetId)}
-              </small>
-            </button>
-            <span className="badge">{counts.get(r.id) ?? 0}</span>
-            <div className="object-tree-actions">
-              <button
-                title="Разместить стрелку этой связи"
-                aria-label={`Разместить связь ${r.name}`}
-                disabled={r.archived}
-                onClick={() => onPlace(r)}
-              >
-                <Plus size={13} />
-              </button>
-              <button
-                title="Показать стрелку"
-                aria-label={`Найти связь ${r.name}`}
-                onClick={() => onLocate(r.id)}
-              >
-                <LocateFixed size={12} />
-              </button>
-              <button
-                title="Изменить общие свойства"
-                aria-label={`Изменить связь ${r.name}`}
-                onClick={() => onEdit(r)}
-              >
-                <Pencil size={12} />
-              </button>
-              <button
-                title="Создать независимую копию связи"
-                aria-label={`Копировать связь ${r.name}`}
-                onClick={async () => {
-                  try {
-                    await onBeforeWrite();
-                    onSaved(
-                      await api('relations', 'POST', {
-                        name: `${r.name.slice(0, 90)} — копия`,
-                        description: r.description,
-                        sourceId: r.sourceId,
-                        targetId: r.targetId,
-                        attributes: r.attributes,
-                        copyOf: r.id,
-                      }),
-                    );
-                    setError('');
-                  } catch (err) {
-                    setError((err as Error).message);
-                  }
-                }}
-              >
-                <Copy size={12} />
-              </button>
-              <button
-                title={r.archived ? 'Вернуть из архива' : 'Архивировать связь'}
-                aria-label={`${r.archived ? 'Восстановить' : 'Архивировать'} связь ${r.name}`}
-                onClick={async () => {
-                  try {
-                    await onBeforeWrite();
-                    onSaved(
-                      await api(`relations/${r.id}`, 'PATCH', {
-                        revision: r.revision,
-                        incarnation: r.incarnation,
-                        archived: !r.archived,
-                      }),
-                    );
-                    setError('');
-                  } catch (err) {
-                    setError((err as Error).message);
-                  }
-                }}
-              >
-                <Archive size={12} />
-              </button>
-              <button
-                title="Удалить связь без представлений"
-                aria-label={`Удалить связь модели ${r.name}`}
-                onClick={async () => {
-                  if (
-                    !confirm(
-                      `Удалить связь «${r.name}» и историю её общих свойств? Снимки диаграмм сохранятся.`,
-                    )
+          <div key={r.id}>
+            <div
+              className={`object-tree-row ${r.archived ? 'archived' : ''}`}
+              data-model-relation-id={r.id}
+              draggable={!r.archived}
+              onDragStart={(e) => {
+                e.dataTransfer.setData('application/maket-relation', r.id);
+                e.dataTransfer.effectAllowed = 'copyMove';
+              }}
+              onDragOver={(e) => {
+                if (
+                  e.dataTransfer.types.some(
+                    (t) => t === 'application/maket-object' || t === 'application/maket-relation',
                   )
-                    return;
-                  try {
-                    await onRemove(r);
-                    setError('');
-                  } catch (err) {
-                    setError((err as Error).message);
-                  }
-                }}
+                ) {
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = 'move';
+                }
+              }}
+              onDrop={(e) => {
+                const id =
+                  e.dataTransfer.getData('application/maket-object') ||
+                  e.dataTransfer.getData('application/maket-relation');
+                if (id) {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  void onMove?.(id, r.id);
+                }
+              }}
+              key={r.id}
+            >
+              <button
+                className="object-tree-name"
+                onClick={() => onLocate(r.id)}
+                onDoubleClick={() => onEdit(r)}
+                title={r.name}
               >
-                <Trash2 size={12} />
+                {r.name}
+                {r.archived && <small>Архив</small>}
+                <small>
+                  {name(r.sourceId)} → {name(r.targetId)}
+                </small>
               </button>
+              <span className="badge">{counts.get(r.id) ?? 0}</span>
+              <div className="object-tree-actions">
+                <button
+                  aria-label={`Создать дочерний объект связи ${r.name}`}
+                  disabled={r.archived}
+                  onClick={() => onCreateChild?.(r.id)}
+                >
+                  <Plus size={13} />
+                </button>
+                <button
+                  title="Разместить стрелку этой связи"
+                  aria-label={`Разместить связь ${r.name}`}
+                  disabled={r.archived}
+                  onClick={() => onPlace(r)}
+                >
+                  <Plus size={13} />
+                </button>
+                <button
+                  title="Показать стрелку"
+                  aria-label={`Найти связь ${r.name}`}
+                  onClick={() => onLocate(r.id)}
+                >
+                  <LocateFixed size={12} />
+                </button>
+                <button
+                  title="Изменить общие свойства"
+                  aria-label={`Изменить связь ${r.name}`}
+                  onClick={() => onEdit(r)}
+                >
+                  <Pencil size={12} />
+                </button>
+                <button
+                  title="Создать независимую копию связи"
+                  aria-label={`Копировать связь ${r.name}`}
+                  onClick={async () => {
+                    try {
+                      await onBeforeWrite();
+                      onSaved(
+                        await api('relations', 'POST', {
+                          name: `${r.name.slice(0, 90)} — копия`,
+                          description: r.description,
+                          sourceId: r.sourceId,
+                          targetId: r.targetId,
+                          attributes: r.attributes,
+                          copyOf: r.id,
+                        }),
+                      );
+                      setError('');
+                    } catch (err) {
+                      setError((err as Error).message);
+                    }
+                  }}
+                >
+                  <Copy size={12} />
+                </button>
+                <button
+                  title={r.archived ? 'Вернуть из архива' : 'Архивировать связь'}
+                  aria-label={`${r.archived ? 'Восстановить' : 'Архивировать'} связь ${r.name}`}
+                  onClick={async () => {
+                    try {
+                      await onBeforeWrite();
+                      onSaved(
+                        await api(`relations/${r.id}`, 'PATCH', {
+                          revision: r.revision,
+                          incarnation: r.incarnation,
+                          archived: !r.archived,
+                        }),
+                      );
+                      setError('');
+                    } catch (err) {
+                      setError((err as Error).message);
+                    }
+                  }}
+                >
+                  <Archive size={12} />
+                </button>
+                <button
+                  title="Удалить связь без представлений"
+                  aria-label={`Удалить связь модели ${r.name}`}
+                  onClick={async () => {
+                    if (
+                      !confirm(
+                        `Удалить связь «${r.name}» и историю её общих свойств? Снимки диаграмм сохранятся.`,
+                      )
+                    )
+                      return;
+                    try {
+                      await onRemove(r);
+                      setError('');
+                    } catch (err) {
+                      setError((err as Error).message);
+                    }
+                  }}
+                >
+                  <Trash2 size={12} />
+                </button>
+              </div>
             </div>
+            {renderChildren?.(r.id)}
           </div>
         ))}
       {!relations.length && (
@@ -489,8 +549,12 @@ export function RelationPlacement({
   onPlace: (edge: ViewDocument['edges'][number]) => Promise<void>;
   onClose: () => void;
 }) {
-  const sources = document.nodes.filter((n) => n.objectId === relation.sourceId),
-    targets = document.nodes.filter((n) => n.objectId === relation.targetId);
+  const representations = [
+    ...document.nodes.map((n) => ({ id: n.id, entityId: n.objectId })),
+    ...document.edges.map((e) => ({ id: e.id, entityId: e.relationId })),
+  ];
+  const sources = representations.filter((n) => n.entityId === relation.sourceId),
+    targets = representations.filter((n) => n.entityId === relation.targetId);
   const [source, setSource] = useState(sources[0]?.id ?? ''),
     [target, setTarget] = useState(targets[0]?.id ?? ''),
     [choice, setChoice] = useState(''),
@@ -508,13 +572,16 @@ export function RelationPlacement({
     .map((r) => ({ typeId: r.edgeType, sourcePort: r.source.port, targetPort: r.target.port }));
   const sourceType = document.notation.nodeTypes.find((t) => t.id === sourceNode?.typeId),
     targetType = document.notation.nodeTypes.find((t) => t.id === targetNode?.typeId);
-  for (const s of sourceType?.ports.filter((p) => p.direction === 'output') ?? [])
-    for (const t of targetType?.ports.filter((p) => p.direction === 'input') ?? [])
+  for (const s of sourceType?.ports.filter((p) => p.direction === 'output') ??
+    (document.edges.some((e) => e.id === source) ? [{ id: 'out' }] : []))
+    for (const t of targetType?.ports.filter((p) => p.direction === 'input') ??
+      (document.edges.some((e) => e.id === target) ? [{ id: 'in' }] : []))
       options.push({ typeId: 'universal:association', sourcePort: s.id, targetPort: t.id });
   const keys = options.map((o) => JSON.stringify(o));
   const selected = keys.includes(choice) ? choice : (keys[0] ?? '');
   const nodeLabel = (id: string) => {
-    const n = document.nodes.find((n) => n.id === id)!;
+    const n = document.nodes.find((n) => n.id === id);
+    if (!n) return `Стрелка · ${id.slice(0, 14)}`;
     return `${document.notation.nodeTypes.find((t) => t.id === n.typeId)?.name} · ${id.slice(0, 14)}`;
   };
   return (

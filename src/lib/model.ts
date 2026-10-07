@@ -26,10 +26,41 @@ export const objectSnapshotSchema = z.object({
   copiedFrom: copyOriginSchema.nullable().optional(),
 });
 export type ModelObject = z.infer<typeof objectSnapshotSchema>;
-export const relationSnapshotSchema = objectSnapshotSchema
-  .omit({ parentId: true })
-  .extend({ sourceId: id, targetId: id });
+export const relationSnapshotSchema = objectSnapshotSchema.extend({
+  parentId: id.nullable().optional(),
+  sourceId: id,
+  targetId: id,
+});
 export type ModelRelation = z.infer<typeof relationSnapshotSchema>;
+export const relationEntity = (r: ModelRelation): ModelObject => ({
+  ...r,
+  parentId: r.parentId ?? null,
+});
+export function participantId(d: Pick<ViewDocument, 'nodes' | 'edges'>, id: string) {
+  return d.nodes.find((n) => n.id === id)?.objectId ?? d.edges.find((e) => e.id === id)?.relationId;
+}
+// Include hierarchy ancestors and relation participants, even when they have no shape on this canvas.
+export function modelClosure(ids: string[], objects: ModelObject[], relations: ModelRelation[]) {
+  const entities = new Map([...objects, ...relations.map(relationEntity)].map((o) => [o.id, o]));
+  const links = new Map(relations.map((r) => [r.id, r]));
+  const included = new Set<string>();
+  const pending = [...ids];
+  for (let index = 0; index < pending.length; index++) {
+    const id = pending[index];
+    if (included.has(id)) continue;
+    included.add(id);
+    const entity = entities.get(id),
+      relation = links.get(id);
+    if (entity?.parentId) pending.push(entity.parentId);
+    if (relation) pending.push(relation.sourceId, relation.targetId);
+  }
+  return {
+    objects: [...included]
+      .map((id) => objects.find((o) => o.id === id))
+      .filter((o): o is ModelObject => !!o),
+    relations: relations.filter((r) => included.has(r.id)),
+  };
+}
 export const bindingSchema = z.object({
   id: id.refine((v) => v !== 'universal', 'Зарезервированный идентификатор подключения'),
   versionId: id.nullable(),
@@ -254,21 +285,24 @@ export function packDocument(
   objects: ModelObject[],
   relations: ModelRelation[] = d.relations ?? [],
 ): ModelDocument {
+  const closure = modelClosure(
+    [
+      ...d.nodes.map((n) => n.objectId!),
+      ...d.edges.flatMap((e) => (e.relationId ? [e.relationId] : [])),
+    ],
+    objects,
+    mergeModelObjects(d.relations ?? [], relations),
+  );
   return {
     schemaVersion: 2,
     modelSpaceId: d.modelSpaceId,
     bindings: d.bindings,
     ...(d.relations || relations.length
       ? {
-          relations: mergeModelObjects(d.relations ?? [], relations).filter((r) =>
-            d.edges.some((e) => e.relationId === r.id),
-          ),
+          relations: closure.relations,
         }
       : {}),
-    objects: objectClosure(
-      d.nodes.map((n) => n.objectId!),
-      objects,
-    ),
+    objects: closure.objects,
     nodes: d.nodes.map((n) => {
       const [bindingId, typeId] = splitType(n.typeId);
       return {
@@ -308,7 +342,9 @@ export function modelErrors(d: ModelDocument): string[] {
     errors.push('Повторяющиеся идентификаторы связей');
   if (new Set(d.bindings.map((b) => b.id)).size !== d.bindings.length)
     errors.push('Повторяющиеся подключения нотаций');
-  const tree = hierarchyError(d.objects);
+  if (d.nodes.some((n) => d.edges.some((e) => e.id === n.id)))
+    errors.push('Идентификаторы представлений объектов и связей должны различаться');
+  const tree = hierarchyError([...d.objects, ...(d.relations ?? []).map(relationEntity)]);
   if (tree) errors.push(tree);
   const objects = new Map(d.objects.map((o) => [o.id, o]));
   for (const n of d.nodes) {
@@ -337,16 +373,16 @@ export function modelErrors(d: ModelDocument): string[] {
   const relations = new Map((d.relations ?? []).map((r) => [r.id, r]));
   if (relations.size !== (d.relations ?? []).length) errors.push('Повторяющиеся связи модели');
   for (const r of relations.values())
-    if (!objects.has(r.sourceId) || !objects.has(r.targetId))
+    if (
+      (!objects.has(r.sourceId) && !relations.has(r.sourceId)) ||
+      (!objects.has(r.targetId) && !relations.has(r.targetId))
+    )
       errors.push('Связь ссылается на отсутствующий объект');
   for (const e of d.edges) {
     if (!e.relationId) continue; // Older v2 files are upgraded on the server.
     const r = relations.get(e.relationId);
     if (!r) errors.push('Стрелка ссылается на отсутствующую связь модели');
-    else if (
-      d.nodes.find((n) => n.id === e.source)?.objectId !== r.sourceId ||
-      d.nodes.find((n) => n.id === e.target)?.objectId !== r.targetId
-    )
+    else if (participantId(d, e.source) !== r.sourceId || participantId(d, e.target) !== r.targetId)
       errors.push('Участники стрелки не соответствуют связи модели');
   }
   // Universal connections are graphical annotations; notation connections stay within their own binding.
@@ -365,20 +401,41 @@ export function modelErrors(d: ModelDocument): string[] {
       )
     )
       errors.push('Неверные свойства поясняющей связи');
-    if (!source || !target) {
+    const sourceEdge = d.edges.find((x) => x.id === e.source),
+      targetEdge = d.edges.find((x) => x.id === e.target);
+    if ((!source && !sourceEdge) || (!target && !targetEdge)) {
       errors.push('Связь ссылается на отсутствующее представление');
       continue;
     }
     if (
-      !view.notation.nodeTypes
-        .find((t) => t.id === source.typeId)
-        ?.ports.some((p) => p.id === e.sourcePort && p.direction === 'output') ||
-      !view.notation.nodeTypes
-        .find((t) => t.id === target.typeId)
-        ?.ports.some((p) => p.id === e.targetPort && p.direction === 'input')
+      (sourceEdge
+        ? e.sourcePort !== 'out'
+        : !view.notation.nodeTypes
+            .find((t) => t.id === source!.typeId)
+            ?.ports.some((p) => p.id === e.sourcePort && p.direction === 'output')) ||
+      (targetEdge
+        ? e.targetPort !== 'in'
+        : !view.notation.nodeTypes
+            .find((t) => t.id === target!.typeId)
+            ?.ports.some((p) => p.id === e.targetPort && p.direction === 'input'))
     )
       errors.push('Неизвестный порт поясняющей связи');
   }
+  const visiting = new Set<string>(),
+    visited = new Set<string>();
+  const edges = new Map(d.edges.map((e) => [e.id, e]));
+  function cyclic(id: string): boolean {
+    if (visiting.has(id)) return true;
+    if (visited.has(id)) return false;
+    const e = edges.get(id);
+    if (!e) return false;
+    visiting.add(id);
+    const result = cyclic(e.source) || cyclic(e.target);
+    visiting.delete(id);
+    visited.add(id);
+    return result;
+  }
+  if (d.edges.some((e) => cyclic(e.id))) errors.push('Цикл между представлениями стрелок');
   // Annotation edges also count towards port capacities.
   for (const n of view.nodes)
     for (const p of view.notation.nodeTypes.find((t) => t.id === n.typeId)?.ports ?? [])

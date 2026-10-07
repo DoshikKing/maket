@@ -11,7 +11,12 @@ import {
   Trash2,
 } from 'lucide-react';
 import { api, date } from '@/lib/client';
-import { attributesSchema, type ModelObject, type ModelRelation } from '@/lib/model';
+import {
+  attributesSchema,
+  relationEntity,
+  type ModelObject,
+  type ModelRelation,
+} from '@/lib/model';
 import { CopyOrigin } from './copy-origin';
 import { Modal } from './modal';
 export function ObjectEditor({
@@ -327,13 +332,21 @@ export function ObjectTree({
   relations = [],
   onRelationLocate,
   onRelationEdit,
+  onRelationPlace,
+  onRelationSaved,
   relationsPanel,
 }: {
   objects: ModelObject[];
   relations?: ModelRelation[];
   onRelationLocate?: (id: string) => void;
   onRelationEdit?: (r: ModelRelation) => void;
-  relationsPanel?: React.ReactNode;
+  relationsPanel?: (
+    children: (id: string) => React.ReactNode,
+    move: (id: string, parent: string | null) => Promise<void>,
+    createChild: (id: string) => void,
+  ) => React.ReactNode;
+  onRelationPlace?: (r: ModelRelation) => void;
+  onRelationSaved?: (r: ModelRelation) => void;
   counts: Map<string, number>;
   selectedId?: string;
   onPlace: (id: string) => void;
@@ -348,23 +361,36 @@ export function ObjectTree({
       null,
     ),
     [error, setError] = useState('');
+  const entities = [...objects, ...relations.map(relationEntity)];
+  const relationIds = new Set(relations.map((r) => r.id));
+  const editEntity = (o: ModelObject) => {
+    const r = relations.find((r) => r.id === o.id);
+    if (r) onRelationEdit?.(r);
+    else setEditing({ object: o });
+  };
+  const savedEntity = (o: ModelObject) => {
+    const r = relations.find((r) => r.id === o.id);
+    if (r) onRelationSaved?.({ ...r, ...o });
+    else onSaved(o);
+  };
+  const entityResource = (id: string) => (relationIds.has(id) ? 'relations' : 'objects');
   const visible = new Set(
-    objects.filter((o) => o.name.toLowerCase().includes(query.toLowerCase())).map((o) => o.id),
+    entities.filter((o) => o.name.toLowerCase().includes(query.toLowerCase())).map((o) => o.id),
   );
   if (query)
-    for (const o of objects.filter((o) => visible.has(o.id))) {
+    for (const o of entities.filter((o) => visible.has(o.id))) {
       let p = o.parentId;
       while (p) {
         visible.add(p);
-        p = objects.find((x) => x.id === p)?.parentId ?? null;
+        p = entities.find((x) => x.id === p)?.parentId ?? null;
       }
     }
   async function move(id: string, parentId: string | null) {
-    const o = objects.find((o) => o.id === id);
+    const o = entities.find((o) => o.id === id);
     if (!o) return;
     try {
-      onSaved(
-        await api<ModelObject>(`objects/${id}`, 'PATCH', {
+      savedEntity(
+        await api<ModelObject>(`${entityResource(id)}/${id}`, 'PATCH', {
           revision: o.revision,
           incarnation: o.incarnation,
           parentId,
@@ -375,12 +401,27 @@ export function ObjectTree({
       setError((err as Error).message);
     }
   }
-  function branch(parentId: string | null, depth = 0): React.ReactNode {
-    return objects
-      .filter((o) => o.parentId === parentId && visible.has(o.id))
+  function branch(
+    parentId: string | null,
+    depth = 0,
+    ancestors = new Set<string>(),
+  ): React.ReactNode {
+    return entities
+      .filter(
+        (o) =>
+          o.parentId === parentId &&
+          visible.has(o.id) &&
+          !ancestors.has(o.id) &&
+          (parentId !== null || !relationIds.has(o.id)),
+      )
       .map((o) => {
-        const linked = relations.filter((r) => r.sourceId === o.id || r.targetId === o.id);
-        const children = objects.some((c) => c.parentId === o.id) || linked.length > 0,
+        const linked = relations.filter(
+          (r) =>
+            (r.sourceId === o.id || r.targetId === o.id) &&
+            r.parentId !== o.id &&
+            !ancestors.has(r.id),
+        );
+        const children = entities.some((c) => c.parentId === o.id) || linked.length > 0,
           closed = collapsed.has(o.id) && !query;
         return (
           <div
@@ -395,17 +436,26 @@ export function ObjectTree({
               draggable={!o.archived}
               data-object-id={o.id}
               onDragStart={(e) => {
-                e.dataTransfer.setData('application/maket-object', o.id);
+                e.dataTransfer.setData(
+                  relationIds.has(o.id) ? 'application/maket-relation' : 'application/maket-object',
+                  o.id,
+                );
                 e.dataTransfer.effectAllowed = 'copyMove';
               }}
               onDragOver={(e) => {
-                if (e.dataTransfer.types.includes('application/maket-object')) {
+                if (
+                  e.dataTransfer.types.some(
+                    (t) => t === 'application/maket-object' || t === 'application/maket-relation',
+                  )
+                ) {
                   e.preventDefault();
                   e.dataTransfer.dropEffect = 'move';
                 }
               }}
               onDrop={(e) => {
-                const id = e.dataTransfer.getData('application/maket-object');
+                const id =
+                  e.dataTransfer.getData('application/maket-object') ||
+                  e.dataTransfer.getData('application/maket-relation');
                 if (id) {
                   e.preventDefault();
                   e.stopPropagation();
@@ -437,8 +487,8 @@ export function ObjectTree({
               <button
                 className="object-tree-name"
                 title={o.name}
-                onClick={() => onLocate(o.id)}
-                onDoubleClick={() => setEditing({ object: o })}
+                onClick={() => (relationIds.has(o.id) ? onRelationLocate?.(o.id) : onLocate(o.id))}
+                onDoubleClick={() => editEntity(o)}
               >
                 {o.name}
                 {o.archived && <small>Архив</small>}
@@ -449,14 +499,15 @@ export function ObjectTree({
                   aria-label={`Разместить ${o.name}`}
                   title="Ещё одно представление"
                   disabled={o.archived}
-                  onClick={() => onPlace(o.id)}
+                  onClick={() => {
+                    const r = relations.find((r) => r.id === o.id);
+                    if (r) onRelationPlace?.(r);
+                    else onPlace(o.id);
+                  }}
                 >
                   <Plus size={13} />
                 </button>
-                <button
-                  aria-label={`Изменить объект ${o.name}`}
-                  onClick={() => setEditing({ object: o })}
-                >
+                <button aria-label={`Изменить объект ${o.name}`} onClick={() => editEntity(o)}>
                   <Pencil size={12} />
                 </button>
                 <button
@@ -466,109 +517,158 @@ export function ObjectTree({
                 >
                   <LocateFixed size={12} />
                 </button>
-                <button
-                  aria-label={`Копировать объект ${o.name}`}
-                  disabled={o.archived}
-                  onClick={async () => {
-                    try {
-                      onSaved(
-                        await api<ModelObject>('objects', 'POST', {
-                          name: `${o.name.slice(0, 90)} — копия`,
-                          copyOf: o.id,
-                          description: o.description,
-                          attributes: o.attributes,
-                          parentId: null,
-                        }),
-                      );
-                    } catch (err) {
-                      setError((err as Error).message);
-                    }
-                  }}
-                >
-                  <Copy size={12} />
-                </button>
-                <button
-                  aria-label={`${o.archived ? 'Вернуть из архива' : 'Архивировать'} ${o.name}`}
-                  onClick={async () => {
-                    try {
-                      if (!o.archived) {
-                        const usages = await api<{ count: number; diagram: { name: string } }[]>(
-                          `objects/${o.id}/usages`,
-                        );
+                {!relationIds.has(o.id) && (
+                  <>
+                    <button
+                      aria-label={`Копировать объект ${o.name}`}
+                      disabled={o.archived}
+                      onClick={async () => {
+                        try {
+                          onSaved(
+                            await api<ModelObject>('objects', 'POST', {
+                              name: `${o.name.slice(0, 90)} — копия`,
+                              copyOf: o.id,
+                              description: o.description,
+                              attributes: o.attributes,
+                              parentId: null,
+                            }),
+                          );
+                        } catch (err) {
+                          setError((err as Error).message);
+                        }
+                      }}
+                    >
+                      <Copy size={12} />
+                    </button>
+                    <button
+                      aria-label={`${o.archived ? 'Вернуть из архива' : 'Архивировать'} ${o.name}`}
+                      onClick={async () => {
+                        try {
+                          if (!o.archived) {
+                            const usages = await api<
+                              { count: number; diagram: { name: string } }[]
+                            >(`objects/${o.id}/usages`);
+                            if (
+                              !confirm(
+                                `Архивировать «${o.name}»? Использований: ${usages.reduce((sum, u) => sum + u.count, 0)}. Представления и дочерние объекты сохранятся.`,
+                              )
+                            )
+                              return;
+                          }
+                          onSaved(
+                            await api<ModelObject>(`objects/${o.id}`, 'PATCH', {
+                              revision: o.revision,
+                              incarnation: o.incarnation,
+                              archived: !o.archived,
+                            }),
+                          );
+                        } catch (err) {
+                          setError((err as Error).message);
+                        }
+                      }}
+                    >
+                      <Archive size={12} />
+                    </button>
+                    <button
+                      aria-label={`Удалить объект ${o.name}`}
+                      title="Удалить неиспользуемый объект"
+                      onClick={async () => {
                         if (
                           !confirm(
-                            `Архивировать «${o.name}»? Использований: ${usages.reduce((sum, u) => sum + u.count, 0)}. Представления и дочерние объекты сохранятся.`,
+                            `Удалить объект «${o.name}» и историю его общих свойств? Исторические снимки диаграмм сохранятся. Объекты с представлениями или детьми удалить нельзя.`,
                           )
                         )
                           return;
-                      }
-                      onSaved(
-                        await api<ModelObject>(`objects/${o.id}`, 'PATCH', {
-                          revision: o.revision,
-                          incarnation: o.incarnation,
-                          archived: !o.archived,
-                        }),
-                      );
-                    } catch (err) {
-                      setError((err as Error).message);
-                    }
-                  }}
-                >
-                  <Archive size={12} />
-                </button>
-                <button
-                  aria-label={`Удалить объект ${o.name}`}
-                  title="Удалить неиспользуемый объект"
-                  onClick={async () => {
-                    if (
-                      !confirm(
-                        `Удалить объект «${o.name}» и историю его общих свойств? Исторические снимки диаграмм сохранятся. Объекты с представлениями или детьми удалить нельзя.`,
-                      )
-                    )
-                      return;
-                    try {
-                      await onRemove(o);
-                      setError('');
-                    } catch (err) {
-                      setError((err as Error).message);
-                    }
-                  }}
-                >
-                  <Trash2 size={12} />
-                </button>
+                        try {
+                          await onRemove(o);
+                          setError('');
+                        } catch (err) {
+                          setError((err as Error).message);
+                        }
+                      }}
+                    >
+                      <Trash2 size={12} />
+                    </button>
+                  </>
+                )}
               </div>
             </div>
             {children && !closed && (
               <div role="group">
-                {branch(o.id, depth + 1)}
+                {branch(o.id, depth + 1, new Set([...ancestors, o.id]))}
                 {linked.map((r) => (
-                  <div
-                    role="treeitem"
-                    key={r.id}
-                    data-relation-reference={r.id}
-                    className={`object-relation-reference ${r.archived ? 'archived' : ''}`}
-                    style={{ paddingLeft: 20 + (depth + 1) * 12 }}
-                  >
-                    <button
-                      title={r.name}
-                      onClick={() => onRelationLocate?.(r.id)}
-                      onDoubleClick={() => onRelationEdit?.(r)}
-                    >
-                      {r.sourceId === o.id ? '→' : '←'} {r.name}
-                      <small>
-                        {
-                          objects.find(
-                            (x) => x.id === (r.sourceId === o.id ? r.targetId : r.sourceId),
-                          )?.name
+                  <div key={r.id}>
+                    <div
+                      role="treeitem"
+                      key={r.id}
+                      data-relation-reference={r.id}
+                      draggable={!r.archived}
+                      onDragStart={(e) => {
+                        e.dataTransfer.setData('application/maket-relation', r.id);
+                        e.dataTransfer.effectAllowed = 'copyMove';
+                      }}
+                      onDragOver={(e) => {
+                        if (
+                          e.dataTransfer.types.some(
+                            (t) =>
+                              t === 'application/maket-object' ||
+                              t === 'application/maket-relation',
+                          )
+                        ) {
+                          e.preventDefault();
+                          e.stopPropagation();
                         }
-                      </small>
-                    </button>
-                    <button
-                      aria-label={`Свойства вложенной связи ${r.name}`}
-                      onClick={() => onRelationEdit?.(r)}
+                      }}
+                      onDrop={(e) => {
+                        const id =
+                          e.dataTransfer.getData('application/maket-object') ||
+                          e.dataTransfer.getData('application/maket-relation');
+                        if (id) {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          void move(id, r.id);
+                        }
+                      }}
+                      className={`object-relation-reference ${r.archived ? 'archived' : ''}`}
+                      style={{ paddingLeft: 20 + (depth + 1) * 12 }}
                     >
-                      <Pencil size={12} />
-                    </button>
+                      <button
+                        title={r.name}
+                        onClick={() => onRelationLocate?.(r.id)}
+                        onDoubleClick={() => onRelationEdit?.(r)}
+                      >
+                        {r.sourceId === o.id ? '→' : '←'} {r.name}
+                        <small>
+                          {
+                            entities.find(
+                              (x) => x.id === (r.sourceId === o.id ? r.targetId : r.sourceId),
+                            )?.name
+                          }
+                        </small>
+                      </button>
+                      <button
+                        aria-label={`Вернуть представление связи ${r.name}`}
+                        title="Разместить стрелку на диаграмме"
+                        disabled={r.archived}
+                        onClick={() => onRelationPlace?.(r)}
+                      >
+                        <Plus size={12} />
+                      </button>
+                      <button
+                        aria-label={`Создать дочерний объект связи ${r.name}`}
+                        disabled={r.archived}
+                        onClick={() => setEditing({ parentId: r.id })}
+                      >
+                        <LocateFixed size={12} />
+                      </button>
+                      <button
+                        aria-label={`Свойства вложенной связи ${r.name}`}
+                        onClick={() => onRelationEdit?.(r)}
+                      >
+                        <Pencil size={12} />
+                      </button>
+                    </div>
+                    {branch(r.id, depth + 2, new Set([...ancestors, o.id, r.id]))}
                   </div>
                 ))}
               </div>
@@ -604,10 +704,17 @@ export function ObjectTree({
       <div
         className="tree-root-drop"
         onDragOver={(e) => {
-          if (e.dataTransfer.types.includes('application/maket-object')) e.preventDefault();
+          if (
+            e.dataTransfer.types.some(
+              (t) => t === 'application/maket-object' || t === 'application/maket-relation',
+            )
+          )
+            e.preventDefault();
         }}
         onDrop={(e) => {
-          const id = e.dataTransfer.getData('application/maket-object');
+          const id =
+            e.dataTransfer.getData('application/maket-object') ||
+            e.dataTransfer.getData('application/maket-relation');
           if (id) {
             e.preventDefault();
             void move(id, null);
@@ -630,12 +737,16 @@ export function ObjectTree({
           {error}
         </div>
       )}
-      {relationsPanel}
+      {relationsPanel?.(
+        (id) => branch(id, 1, new Set([id])),
+        move,
+        (id) => setEditing({ parentId: id }),
+      )}
       {editing && (
         <ObjectEditor
           object={editing.object}
           parentId={editing.parentId}
-          objects={objects}
+          objects={entities}
           onSaved={onSaved}
           onClose={() => setEditing(null)}
         />

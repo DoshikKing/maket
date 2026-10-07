@@ -1605,6 +1605,25 @@ details p {
 .connection-toast .icon-button {
   flex-shrink: 0;
 }
+.relation-anchor {
+  width: 24px;
+  height: 16px;
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--muted);
+  text-align: center;
+  font-size: 12px;
+  line-height: 16px;
+}
+.relation-anchor.selected {
+  outline: 1px solid var(--accent);
+}
+.react-flow__node-relation-anchor {
+  pointer-events: none !important;
+}
+.relation-anchor .react-flow__handle {
+  pointer-events: auto;
+}
 .revision-list {
   display: flex;
   flex-direction: column;

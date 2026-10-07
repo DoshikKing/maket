@@ -221,11 +221,11 @@ test('browser: login, create, connect, edit, undo, save, reopen and export', asy
     .getByRole('button', { name: 'Процесс', exact: true })
     .click();
   await page.getByRole('button', { name: 'Начало / конец', exact: true }).click();
-  const node = page.locator('.react-flow__node').first();
+  const node = page.locator('.react-flow__node-notation').first();
   await node.click();
   await page.getByLabel('Название', { exact: false }).fill('Получить заказ');
   // Move the second node before drawing a connection.
-  const second = page.locator('.react-flow__node').nth(1);
+  const second = page.locator('.react-flow__node-notation').nth(1);
   const box = (await second.boundingBox())!;
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await page.mouse.down();
@@ -243,18 +243,18 @@ test('browser: login, create, connect, edit, undo, save, reopen and export', asy
   await expect(page.getByText(/Сохранено · ревизия/)).toBeVisible({ timeout: 15000 });
   const url = page.url();
   await page.reload();
-  await expect(page.locator('.react-flow__node')).toHaveCount(2);
+  await expect(page.locator('.react-flow__node-notation')).toHaveCount(2);
   await expect(page.locator('.react-flow__edge')).toHaveCount(1);
   await expect(page.locator('.node-label').first()).toHaveText('Получить заказ');
   await page
     .getByRole('region', { name: 'Палитра Блок-схема' })
     .getByRole('button', { name: 'Процесс', exact: true })
     .click();
-  await expect(page.locator('.react-flow__node')).toHaveCount(3);
+  await expect(page.locator('.react-flow__node-notation')).toHaveCount(3);
   await page.getByRole('button', { name: 'Отменить', exact: true }).click();
-  await expect(page.locator('.react-flow__node')).toHaveCount(2);
+  await expect(page.locator('.react-flow__node-notation')).toHaveCount(2);
   await page.getByRole('button', { name: 'Повторить', exact: true }).click();
-  await expect(page.locator('.react-flow__node')).toHaveCount(3);
+  await expect(page.locator('.react-flow__node-notation')).toHaveCount(3);
   const downloaded = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Экспорт', exact: true }).click();
   expect((await downloaded).suggestedFilename()).toMatch(/\.maket\.json$/);
@@ -267,7 +267,7 @@ test('browser: login, create, connect, edit, undo, save, reopen and export', asy
   await page.getByRole('button', { name: 'Сохранить настройки' }).click();
   await expect(page.getByText('Настройки сохранены')).toBeVisible();
   await page.goto(url);
-  await expect(page.locator('.react-flow__node')).toHaveCount(3);
+  await expect(page.locator('.react-flow__node-notation')).toHaveCount(3);
 });
 
 test('browser: custom notation through JSON, diagram import and persistent dark settings', async ({
@@ -307,7 +307,7 @@ test('browser: custom notation through JSON, diagram import and persistent dark 
   await expect(page).toHaveURL(/\/library/);
   await page.getByRole('link', { name: 'Архитектура магазина', exact: true }).click();
   await expect(page.locator('.node-label')).toHaveText('Каталог');
-  await page.locator('.react-flow__node').click();
+  await page.locator('.react-flow__node-notation').click();
   await expect(page.getByLabel('Реплики', { exact: false })).toHaveValue('3');
   await expect(page.getByLabel('Активен', { exact: false })).not.toBeChecked();
   await page.screenshot({ path: 'test-results/editor.png', fullPage: true });

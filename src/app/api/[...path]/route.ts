@@ -307,6 +307,7 @@ async function handle(req: NextRequest, context: { params: Promise<{ path: strin
             description: z.string().max(4000).optional(),
             attributes: attributesSchema.optional(),
             copyOf: z.string().optional(),
+            parentId: z.string().nullable().optional(),
           })
           .parse(await body(req));
         return json(await addRelation(user.id, input), 201);
@@ -348,6 +349,7 @@ async function handle(req: NextRequest, context: { params: Promise<{ path: strin
                 description: z.string().max(4000).optional(),
                 attributes: attributesSchema.optional(),
                 archived: z.boolean().optional(),
+                parentId: z.string().nullable().optional(),
               })
               .parse(await body(req)),
           ),

@@ -24,6 +24,7 @@ import {
   type ModelDocument,
 } from '@/lib/model';
 import { Modal } from './modal';
+import { edgeGeometry } from '@/lib/diagram-geometry';
 import { NodeShape } from './node-shape';
 import {
   contrastColor,
@@ -382,6 +383,7 @@ export function DiagramPreview({ document: d }: { document: DiagramDocument }) {
     );
   const maxX = Math.max(...d.nodes.map((n) => n.position.x + appearance(n).width)),
     maxY = Math.max(...d.nodes.map((n) => n.position.y + appearance(n).height));
+  const geometry = edgeGeometry(d);
   return (
     <svg
       className="preview-svg"
@@ -389,12 +391,11 @@ export function DiagramPreview({ document: d }: { document: DiagramDocument }) {
       aria-label="Миниатюра диаграммы"
     >
       {d.edges.map((e) => {
-        const a = d.nodes.find((n) => n.id === e.source),
-          b = d.nodes.find((n) => n.id === e.target);
-        return a && b ? (
+        const g = geometry.get(e.id);
+        return g ? (
           <path
             key={e.id}
-            d={`M${a.position.x + appearance(a).width},${a.position.y + appearance(a).height / 2} L${b.position.x},${b.position.y + appearance(b).height / 2}`}
+            d={g.path}
             stroke={
               edgeAppearance(
                 d.notation.edgeTypes.find((t) => t.id === e.typeId)!.appearance,

@@ -407,11 +407,11 @@ test('browser: create in tree, drop aliases, change shared name and local captio
   await page
     .locator('.flow-container')
     .dispatchEvent('drop', { dataTransfer: dt, clientX: 800, clientY: 300 });
-  await expect(page.locator('.react-flow__node')).toHaveCount(1);
+  await expect(page.locator('.react-flow__node-notation')).toHaveCount(1);
   await row.getByRole('button', { name: 'Разместить Общий заказ', exact: true }).click();
-  await expect(page.locator('.react-flow__node')).toHaveCount(2);
+  await expect(page.locator('.react-flow__node-notation')).toHaveCount(2);
   await expect(row.locator('.badge')).toHaveText('2');
-  const first = page.locator('.react-flow__node').first();
+  const first = page.locator('.react-flow__node-notation').first();
   await first.dblclick();
   await page.getByLabel('Текст объекта', { exact: true }).fill('Местная подпись');
   await page.getByLabel('Текст объекта', { exact: true }).press('Enter');
@@ -428,7 +428,7 @@ test('browser: create in tree, drop aliases, change shared name and local captio
     'Местная подпись',
   );
   await expect(page.locator('.model-object-summary strong')).toHaveText('Новое общее имя');
-  await expect(page.locator('.react-flow__node').nth(1).locator('.node-label')).toHaveText(
+  await expect(page.locator('.react-flow__node-notation').nth(1).locator('.node-label')).toHaveText(
     'Новое общее имя',
   );
   const beforeSkin = await first.boundingBox();
@@ -442,7 +442,7 @@ test('browser: create in tree, drop aliases, change shared name and local captio
   expect((await first.boundingBox())!.height).toBeCloseTo(beforeSkin!.height, 0);
   await expect(page.getByText(/Сохранено · ревизия/)).toBeVisible({ timeout: 15000 });
   await page.reload();
-  await expect(page.locator('.react-flow__node')).toHaveCount(2);
+  await expect(page.locator('.react-flow__node-notation')).toHaveCount(2);
   expect(
     (await (await request.get(`/api/diagrams/${d.id}`)).json()).document.nodes[0].objectId,
   ).toBe(objectId);
@@ -519,7 +519,7 @@ test('browser: cross-notation skin preview maps ports, preserves the edge and co
   ).json();
   await page.goto(`/diagrams/${d.id}`);
   await expect(page.getByRole('region', { name: 'Палитра Другая оболочка' })).toBeVisible();
-  const first = page.locator('.react-flow__node').first();
+  const first = page.locator('.react-flow__node-notation').first();
   await first.click();
   await page
     .getByLabel('Отображение объекта', { exact: true })
@@ -607,7 +607,7 @@ test('browser: mandatory local and shared properties are collected before atomic
   await dialog.getByLabel('Общий владелец', { exact: false }).fill('Анна');
   await dialog.getByRole('button', { name: 'Разместить объект', exact: true }).click();
   await expect(dialog).not.toBeVisible();
-  await expect(page.locator('.react-flow__node')).toHaveCount(1);
+  await expect(page.locator('.react-flow__node-notation')).toHaveCount(1);
   await expect(page.locator('[data-property="reference"]')).toContainText('R1');
   const current: ModelDiagram = await (await request.get(`/api/diagrams/${d.id}`)).json();
   expect(current.document.objects[0].attributes.owner).toBe('Анна');
@@ -621,7 +621,7 @@ test('browser: mandatory local and shared properties are collected before atomic
   await dialog.getByLabel('Локальный код', { exact: true }).fill('R2');
   await dialog.getByLabel('Общий владелец', { exact: false }).fill('Борис');
   await dialog.getByRole('button', { name: 'Разместить объект', exact: true }).click();
-  await expect(page.locator('.react-flow__node')).toHaveCount(2);
+  await expect(page.locator('.react-flow__node-notation')).toHaveCount(2);
   const updated: ModelObject = await (await request.get(`/api/objects/${existing.id}`)).json();
   expect(updated.attributes.owner).toBe('Борис');
   expect(updated.revision).toBe(2);
@@ -716,7 +716,7 @@ test('browser: delete an unused tree object, including saving removal of its rep
   const o = await object(request, 'Удалить из дерева');
   d = await place(request, d, o.id);
   await page.goto(`/diagrams/${d.id}`);
-  await expect(page.locator('.react-flow__node')).toHaveCount(1);
+  await expect(page.locator('.react-flow__node-notation')).toHaveCount(1);
   const treeRow = page.locator(`.object-tree-row[data-object-id="${o.id}"]`);
   page.on('dialog', (dialog) => dialog.accept());
   await treeRow
@@ -724,9 +724,9 @@ test('browser: delete an unused tree object, including saving removal of its rep
     .click();
   await expect(page.locator('.object-panel [role="alert"]')).toContainText('используется');
   await expect(treeRow).toBeVisible();
-  await page.locator('.react-flow__node').click();
+  await page.locator('.react-flow__node-notation').click();
   await page.getByRole('button', { name: 'Удалить элемент', exact: true }).click();
-  await expect(page.locator('.react-flow__node')).toHaveCount(0);
+  await expect(page.locator('.react-flow__node-notation')).toHaveCount(0);
   await treeRow
     .getByRole('button', { name: 'Удалить объект Удалить из дерева', exact: true })
     .click();
@@ -780,7 +780,7 @@ test('browser: draw a connection between representations in a secondary notation
     })),
   });
   await page.goto(`/diagrams/${d.id}`);
-  await expect(page.locator('.react-flow__node')).toHaveCount(3);
+  await expect(page.locator('.react-flow__node-notation')).toHaveCount(3);
   const chooser = page.getByRole('combobox', { name: 'Тип связи', exact: true });
   await expect(chooser.locator('optgroup[label="UML тест"] option')).toHaveCount(2);
   await page.locator('.react-flow__controls-fitview').click();
@@ -1109,7 +1109,7 @@ test('browser: relation explorer, nested references, shared arrow placement and 
   d = await place(request, d, source.id);
   d = await place(request, d, target.id);
   await page.goto(`/diagrams/${d.id}`);
-  await expect(page.locator('.react-flow__node')).toHaveCount(2);
+  await expect(page.locator('.react-flow__node-notation')).toHaveCount(2);
   await page.getByRole('button', { name: 'Создать связь модели', exact: true }).click();
   await page.getByLabel('Имя связи', { exact: true }).fill('Ответственность');
   await page.getByLabel('Источник связи', { exact: true }).selectOption(source.id);
@@ -1191,7 +1191,7 @@ test('browser: drag arrows between different model objects and their aliases', a
     })),
   });
   await page.goto(`/diagrams/${d.id}`);
-  await expect(page.locator('.react-flow__node')).toHaveCount(4);
+  await expect(page.locator('.react-flow__node-notation')).toHaveCount(4);
   for (const [index, [from, to, port]] of (
     [
       [0, 1, 'yes'],
@@ -1225,4 +1225,187 @@ test('browser: drag arrows between different model objects and their aliases', a
   ).toHaveLength(2);
   await page.reload();
   await expect(page.locator('.react-flow__edge')).toHaveCount(3);
+});
+
+test('browser: return a tree arrow, nest objects under it and connect objects to arrows', async ({
+  page,
+  request,
+}) => {
+  test.setTimeout(120000);
+  await login(request, page);
+  const a = await object(request, 'Источник'),
+    b = await object(request, 'Назначение'),
+    c = await object(request, 'Комментарий');
+  let d = await create(request);
+  for (const o of [a, b, c]) d = await place(request, d, o.id);
+  d = await save(request, d, {
+    ...d.document,
+    nodes: d.document.nodes.map((n, i) => ({
+      ...n,
+      position: { x: i === 1 ? 300 : 0, y: i === 2 ? 220 : 0 },
+    })),
+    edges: [
+      {
+        id: 'primary',
+        bindingId: d.document.bindings[0].id,
+        typeId: 'flow',
+        source: d.document.nodes[0].id,
+        target: d.document.nodes[1].id,
+        sourcePort: 'out',
+        targetPort: 'in',
+        properties: { label: '' },
+      },
+    ],
+  });
+  const primary = d.document.relations![0];
+  await page.goto(`/diagrams/${d.id}`);
+  await expect(page.locator('.react-flow__node-notation')).toHaveCount(3);
+  async function connect(from: string, to: string) {
+    await page.locator('.react-flow__controls-fitview').click();
+    const a = (await page
+      .locator(`[data-id="${from}"] .source[data-handleid="out"]`)
+      .boundingBox())!;
+    const b = (await page.locator(`[data-id="${to}"] .target[data-handleid="in"]`).boundingBox())!;
+    await page.mouse.move(a.x + a.width / 2, a.y + a.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 20 });
+    await page.mouse.up();
+    await expect(page.getByText(/Сохранено · ревизия/)).toBeVisible({ timeout: 15000 });
+  }
+  await connect(d.document.nodes[2].id, 'primary');
+  await expect(page.locator('.react-flow__edge')).toHaveCount(2);
+  d = await (await request.get(`/api/diagrams/${d.id}`)).json();
+  const secondary = d.document.edges[1];
+  expect(d.document.relations!.find((r) => r.id === secondary.relationId)).toMatchObject({
+    sourceId: c.id,
+    targetId: primary.id,
+  });
+  await connect('primary', secondary.id);
+  await expect(page.locator('.react-flow__edge')).toHaveCount(3);
+  d = await (await request.get(`/api/diagrams/${d.id}`)).json();
+  const tertiary = d.document.edges[2];
+  expect(d.document.relations!.find((r) => r.id === tertiary.relationId)).toMatchObject({
+    sourceId: primary.id,
+    targetId: secondary.relationId,
+  });
+  const primaryRow = page.locator(`[data-model-relation-id="${primary.id}"]`);
+  await primaryRow
+    .getByRole('button', { name: 'Создать дочерний объект связи Переход', exact: true })
+    .click();
+  await page.getByLabel('Имя объекта', { exact: true }).fill('Деталь связи');
+  await page.getByRole('button', { name: 'Сохранить объект', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'Создать объект', exact: true })).toHaveCount(0);
+  const child = (await (await request.get('/api/model')).json()).objects.find(
+    (o: ModelObject) => o.name === 'Деталь связи',
+  );
+  expect(child.parentId).toBe(primary.id);
+  expect(
+    (
+      await request.patch(`/api/relations/${primary.id}`, {
+        data: { revision: primary.revision, parentId: child.id },
+      })
+    ).status(),
+  ).toBe(400);
+  await primaryRow.getByRole('button', { name: 'Найти связь Переход', exact: true }).click();
+  await page.getByRole('button', { name: 'Удалить связь', exact: true }).click();
+  await expect(page.locator('.react-flow__edge')).toHaveCount(0);
+  await expect(page.getByText(/Сохранено · ревизия/)).toBeVisible({ timeout: 15000 });
+  await page
+    .locator(`[data-relation-reference="${primary.id}"]`)
+    .first()
+    .getByRole('button', { name: 'Вернуть представление связи Переход', exact: true })
+    .click();
+  await page.getByRole('button', { name: 'Разместить стрелку', exact: true }).click();
+  await expect(page.locator('.react-flow__edge')).toHaveCount(1);
+  for (const relationId of [secondary.relationId, tertiary.relationId]) {
+    await page
+      .locator(`[data-model-relation-id="${relationId}"]`)
+      .getByRole('button', { name: /Разместить связь/ })
+      .click();
+    await page.getByRole('button', { name: 'Разместить стрелку', exact: true }).click();
+  }
+  await expect(page.locator('.react-flow__edge')).toHaveCount(3);
+  await expect(page.getByText(/Сохранено · ревизия/)).toBeVisible({ timeout: 15000 });
+  await page.reload();
+  await expect(page.locator('.react-flow__edge')).toHaveCount(3);
+  d = await (await request.get(`/api/diagrams/${d.id}`)).json();
+  expect(d.document.edges[0].relationId).toBe(primary.id);
+  const imported = await request.post('/api/diagrams', {
+    data: { name: 'Импорт стрелок', document: d.document },
+  });
+  expect(imported.status(), await imported.text()).toBe(201);
+  const copy: ModelDiagram = await imported.json();
+  const root = copy.document.relations!.find((r) => r.copiedFrom?.id === primary.id)!;
+  const dependent = copy.document.relations!.find(
+    (r) => r.copiedFrom?.id === secondary.relationId,
+  )!;
+  expect(dependent.targetId).toBe(root.id);
+  expect(copy.document.edges.map((e) => e.relationId)).not.toContain(primary.id);
+});
+
+test('relation hierarchy: hidden parents survive import and historical restoration', async ({
+  request,
+}) => {
+  await login(request);
+  const a = await object(request, 'A'),
+    b = await object(request, 'B');
+  const r = await (
+    await request.post('/api/relations', {
+      data: { name: 'Родитель-связь', sourceId: a.id, targetId: b.id },
+    })
+  ).json();
+  const child = await object(request, 'Вложенный объект', r.id);
+  let d = await create(request);
+  d = await place(request, d, child.id);
+  expect(d.document.relations!.map((r) => r.id)).toEqual([r.id]);
+  expect(d.document.objects.find((o) => o.id === child.id)?.parentId).toBe(r.id);
+  expect(
+    (await request.delete(`/api/relations/${r.id}`, { data: { revision: r.revision } })).status(),
+  ).toBe(409);
+  expect(
+    (
+      await request.patch(`/api/relations/${r.id}`, {
+        data: { revision: r.revision, parentId: child.id },
+      })
+    ).status(),
+  ).toBe(400);
+  const copy = await request.post('/api/diagrams', {
+    data: { name: 'Копия дерева', document: d.document },
+  });
+  expect(copy.status(), await copy.text()).toBe(201);
+  const imported: ModelDiagram = await copy.json();
+  expect(imported.document.objects.find((o) => o.copiedFrom?.id === child.id)?.parentId).toBe(
+    imported.document.relations![0].id,
+  );
+  const historyNumber = d.revision;
+  d = await save(request, d, { ...d.document, nodes: [], edges: [], objects: [], relations: [] });
+  for (const o of [child])
+    expect(
+      (await request.delete(`/api/objects/${o.id}`, { data: { revision: o.revision } })).status(),
+    ).toBe(200);
+  expect(
+    (await request.delete(`/api/relations/${r.id}`, { data: { revision: r.revision } })).status(),
+  ).toBe(200);
+  for (const o of [a, b])
+    expect(
+      (await request.delete(`/api/objects/${o.id}`, { data: { revision: o.revision } })).status(),
+    ).toBe(200);
+  const restored = await request.post(`/api/diagrams/${d.id}/restore`, {
+    data: { revision: d.revision, number: historyNumber },
+  });
+  expect(restored.status(), await restored.text()).toBe(200);
+  const result: ModelDiagram = await restored.json();
+  expect(result.document.objects.find((o) => o.id === child.id)?.parentId).toBe(r.id);
+  expect(result.document.relations![0]).toMatchObject({ id: r.id, sourceId: a.id, targetId: b.id });
+  const outer = await request.post('/api/relations', {
+    data: { name: 'Связь со связью', sourceId: r.id, targetId: child.id },
+  });
+  expect(outer.status()).toBe(201);
+  expect(
+    (
+      await request.patch(`/api/objects/${child.id}`, {
+        data: { revision: 1, parentId: 'unknown-parent' },
+      })
+    ).status(),
+  ).toBe(400);
 });

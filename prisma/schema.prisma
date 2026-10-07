@@ -106,11 +106,7 @@ model ModelObject {
   spaceId String
   space ModelSpace @relation(fields: [spaceId], references: [id], onDelete: Cascade)
   copiedFrom Json?
-  outgoing ModelRelation[] @relation("RelationSource")
-  incoming ModelRelation[] @relation("RelationTarget")
   parentId String?
-  parent ModelObject? @relation("ObjectTree", fields: [spaceId, parentId], references: [spaceId, id], onDelete: NoAction, onUpdate: NoAction)
-  children ModelObject[] @relation("ObjectTree")
   name String
   description String @default("")
   attributes Json @default("{}")
@@ -155,9 +151,8 @@ model ModelRelation {
   spaceId String
   space ModelSpace @relation(fields: [spaceId], references: [id], onDelete: Cascade)
   sourceId String
-  source ModelObject @relation("RelationSource", fields: [spaceId, sourceId], references: [spaceId, id], onDelete: NoAction, onUpdate: NoAction)
   targetId String
-  target ModelObject @relation("RelationTarget", fields: [spaceId, targetId], references: [spaceId, id], onDelete: NoAction, onUpdate: NoAction)
+  parentId String?
   name String
   description String @default("")
   attributes Json @default("{}")
@@ -171,6 +166,7 @@ model ModelRelation {
   @@unique([spaceId, id])
   @@index([spaceId, sourceId])
   @@index([spaceId, targetId])
+  @@index([spaceId, parentId])
 }
 model ModelRelationRevision {
   id String @id @default(cuid())

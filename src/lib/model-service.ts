@@ -14,7 +14,7 @@ import {
   modelErrors,
   hierarchyError,
   objectSnapshotSchema,
-  objectClosure,
+  modelClosure,
   splitType,
   qualify,
   type ModelDocument,
@@ -23,7 +23,12 @@ import {
 } from './model';
 export { ModelError, reject } from './model-errors';
 import { reject } from './model-errors';
-import { materializeRelations, relationSnapshot, createRelation } from './relation-service';
+import {
+  materializeRelations,
+  relationSnapshot,
+  createRelation,
+  modelEntities,
+} from './relation-service';
 type Tx = Prisma.TransactionClient;
 const json = (v: unknown) => v as Prisma.InputJsonValue;
 const uuid = () => randomUUID();
@@ -70,17 +75,22 @@ async function createObject(
 }
 async function liveDocument(tx: Tx, document: ModelDocument): Promise<ModelDocument> {
   const all = await tx.modelObject.findMany({ where: { spaceId: document.modelSpaceId } });
-  const objects = objectClosure(
-    document.nodes.map((n) => n.objectId),
-    all.map(snapshot),
-  );
-  const relationIds = document.edges.flatMap((e) => (e.relationId ? [e.relationId] : []));
-  const relations = (
+  const allRelations = (
     await tx.modelRelation.findMany({
-      where: { spaceId: document.modelSpaceId, id: { in: relationIds } },
+      where: { spaceId: document.modelSpaceId },
     })
   ).map(relationSnapshot);
-  return { ...document, objects, relations };
+  return {
+    ...document,
+    ...modelClosure(
+      [
+        ...document.nodes.map((n) => n.objectId),
+        ...document.edges.flatMap((e) => (e.relationId ? [e.relationId] : [])),
+      ],
+      all.map(snapshot),
+      allRelations,
+    ),
+  };
 }
 async function indexes(tx: Tx, diagramId: string, document: ModelDocument) {
   await tx.diagramObjectUsage.deleteMany({ where: { diagramId } });
@@ -301,16 +311,14 @@ export async function newDiagram(
         else {
           const imported = modelDiagramSchema.parse(input.document);
           valid(imported);
-          const ids = new Map(imported.objects.map((o) => [o.id, uuid()])),
-            bindings = new Map(imported.bindings.map((b) => [b.id, uuid()]));
-          const pending = [...imported.objects];
+          const relationIds = new Map((imported.relations ?? []).map((r) => [r.id, uuid()]));
+          const ids = new Map([
+            ...imported.objects.map((o) => [o.id, uuid()] as const),
+            ...relationIds,
+          ]);
+          const bindings = new Map(imported.bindings.map((b) => [b.id, uuid()]));
           const objects: ModelObject[] = [];
-          while (pending.length) {
-            const i = pending.findIndex(
-              (o) => !o.parentId || objects.some((parent) => parent.id === ids.get(o.parentId!)),
-            );
-            if (i < 0) reject(400, 'Недопустимое дерево импорта');
-            const [o] = pending.splice(i, 1);
+          for (const o of imported.objects) {
             objects.push(
               await createObject(tx, space.id, {
                 id: ids.get(o.id),
@@ -323,23 +331,30 @@ export async function newDiagram(
               }),
             );
           }
-          const relationIds = new Map((imported.relations ?? []).map((r) => [r.id, uuid()]));
+          const pending = [...(imported.relations ?? [])];
           const relations = [];
-          for (const r of imported.relations ?? [])
+          const present = new Set(imported.objects.map((o) => o.id));
+          while (pending.length) {
+            const i = pending.findIndex((r) => present.has(r.sourceId) && present.has(r.targetId));
+            if (i < 0) reject(400, 'Цикл между участниками импортируемых связей');
+            const [r] = pending.splice(i, 1);
             relations.push(
               await createRelation(
                 tx,
                 space.id,
                 {
                   ...r,
-                  id: relationIds.get(r.id)!,
+                  id: ids.get(r.id)!,
                   sourceId: ids.get(r.sourceId)!,
                   targetId: ids.get(r.targetId)!,
+                  parentId: r.parentId ? ids.get(r.parentId) : null,
                   copiedFrom: { id: r.id, name: r.name },
                 },
                 true,
               ),
             );
+            present.add(r.id);
+          }
           document = {
             ...imported,
             relations,
@@ -382,6 +397,7 @@ export async function newDiagram(
           edges: [],
         };
       document = await materializeRelations(tx, document, undefined, undefined, !!input.document);
+      document = await liveDocument(tx, document);
       valid(document);
       const d = await tx.diagram.create({
         data: {
@@ -521,9 +537,7 @@ export async function saveModelDiagram(
             data: { revision: { increment: 1 } },
           });
         while (pending.length) {
-          const i = pending.findIndex((o) => !o.parentId || present.has(o.parentId));
-          if (i < 0) reject(400, 'Не удалось восстановить дерево объектов');
-          const [o] = pending.splice(i, 1);
+          const o = pending.shift()!;
           await createObject(tx, current.modelSpaceId, {
             id: o.id,
             name: o.name,
@@ -660,9 +674,7 @@ export async function addObject(
     await tx.modelSpace.update({ where: { id: space.id }, data: { revision: { increment: 1 } } });
     if (
       input.parentId &&
-      !(await tx.modelObject.findFirst({
-        where: { id: input.parentId, spaceId: space.id, archived: false },
-      }))
+      !(await modelEntities(tx, space.id)).some((o) => o.id === input.parentId && !o.archived)
     )
       reject(400, 'Активный родительский объект не найден');
     const { copyOf, ...data } = input;
@@ -690,7 +702,7 @@ export async function deleteObject(
       reject(409, 'Объект был удалён и восстановлен. Обновите модель');
     if (object.revision !== expected)
       reject(409, 'Объект изменён в другой вкладке. Обновите модель');
-    if (await tx.modelObject.count({ where: { spaceId: space.id, parentId: objectId } }))
+    if ((await modelEntities(tx, space.id)).some((o) => o.parentId === objectId))
       reject(409, 'У объекта есть дочерние объекты. Сначала переместите или удалите их');
     if (
       await tx.modelRelation.count({
@@ -752,7 +764,7 @@ export async function updateObject(
       delete (data as Partial<typeof input>).revision;
     }
     if (data.parentId !== undefined && data.parentId !== current.parentId) {
-      const objects = await tx.modelObject.findMany({ where: { spaceId: space.id } });
+      const objects = await modelEntities(tx, space.id);
       if (data.parentId && !objects.some((o) => o.id === data.parentId && !o.archived))
         reject(400, 'Активный родительский объект не найден');
       const error = hierarchyError(

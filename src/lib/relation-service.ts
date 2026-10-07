@@ -2,13 +2,20 @@ import { createHash, randomUUID } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import { db } from './db';
 import { reject } from './model-errors';
-import { relationSnapshotSchema, type ModelRelation, type ModelDocument } from './model';
+import {
+  relationSnapshotSchema,
+  hierarchyError,
+  participantId,
+  type ModelRelation,
+  type ModelDocument,
+} from './model';
 type Tx = Prisma.TransactionClient;
 const json = (v: unknown) => v as Prisma.InputJsonValue;
 export const relationSnapshot = (row: {
   id: string;
   sourceId: string;
   targetId: string;
+  parentId?: string | null;
   name: string;
   description: string;
   attributes: unknown;
@@ -23,6 +30,13 @@ async function recordRelation(tx: Tx, r: Parameters<typeof relationSnapshot>[0])
     data: { relationId: r.id, number: r.revision, snapshot: json(relationSnapshot(r)) },
   });
 }
+export async function modelEntities(tx: Tx, spaceId: string) {
+  const [objects, relations] = await Promise.all([
+    tx.modelObject.findMany({ where: { spaceId } }),
+    tx.modelRelation.findMany({ where: { spaceId } }),
+  ]);
+  return [...objects, ...relations];
+}
 export async function createRelation(
   tx: Tx,
   spaceId: string,
@@ -30,6 +44,7 @@ export async function createRelation(
     id?: string;
     sourceId: string;
     targetId: string;
+    parentId?: string | null;
     name: string;
     description?: string;
     attributes?: ModelRelation['attributes'];
@@ -39,15 +54,25 @@ export async function createRelation(
   historical = false,
 ) {
   const ids = [...new Set([input.sourceId, input.targetId])];
-  const ends = await tx.modelObject.findMany({ where: { spaceId, id: { in: ids } } });
+  const entities = await modelEntities(tx, spaceId);
+  const ends = entities.filter((o) => ids.includes(o.id));
   if (ends.length !== ids.length) reject(404, 'Участники связи не найдены в вашей модели');
   if (!historical && ends.some((o) => o.archived))
     reject(400, 'Архивные объекты нельзя связывать заново');
+  if (
+    !historical &&
+    input.parentId &&
+    !entities.some((o) => o.id === input.parentId && !o.archived)
+  )
+    reject(400, 'Активный родительский объект или связь не найдены');
+  if (input.id && entities.some((o) => o.id === input.id))
+    reject(409, 'Идентификатор связи уже занят');
   const r = await tx.modelRelation.create({
     data: {
       id: input.id,
       sourceId: input.sourceId,
       targetId: input.targetId,
+      parentId: input.parentId,
       name: input.name.trim(),
       description: input.description,
       archived: input.archived,
@@ -66,13 +91,53 @@ export async function materializeRelations(
   previous?: ModelDocument,
   restoring = false,
 ): Promise<ModelDocument> {
-  const nodes = new Map(d.nodes.map((n) => [n.id, n]));
+  if (restoring) {
+    const entities = await modelEntities(tx, d.modelSpaceId);
+    const present = new Set(entities.map((o) => o.id));
+    const pending = [];
+    for (const r of d.relations ?? []) {
+      const row = await tx.modelRelation.findUnique({ where: { id: r.id } });
+      if (row && row.spaceId !== d.modelSpaceId)
+        reject(409, 'Историческая связь принадлежит другому пространству');
+      if (!row) pending.push(r);
+    }
+    while (pending.length) {
+      const i = pending.findIndex((r) => present.has(r.sourceId) && present.has(r.targetId));
+      if (i < 0) reject(400, 'Не удалось восстановить участников связей');
+      const [r] = pending.splice(i, 1);
+      await createRelation(tx, d.modelSpaceId, r, true);
+      present.add(r.id);
+    }
+  }
   const relations: ModelRelation[] = [];
-  const edges = [];
+  const edges: ModelDocument['edges'] = [];
   let created = false;
-  for (const e of d.edges) {
-    const sourceId = nodes.get(e.source)?.objectId,
-      targetId = nodes.get(e.target)?.objectId;
+  const pending = [...d.edges];
+  const ordered: typeof d.edges = [];
+  while (pending.length) {
+    const index = pending.findIndex((e) =>
+      [e.source, e.target].every(
+        (id) => d.nodes.some((n) => n.id === id) || ordered.some((x) => x.id === id),
+      ),
+    );
+    if (index < 0) reject(400, 'Отсутствующее представление или цикл между стрелками');
+    ordered.push(...pending.splice(index, 1));
+  }
+  const document = {
+    ...d,
+    edges: d.edges.map((e) => ({
+      ...e,
+      relationId:
+        e.relationId ??
+        (diagramId
+          ? `relation_${createHash('sha256').update(`${diagramId}:${e.id}`).digest('hex').slice(0, 40)}`
+          : randomUUID()),
+    })),
+  };
+  for (const original of ordered) {
+    const e = document.edges.find((x) => x.id === original.id)!;
+    const sourceId = participantId(document, e.source),
+      targetId = participantId(document, e.target);
     if (!sourceId || !targetId) reject(400, 'Связь ссылается на отсутствующее представление');
     const relationId =
       e.relationId ??
@@ -106,6 +171,7 @@ export async function materializeRelations(
               ? e.properties.label.trim().slice(0, 100)
               : (type?.name ?? 'Поясняющая связь')),
           description: proposed?.description,
+          parentId: restoring ? proposed?.parentId : null,
           attributes:
             proposed?.attributes ??
             Object.fromEntries(
@@ -136,7 +202,7 @@ export async function materializeRelations(
       where: { id: d.modelSpaceId },
       data: { revision: { increment: 1 } },
     });
-  return { ...d, edges, relations };
+  return { ...d, edges: d.edges.map((e) => edges.find((x) => x.id === e.id)!), relations };
 }
 async function ownSpace(tx: Tx, ownerId: string) {
   const space = await tx.modelSpace.findUnique({ where: { ownerId } });
@@ -150,6 +216,7 @@ export async function addRelation(
     name: string;
     sourceId: string;
     targetId: string;
+    parentId?: string | null;
     description?: string;
     attributes?: ModelRelation['attributes'];
     copyOf?: string;
@@ -177,6 +244,7 @@ export async function updateRelation(
     description?: string;
     attributes?: ModelRelation['attributes'];
     archived?: boolean;
+    parentId?: string | null;
   },
   restoreNumber?: number,
 ) {
@@ -202,7 +270,17 @@ export async function updateRelation(
         description: s.description,
         attributes: s.attributes,
         archived: s.archived,
+        parentId: s.parentId ?? null,
       };
+    }
+    if (data.parentId !== undefined && data.parentId !== r.parentId) {
+      const entities = await modelEntities(tx, space.id);
+      if (data.parentId && !entities.some((o) => o.id === data.parentId && !o.archived))
+        reject(400, 'Активный родительский объект или связь не найдены');
+      const error = hierarchyError(
+        entities.map((o) => (o.id === id ? { ...o, parentId: data.parentId! } : o)),
+      );
+      if (error) reject(400, error);
     }
     const updated = await tx.modelRelation.update({
       where: { id },
@@ -230,6 +308,14 @@ export async function deleteRelation(
       (input.incarnation && input.incarnation !== r.createdAt.toISOString())
     )
       reject(409, 'Связь изменена. Обновите модель');
+    if ((await modelEntities(tx, space.id)).some((o) => o.parentId === id))
+      reject(409, 'У связи есть дочерние объекты или связи. Сначала переместите или удалите их');
+    if (
+      await tx.modelRelation.count({
+        where: { spaceId: space.id, OR: [{ sourceId: id }, { targetId: id }] },
+      })
+    )
+      reject(409, 'Связь участвует в других связях модели. Сначала удалите их');
     const usages = await tx.diagramRelationUsage.findMany({
       where: { relationId: id },
       include: { diagram: { select: { name: true } } },

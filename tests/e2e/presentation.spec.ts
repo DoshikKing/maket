@@ -70,7 +70,7 @@ async function diagram(page: Page, request: APIRequestContext, dark = false) {
   expect(response.status()).toBe(201);
   const created = await response.json();
   await page.goto(`/diagrams/${created.id}`);
-  await expect(page.locator('.react-flow__node')).toHaveCount(2);
+  await expect(page.locator('.react-flow__node-notation')).toHaveCount(2);
   await expect(page.locator('.react-flow__node[data-id="a"]')).toBeVisible();
   return created.id as string;
 }
