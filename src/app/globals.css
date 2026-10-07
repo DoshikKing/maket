@@ -2590,3 +2590,55 @@ body {
 .relation-history {
   margin-top: 18px;
 }
+
+.model-editor-body.hide-tree > .object-panel,
+.model-editor-body.hide-palette > .palette,
+.model-editor-body.hide-properties > .inspector {
+  display: none;
+}
+.relation-folder {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  padding: 6px;
+  color: var(--muted);
+  text-align: left;
+}
+.free-endpoint {
+  width: 8px;
+  height: 8px;
+}
+.free-endpoint .react-flow__handle {
+  top: 50%;
+  left: 50%;
+  right: auto;
+  transform: translate(-50%, -50%);
+  background: var(--panel);
+  border: 2px solid var(--accent);
+}
+
+.panel-controls {
+  position: relative;
+}
+.panel-controls summary {
+  cursor: pointer;
+}
+.panel-options {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  z-index: 30;
+  display: grid;
+  gap: 5px;
+  padding: 8px;
+  min-width: 180px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 6px 20px #0002;
+}
+.panel-options button[aria-pressed='true'] {
+  color: var(--accent);
+  border-color: var(--accent);
+}

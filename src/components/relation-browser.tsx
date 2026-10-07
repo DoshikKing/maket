@@ -1,6 +1,6 @@
 'use client';
 import { useState } from 'react';
-import { Plus, Pencil, Trash2, Archive, Copy, LocateFixed } from 'lucide-react';
+import { FolderPlus, Plus, Pencil, Trash2, Archive, Copy, LocateFixed } from 'lucide-react';
 import { api, date } from '@/lib/client';
 import {
   attributesSchema,
@@ -433,10 +433,11 @@ export function RelationBrowser({
               <div className="object-tree-actions">
                 <button
                   aria-label={`Создать дочерний объект связи ${r.name}`}
+                  title="Создать дочерний объект"
                   disabled={r.archived}
                   onClick={() => onCreateChild?.(r.id)}
                 >
-                  <Plus size={13} />
+                  <FolderPlus size={13} />
                 </button>
                 <button
                   title="Разместить стрелку этой связи"

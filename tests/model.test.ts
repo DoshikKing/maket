@@ -1,9 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import { builtinNotation } from '../src/lib/notation';
+import { edgeGeometry } from '../src/lib/diagram-geometry';
 import {
   modelDiagramSchema,
   connectionTypeForSource,
   normalizeConnection,
+  rebindEdge,
   mergeModelObjects,
   modelErrors,
   projectDocument,
@@ -368,4 +370,105 @@ describe('cross-notation model', () => {
       };
     expect(mergeModelObjects([old], [restored])[0]).toBe(restored);
   });
+});
+
+it('detached endpoints survive missing representations and retain semantic participants', () => {
+  const d = document();
+  d.nodes[1].bindingId = 'a';
+  d.relations = [{ ...object, id: 'relation', sourceId: object.id, targetId: object.id }];
+  d.edges = [
+    {
+      id: 'edge',
+      bindingId: 'a',
+      typeId: 'flow',
+      relationId: 'relation',
+      source: 'n1',
+      target: 'n2',
+      sourcePort: 'out',
+      targetPort: 'in',
+      properties: {},
+      detachedTarget: { x: 500, y: 200 },
+    },
+  ];
+  d.nodes = d.nodes.filter((n) => n.id !== 'n2');
+  expect(modelErrors(d)).toEqual([]);
+  const packed = packDocument(projectDocument(d), d.objects, d.relations);
+  expect(packed.edges[0].detachedTarget).toEqual({ x: 500, y: 200 });
+  expect(packed.relations![0].targetId).toBe(object.id);
+  expect(
+    modelDiagramSchema.safeParse({
+      ...d,
+      edges: [{ ...d.edges[0], detachedTarget: { x: Infinity, y: 0 } }],
+    }).success,
+  ).toBe(false);
+  delete d.edges[0].detachedTarget;
+  expect(modelErrors(d)).toContain('Связь ссылается на отсутствующий элемент');
+});
+it('rebinds an arrow and its dependent arrows while preserving other aliases and input document', () => {
+  const d = document();
+  d.objects.push({ ...object, id: 'b' }, { ...object, id: 'c' });
+  d.nodes[1].objectId = 'b';
+  d.nodes.push({ ...d.nodes[1], id: 'n3', objectId: 'c' });
+  d.relations = [
+    { ...object, id: 'r', sourceId: object.id, targetId: 'b' },
+    { ...object, id: 'dependent', sourceId: 'r', targetId: object.id },
+  ];
+  const e = {
+    id: 'e1',
+    bindingId: null,
+    typeId: 'association',
+    relationId: 'r',
+    source: 'n1',
+    target: 'n2',
+    sourcePort: 'out',
+    targetPort: 'in',
+    properties: {},
+  };
+  d.edges = [
+    e,
+    { ...e, id: 'alias' },
+    { ...e, id: 'child', relationId: 'dependent', source: 'e1', target: 'n1' },
+  ];
+  const view = projectDocument(d),
+    before = structuredClone(view);
+  const next = rebindEdge(view, { ...view.edges[0], target: 'n3' });
+  const aliases = { ...view, nodes: [...view.nodes, { ...view.nodes[1], id: 'aliasNode' }] };
+  const same = rebindEdge(aliases, { ...aliases.edges[0], target: 'aliasNode' });
+  expect(same.edges[0].relationId).toBe('r');
+  expect(same.edges[2].relationId).toBe('dependent');
+  expect(modelErrors(packDocument(same, d.objects, d.relations))).toEqual([]);
+  expect(view).toEqual(before);
+  const primary = next.relations!.find((r) => r.id === next.edges[0].relationId)!;
+  expect(primary).toMatchObject({
+    sourceId: object.id,
+    targetId: 'c',
+    copiedFrom: { id: 'r', name: object.name },
+  });
+  expect(next.edges[1].relationId).toBe('r');
+  expect(next.relations!.find((r) => r.id === next.edges[2].relationId)!.sourceId).toBe(primary.id);
+  expect(modelErrors(packDocument(next, d.objects, d.relations))).toEqual([]);
+});
+
+it('free endpoint routing ignores the side of its former arrow attachment', () => {
+  const d = document();
+  d.edges = [
+    {
+      id: 'free',
+      bindingId: null,
+      typeId: 'association',
+      source: 'formerArrow',
+      target: 'otherArrow',
+      sourcePort: 'in',
+      targetPort: 'out',
+      properties: {},
+      detachedSource: { x: 10, y: 20 },
+      detachedTarget: { x: 300, y: 140 },
+    },
+  ];
+  const view = projectDocument(d);
+  const expected = {
+    ...view,
+    edges: view.edges.map((e) => ({ ...e, sourcePort: 'out', targetPort: 'in' })),
+  };
+  expect(edgeGeometry(view).get('free')).toEqual(edgeGeometry(expected).get('free'));
 });

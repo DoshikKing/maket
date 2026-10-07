@@ -1422,3 +1422,139 @@ test('relation hierarchy: hidden parents survive import and historical restorati
     ).status(),
   ).toBe(400);
 });
+
+test('browser: distinct tree actions, collapsible panels, detach and rebind arrows', async ({
+  page,
+  request,
+}) => {
+  test.setTimeout(120000);
+  await login(request, page);
+  const a = await object(request, 'Источник'),
+    b = await object(request, 'Получатель'),
+    c = await object(request, 'Другой получатель');
+  let d = await create(request);
+  for (const o of [a, b, c, b]) d = await place(request, d, o.id);
+  d = await save(request, d, {
+    ...d.document,
+    nodes: d.document.nodes.map((n, i) => ({
+      ...n,
+      position: { x: i ? 330 : 0, y: i > 1 ? (i - 1) * 220 : 0 },
+    })),
+    edges: [
+      {
+        id: 'editable',
+        bindingId: d.document.bindings[0].id,
+        typeId: 'flow',
+        source: d.document.nodes[0].id,
+        target: d.document.nodes[1].id,
+        sourcePort: 'out',
+        targetPort: 'in',
+        properties: { label: 'Тестовая стрелка' },
+      },
+    ],
+  });
+  const original = d.document.relations![0];
+  d = await save(request, d, {
+    ...d.document,
+    edges: [
+      ...d.document.edges,
+      {
+        ...d.document.edges[0],
+        id: 'alias',
+        target: d.document.nodes[3].id,
+        properties: { label: 'Другая копия' },
+      },
+    ],
+  });
+  await page.goto(`/diagrams/${d.id}`);
+  await expect(page.locator('.react-flow__edge')).toHaveCount(2);
+  const row = page.locator(`[data-object-id="${a.id}"]`);
+  await row.getByRole('button', { name: 'Найти объект Источник', exact: true }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  const folder = page.getByRole('button', { name: 'Связи объекта Источник', exact: true });
+  await folder.click();
+  await expect(folder).toHaveAttribute('aria-expanded', 'false');
+  await folder.click();
+  await expect(folder).toHaveAttribute('aria-expanded', 'true');
+  const catalog = page.locator(`[data-model-relation-id="${original.id}"]`);
+  await catalog
+    .getByRole('button', { name: `Разместить связь ${original.name}`, exact: true })
+    .click();
+  await expect(
+    page.getByRole('dialog', { name: `Разместить связь «${original.name}»`, exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole('dialog', { name: 'Создать объект', exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Закрыть', exact: true }).click();
+  await page.getByText('Панели', { exact: true }).click();
+  for (const [label, selector] of [
+    ['Дерево объектов', '.object-panel'],
+    ['Палитра объектов', '.palette'],
+    ['Свойства', '.inspector'],
+  ]) {
+    const toggle = page.getByRole('button', { name: label, exact: true });
+    await toggle.click();
+    await expect(page.locator(selector)).toBeHidden();
+    await toggle.click();
+    await expect(page.locator(selector)).toBeVisible();
+  }
+  await page.getByText('Панели', { exact: true }).click();
+  await page.locator('.react-flow__controls-fitview').click();
+  await catalog.getByRole('button', { name: `Найти связь ${original.name}`, exact: true }).click();
+  await page.getByRole('button', { name: 'Отвязать конец', exact: true }).click();
+  await expect(page.getByText(/Сохранено · ревизия/)).toBeVisible({ timeout: 15000 });
+  d = await (await request.get(`/api/diagrams/${d.id}`)).json();
+  expect(d.document.edges.find((e) => e.id === 'editable')!.detachedTarget).toBeDefined();
+  await page.reload();
+  await expect(page.locator('.react-flow__edge')).toHaveCount(2);
+  await page.locator('.react-flow__controls-fitview').click();
+  const updater = page.locator(
+    '.react-flow__edge[data-id="editable"] .react-flow__edgeupdater-target',
+  );
+  await updater.hover();
+  const start = (await updater.boundingBox())!;
+  const end = (await page
+    .locator(`[data-id="${d.document.nodes[2].id}"] .react-flow__handle[data-handleid="in"]`)
+    .boundingBox())!;
+  await page.mouse.move(start.x + start.width / 2, start.y + start.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(end.x + end.width / 2, end.y + end.height / 2, { steps: 20 });
+  await page.mouse.up();
+  await expect(page.getByText(/Сохранено · ревизия/)).toBeVisible({ timeout: 15000 });
+  const rebound: ModelDiagram = await (await request.get(`/api/diagrams/${d.id}`)).json();
+  const changed = rebound.document.edges.find((e) => e.id === 'editable')!;
+  expect(changed.target).toBe(d.document.nodes[2].id);
+  expect(changed.detachedTarget).toBeUndefined();
+  expect(changed.properties.label).toBe('Тестовая стрелка');
+  expect(rebound.document.edges.find((e) => e.id === 'alias')!.relationId).toBe(original.id);
+  expect(rebound.document.relations!.find((r) => r.id === changed.relationId)).toMatchObject({
+    sourceId: a.id,
+    targetId: c.id,
+    copiedFrom: { id: original.id, name: original.name },
+  });
+  await page.reload();
+  await expect(page.locator('.react-flow__edge')).toHaveCount(2);
+  await page.locator('.react-flow__controls-fitview').click();
+  await updater.hover();
+  const attached = (await updater.boundingBox())!;
+  const canvas = (await page.locator('.flow-container').boundingBox())!;
+  await page.mouse.move(attached.x + attached.width / 2, attached.y + attached.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(canvas.x + 150, canvas.y + canvas.height - 45, { steps: 20 });
+  await page.mouse.up();
+  await expect(page.getByText(/Сохранено · ревизия/)).toBeVisible({ timeout: 15000 });
+  d = await (await request.get(`/api/diagrams/${d.id}`)).json();
+  const freePoint = d.document.edges.find((e) => e.id === 'editable')!.detachedTarget!;
+  expect(freePoint).toBeDefined();
+  expect(d.document.edges.find((e) => e.id === 'editable')!.detachedSource).toBeUndefined();
+  d = await save(request, d, {
+    ...d.document,
+    nodes: d.document.nodes.filter((n) => n.objectId !== c.id),
+  });
+  expect(d.document.edges).toHaveLength(2);
+  const imported = await request.post('/api/diagrams', {
+    data: { name: 'Свободный конец — импорт', document: d.document },
+  });
+  expect(imported.status(), await imported.text()).toBe(201);
+  const copy: ModelDiagram = await imported.json();
+  expect(copy.document.edges.find((e) => e.id === 'editable')!.detachedTarget).toEqual(freePoint);
+});

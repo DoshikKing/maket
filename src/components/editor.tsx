@@ -13,6 +13,7 @@ import {
   type NodeChange,
   type EdgeChange,
   type OnConnectEnd,
+  type Connection,
   BackgroundVariant,
   ConnectionMode,
 } from '@xyflow/react';
@@ -45,7 +46,12 @@ import {
   type ShapeData,
 } from './diagram-node';
 import { EdgeMarkers, markerId } from './edge-markers';
-import { RelationAnchor, type RelationAnchorNode } from './relation-anchor';
+import {
+  RelationAnchor,
+  FreeEndpoint,
+  type FreeEndpointNode,
+  type RelationAnchorNode,
+} from './relation-anchor';
 import { edgeGeometry } from '@/lib/diagram-geometry';
 import { NumberField, TextAppearanceControls, EdgeAppearanceControls } from './appearance-controls';
 import {
@@ -67,6 +73,7 @@ import {
   mergeModelObjects,
   packDocument,
   participantId,
+  rebindEdge,
   normalizeConnection,
   relationEntity,
   modelErrors,
@@ -83,7 +90,12 @@ import {
   type ViewDocument,
   type ModelDocument,
 } from '@/lib/model';
-const canvasNodeTypes = { ...diagramNodeTypes, 'relation-anchor': RelationAnchor };
+const canvasNodeTypes = {
+  ...diagramNodeTypes,
+  'relation-anchor': RelationAnchor,
+  'free-endpoint': FreeEndpoint,
+};
+const freeEndpointId = (id: string, end: 'source' | 'target') => `free:${id}:${end}`;
 type DiagramDocument = ViewDocument;
 type Diagram = {
   id: string;
@@ -128,6 +140,7 @@ function Editor({ initial }: { initial: Diagram }) {
     [selected, setSelected] = useState<{ kind: 'node' | 'edge'; id: string } | null>(null),
     [edgeType, setEdgeType] = useState(initial.document.notation.edgeTypes[0].id),
     [error, setError] = useState(''),
+    [panels, setPanels] = useState({ tree: true, palette: true, properties: true }),
     [connectionNotice, setConnectionNotice] = useState<{ message: string } | null>(null),
     [saving, setSaving] = useState(false),
     [historyOpen, setHistoryOpen] = useState(false),
@@ -236,7 +249,7 @@ function Editor({ initial }: { initial: Diagram }) {
   );
   const change = useCallback((next: DiagramDocument, record = true) => {
     if (JSON.stringify(next) === JSON.stringify(docRef.current)) return;
-    if (record) {
+    if (record && !gesture.current) {
       const previous = structuredClone(docRef.current);
       setUndo((u) => [...u.slice(-49), previous]);
       setRedo([]);
@@ -552,6 +565,46 @@ function Editor({ initial }: { initial: Diagram }) {
       setCommandBusy(false);
     }
   }
+  const reconnecting = useRef<{ id: string; end: 'source' | 'target'; completed: boolean } | null>(
+    null,
+  );
+  function reconnectCandidate(
+    id: string,
+    c: Omit<Connection, 'sourceHandle' | 'targetHandle'> & {
+      sourceHandle?: string | null;
+      targetHandle?: string | null;
+    },
+  ) {
+    const current = docRef.current;
+    const old = current.edges.find((e) => e.id === id)!;
+    const sourceFree = c.source === freeEndpointId(id, 'source'),
+      targetFree = c.target === freeEndpointId(id, 'target');
+    return rebindEdge(
+      { ...current, relations: mergeModelObjects(current.relations ?? [], relationsRef.current) },
+      {
+        ...old,
+        source: sourceFree ? old.source : c.source,
+        target: targetFree ? old.target : c.target,
+        sourcePort: sourceFree ? old.sourcePort : (c.sourceHandle ?? ''),
+        targetPort: targetFree ? old.targetPort : (c.targetHandle ?? ''),
+        detachedSource: sourceFree ? old.detachedSource : undefined,
+        detachedTarget: targetFree ? old.detachedTarget : undefined,
+      },
+    );
+  }
+  function detachEnd(id: string, end: 'source' | 'target', point?: { x: number; y: number }) {
+    const current = docRef.current;
+    const position = point ?? edgeGeometry(current).get(id)?.[end];
+    if (!position) return;
+    change({
+      ...current,
+      edges: current.edges.map((e) =>
+        e.id === id
+          ? { ...e, [end === 'source' ? 'detachedSource' : 'detachedTarget']: position }
+          : e,
+      ),
+    });
+  }
   function candidate(c: {
     source: string;
     target: string;
@@ -609,7 +662,8 @@ function Editor({ initial }: { initial: Diagram }) {
     return () => clearTimeout(timer);
   }, [connectionNotice]);
   const connectionEnded: OnConnectEnd = (_, state) => {
-    if (state.isValid !== false || !state.fromHandle || !state.toHandle) return;
+    if (reconnecting.current || state.isValid !== false || !state.fromHandle || !state.toHandle)
+      return;
     const [source, target] =
       state.fromHandle.type === 'source'
         ? [state.fromHandle, state.toHandle]
@@ -650,7 +704,7 @@ function Editor({ initial }: { initial: Diagram }) {
     () => edgeGeometry(document),
     [document.nodes, document.edges, document.notation],
   );
-  type CanvasNode = ShapeNode | RelationAnchorNode;
+  type CanvasNode = ShapeNode | RelationAnchorNode | FreeEndpointNode;
   const nodes = useMemo<CanvasNode[]>(() => {
     const result = document.nodes.map((n) => {
       const definition = document.notation.nodeTypes.find((t) => t.id === n.typeId)!;
@@ -709,7 +763,26 @@ function Editor({ initial }: { initial: Diagram }) {
           ]
         : [];
     });
-    return [...result, ...anchors];
+    const free: FreeEndpointNode[] = document.edges.flatMap((e) =>
+      (['source', 'target'] as const).flatMap((end) => {
+        const point = end === 'source' ? e.detachedSource : e.detachedTarget;
+        return point
+          ? [
+              {
+                id: freeEndpointId(e.id, end),
+                type: 'free-endpoint' as const,
+                position: { x: point.x - 4, y: point.y - 4 },
+                width: 8,
+                height: 8,
+                draggable: false,
+                selectable: false,
+                data: { edgeId: e.id, end },
+              },
+            ]
+          : [];
+      }),
+    );
+    return [...result, ...anchors, ...free];
   }, [
     document.nodes,
     document.edges,
@@ -736,10 +809,10 @@ function Editor({ initial }: { initial: Diagram }) {
         const a = styledEdges[i].appearance;
         return {
           id: e.id,
-          source: e.source,
-          target: e.target,
-          sourceHandle: e.sourcePort,
-          targetHandle: e.targetPort,
+          source: e.detachedSource ? freeEndpointId(e.id, 'source') : e.source,
+          target: e.detachedTarget ? freeEndpointId(e.id, 'target') : e.target,
+          sourceHandle: e.detachedSource ? 'free' : e.sourcePort,
+          targetHandle: e.detachedTarget ? 'free' : e.targetPort,
           type: a.routing === 'bezier' ? 'default' : a.routing,
           label: String(
             effectiveEdge(
@@ -777,7 +850,11 @@ function Editor({ initial }: { initial: Diagram }) {
     while (changed) {
       changed = false;
       for (const e of docRef.current.edges)
-        if (!removed.has(e.id) && (removed.has(e.source) || removed.has(e.target))) {
+        if (
+          !removed.has(e.id) &&
+          ((!e.detachedSource && removed.has(e.source)) ||
+            (!e.detachedTarget && removed.has(e.target)))
+        ) {
           removed.add(e.id);
           changed = true;
         }
@@ -1157,6 +1234,29 @@ function Editor({ initial }: { initial: Diagram }) {
           )}
         </div>
         <div className="button-row">
+          <details className="panel-controls">
+            <summary className="secondary small">Панели</summary>
+            <div className="panel-options">
+              {(
+                [
+                  ['tree', 'Дерево объектов'],
+                  ['palette', 'Палитра объектов'],
+                  ['properties', 'Свойства'],
+                ] as const
+              ).map(([key, label]) => (
+                <button
+                  key={key}
+                  className="secondary small"
+                  aria-label={label}
+                  aria-pressed={panels[key]}
+                  title={`${panels[key] ? 'Скрыть' : 'Показать'}: ${label}`}
+                  onClick={() => setPanels((p) => ({ ...p, [key]: !p[key] }))}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </details>
           <button
             className="icon-button"
             title="Отменить"
@@ -1221,7 +1321,9 @@ function Editor({ initial }: { initial: Diagram }) {
           </button>
         </div>
       )}
-      <div className="editor-body model-editor-body">
+      <div
+        className={`editor-body model-editor-body ${panels.tree ? '' : 'hide-tree'} ${panels.palette ? '' : 'hide-palette'} ${panels.properties ? '' : 'hide-properties'}`}
+      >
         <ObjectTree
           objects={objects}
           relations={allRelations}
@@ -1548,11 +1650,54 @@ function Editor({ initial }: { initial: Diagram }) {
                   change(next);
                 }
               }}
+              onReconnectStart={(_, e, handle) => {
+                reconnecting.current = {
+                  id: e.id,
+                  end: handle === 'source' ? 'target' : 'source',
+                  completed: false,
+                };
+                beginGesture('drag');
+              }}
+              onReconnect={(e, c) => {
+                const next = reconnectCandidate(e.id, c);
+                const issues = modelErrors(
+                  packDocument(next, objectsRef.current, relationsRef.current),
+                );
+                if (issues.length) setConnectionNotice({ message: issues.join('; ') });
+                else {
+                  change(next);
+                  if (reconnecting.current) reconnecting.current.completed = true;
+                }
+              }}
+              onReconnectEnd={(event, e, handle, state) => {
+                if (!reconnecting.current?.completed && !state.toHandle && !state.toNode) {
+                  const pointer = 'changedTouches' in event ? event.changedTouches[0] : event;
+                  if (pointer)
+                    detachEnd(
+                      e.id,
+                      handle === 'source' ? 'target' : 'source',
+                      flow.screenToFlowPosition({ x: pointer.clientX, y: pointer.clientY }),
+                    );
+                } else if (!reconnecting.current?.completed) {
+                  setConnectionNotice({
+                    message: 'Соединение запрещено: выберите совместимый порт',
+                  });
+                }
+                reconnecting.current = null;
+                endGesture();
+              }}
               onConnectEnd={connectionEnded}
               onClickConnectEnd={connectionEnded}
               isValidConnection={(c) =>
-                modelErrors(packDocument(candidate(c), objectsRef.current, relationsRef.current))
-                  .length === 0
+                modelErrors(
+                  packDocument(
+                    reconnecting.current
+                      ? reconnectCandidate(reconnecting.current.id, c)
+                      : candidate(c),
+                    objectsRef.current,
+                    relationsRef.current,
+                  ),
+                ).length === 0
               }
               snapToGrid={user.settings.snapToGrid}
               snapGrid={[20, 20]}
@@ -1574,13 +1719,13 @@ function Editor({ initial }: { initial: Diagram }) {
                 bgColor="var(--panel)"
                 zoomable
                 nodeColor={(n) =>
-                  n.type === 'relation-anchor'
+                  n.type !== 'notation'
                     ? 'transparent'
                     : nodeAppearance((n.data as ShapeData).node, (n.data as ShapeData).definition)
                         .fill
                 }
                 nodeStrokeColor={(n) =>
-                  n.type === 'relation-anchor'
+                  n.type !== 'notation'
                     ? 'transparent'
                     : nodeAppearance((n.data as ShapeData).node, (n.data as ShapeData).definition)
                         .stroke
@@ -1878,9 +2023,13 @@ function Editor({ initial }: { initial: Diagram }) {
                           (r) =>
                             (!r.archived || r.id === selectedEdge.relationId) &&
                             r.sourceId ===
-                              document.nodes.find((n) => n.id === selectedEdge.source)?.objectId &&
+                              (selectedEdge.detachedSource
+                                ? relationLookup.get(selectedEdge.relationId ?? '')?.sourceId
+                                : participantId(document, selectedEdge.source)) &&
                             r.targetId ===
-                              document.nodes.find((n) => n.id === selectedEdge.target)?.objectId,
+                              (selectedEdge.detachedTarget
+                                ? relationLookup.get(selectedEdge.relationId ?? '')?.targetId
+                                : participantId(document, selectedEdge.target)),
                         )
                         .map((r) => (
                           <option key={r.id} value={r.id}>
@@ -1889,6 +2038,25 @@ function Editor({ initial }: { initial: Diagram }) {
                         ))}
                     </select>
                   </label>
+                  <h3>Концы стрелки</h3>
+                  <p className="muted small-text">
+                    Перетащите конец к другому порту или на свободное место. При смене участника
+                    создаётся отдельная модельная связь.
+                  </p>
+                  {(['source', 'target'] as const).map((end) => (
+                    <button
+                      key={end}
+                      className="secondary small"
+                      disabled={Boolean(
+                        end === 'source'
+                          ? selectedEdge.detachedSource
+                          : selectedEdge.detachedTarget,
+                      )}
+                      onClick={() => detachEnd(selectedEdge.id, end)}
+                    >
+                      {end === 'source' ? 'Отвязать начало' : 'Отвязать конец'}
+                    </button>
+                  ))}
                   <h3>Оформление стрелки</h3>
                   <EdgeAppearanceControls
                     value={edgeAppearance(

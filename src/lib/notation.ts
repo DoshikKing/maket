@@ -150,6 +150,8 @@ export const diagramSchema = z.object({
         source: identifier,
         target: identifier,
         appearance: edgeOverrideSchema.optional(),
+        detachedSource: z.object({ x: z.number().finite(), y: z.number().finite() }).optional(),
+        detachedTarget: z.object({ x: z.number().finite(), y: z.number().finite() }).optional(),
         sourcePort: identifier,
         targetPort: identifier,
         properties: values,
@@ -205,7 +207,7 @@ export function diagramErrors(d: DiagramDocument): string[] {
       errors.push('Для пользовательской линии задайте dashPattern');
     const source = d.nodes.find((x) => x.id === edge.source),
       target = d.nodes.find((x) => x.id === edge.target);
-    if (!source || !target) {
+    if ((!source && !edge.detachedSource) || (!target && !edge.detachedTarget)) {
       errors.push('Связь ссылается на отсутствующий элемент');
       continue;
     }
@@ -213,11 +215,14 @@ export function diagramErrors(d: DiagramDocument): string[] {
       !d.notation.connectionRules.some(
         (r) =>
           r.edgeType === edge.typeId &&
-          r.source.nodeType === source.typeId &&
-          r.target.nodeType === target.typeId &&
-          r.source.port === edge.sourcePort &&
-          r.target.port === edge.targetPort &&
-          (edge.source !== edge.target || r.allowSelfLoop),
+          (edge.detachedSource ||
+            (r.source.nodeType === source?.typeId && r.source.port === edge.sourcePort)) &&
+          (edge.detachedTarget ||
+            (r.target.nodeType === target?.typeId && r.target.port === edge.targetPort)) &&
+          (edge.detachedSource ||
+            edge.detachedTarget ||
+            edge.source !== edge.target ||
+            r.allowSelfLoop),
       )
     )
       errors.push('Соединение запрещено правилами нотации');
@@ -228,8 +233,8 @@ export function diagramErrors(d: DiagramDocument): string[] {
         port.maxConnections !== undefined &&
         d.edges.filter((e) =>
           port.direction === 'output'
-            ? e.source === node.id && e.sourcePort === port.id
-            : e.target === node.id && e.targetPort === port.id,
+            ? !e.detachedSource && e.source === node.id && e.sourcePort === port.id
+            : !e.detachedTarget && e.target === node.id && e.targetPort === port.id,
         ).length > port.maxConnections
       )
         errors.push(`Превышено число связей порта ${port.id}`);

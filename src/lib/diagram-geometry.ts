@@ -32,8 +32,8 @@ export function edgeGeometry(d: DiagramDocument) {
     const e = d.edges.find((e) => e.id === id);
     if (!e) return;
     visiting.add(id);
-    const source = endpoint(e.source, e.sourcePort, true),
-      target = endpoint(e.target, e.targetPort, false);
+    const source = e.detachedSource ?? endpoint(e.source, e.sourcePort, true),
+      target = e.detachedTarget ?? endpoint(e.target, e.targetPort, false);
     visiting.delete(id);
     if (!source || !target) return;
     const t = d.notation.edgeTypes.find((t) => t.id === e.typeId);
@@ -45,11 +45,11 @@ export function edgeGeometry(d: DiagramDocument) {
       targetX: target.x,
       targetY: target.y,
       sourcePosition:
-        !d.nodes.some((n) => n.id === e.source) && e.sourcePort === 'in'
+        !e.detachedSource && !d.nodes.some((n) => n.id === e.source) && e.sourcePort === 'in'
           ? Position.Left
           : Position.Right,
       targetPosition:
-        !d.nodes.some((n) => n.id === e.target) && e.targetPort === 'out'
+        !e.detachedTarget && !d.nodes.some((n) => n.id === e.target) && e.targetPort === 'out'
           ? Position.Right
           : Position.Left,
     };

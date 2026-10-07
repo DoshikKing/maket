@@ -8,6 +8,8 @@ import {
   Archive,
   Pencil,
   LocateFixed,
+  FolderPlus,
+  Folder,
   Trash2,
 } from 'lucide-react';
 import { api, date } from '@/lib/client';
@@ -357,6 +359,7 @@ export function ObjectTree({
 }) {
   const [query, setQuery] = useState(''),
     [collapsed, setCollapsed] = useState(new Set<string>()),
+    [closedLinks, setClosedLinks] = useState(new Set<string>()),
     [editing, setEditing] = useState<{ object?: ModelObject; parentId?: string | null } | null>(
       null,
     ),
@@ -405,11 +408,13 @@ export function ObjectTree({
     parentId: string | null,
     depth = 0,
     ancestors = new Set<string>(),
+    objectsOnly = false,
   ): React.ReactNode {
     return entities
       .filter(
         (o) =>
           o.parentId === parentId &&
+          (!objectsOnly || !relationIds.has(o.id)) &&
           visible.has(o.id) &&
           !ancestors.has(o.id) &&
           (parentId !== null || !relationIds.has(o.id)),
@@ -417,8 +422,7 @@ export function ObjectTree({
       .map((o) => {
         const linked = relations.filter(
           (r) =>
-            (r.sourceId === o.id || r.targetId === o.id) &&
-            r.parentId !== o.id &&
+            (r.sourceId === o.id || r.targetId === o.id || r.parentId === o.id) &&
             !ancestors.has(r.id),
         );
         const children = entities.some((c) => c.parentId === o.id) || linked.length > 0,
@@ -507,15 +511,25 @@ export function ObjectTree({
                 >
                   <Plus size={13} />
                 </button>
+                <button
+                  aria-label={`Найти объект ${o.name}`}
+                  title="Показать представление на диаграмме"
+                  onClick={() =>
+                    relationIds.has(o.id) ? onRelationLocate?.(o.id) : onLocate(o.id)
+                  }
+                >
+                  <LocateFixed size={12} />
+                </button>
                 <button aria-label={`Изменить объект ${o.name}`} onClick={() => editEntity(o)}>
                   <Pencil size={12} />
                 </button>
                 <button
                   aria-label={`Создать дочерний объект ${o.name}`}
+                  title="Создать дочерний объект"
                   disabled={o.archived}
                   onClick={() => setEditing({ parentId: o.id })}
                 >
-                  <LocateFixed size={12} />
+                  <FolderPlus size={12} />
                 </button>
                 {!relationIds.has(o.id) && (
                   <>
@@ -595,82 +609,112 @@ export function ObjectTree({
             </div>
             {children && !closed && (
               <div role="group">
-                {branch(o.id, depth + 1, new Set([...ancestors, o.id]))}
-                {linked.map((r) => (
-                  <div key={r.id}>
-                    <div
-                      role="treeitem"
-                      key={r.id}
-                      data-relation-reference={r.id}
-                      draggable={!r.archived}
-                      onDragStart={(e) => {
-                        e.dataTransfer.setData('application/maket-relation', r.id);
-                        e.dataTransfer.effectAllowed = 'copyMove';
-                      }}
-                      onDragOver={(e) => {
-                        if (
-                          e.dataTransfer.types.some(
-                            (t) =>
-                              t === 'application/maket-object' ||
-                              t === 'application/maket-relation',
-                          )
-                        ) {
-                          e.preventDefault();
-                          e.stopPropagation();
-                        }
-                      }}
-                      onDrop={(e) => {
-                        const id =
-                          e.dataTransfer.getData('application/maket-object') ||
-                          e.dataTransfer.getData('application/maket-relation');
-                        if (id) {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          void move(id, r.id);
-                        }
-                      }}
-                      className={`object-relation-reference ${r.archived ? 'archived' : ''}`}
+                {branch(o.id, depth + 1, new Set([...ancestors, o.id]), true)}
+                {linked.length > 0 && (
+                  <div role="treeitem" aria-expanded={!closedLinks.has(o.id)}>
+                    <button
+                      className="relation-folder"
+                      aria-label={`Связи объекта ${o.name}`}
+                      aria-expanded={!closedLinks.has(o.id)}
                       style={{ paddingLeft: 20 + (depth + 1) * 12 }}
+                      onClick={() =>
+                        setClosedLinks((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(o.id)) next.delete(o.id);
+                          else next.add(o.id);
+                          return next;
+                        })
+                      }
                     >
-                      <button
-                        title={r.name}
-                        onClick={() => onRelationLocate?.(r.id)}
-                        onDoubleClick={() => onRelationEdit?.(r)}
-                      >
-                        {r.sourceId === o.id ? '→' : '←'} {r.name}
-                        <small>
-                          {
-                            entities.find(
-                              (x) => x.id === (r.sourceId === o.id ? r.targetId : r.sourceId),
-                            )?.name
-                          }
-                        </small>
-                      </button>
-                      <button
-                        aria-label={`Вернуть представление связи ${r.name}`}
-                        title="Разместить стрелку на диаграмме"
-                        disabled={r.archived}
-                        onClick={() => onRelationPlace?.(r)}
-                      >
-                        <Plus size={12} />
-                      </button>
-                      <button
-                        aria-label={`Создать дочерний объект связи ${r.name}`}
-                        disabled={r.archived}
-                        onClick={() => setEditing({ parentId: r.id })}
-                      >
-                        <LocateFixed size={12} />
-                      </button>
-                      <button
-                        aria-label={`Свойства вложенной связи ${r.name}`}
-                        onClick={() => onRelationEdit?.(r)}
-                      >
-                        <Pencil size={12} />
-                      </button>
-                    </div>
-                    {branch(r.id, depth + 2, new Set([...ancestors, o.id, r.id]))}
+                      <ChevronRight
+                        size={13}
+                        style={{ transform: closedLinks.has(o.id) ? 'none' : 'rotate(90deg)' }}
+                      />
+                      <Folder size={14} /> Связи ({linked.length})
+                    </button>
+                    {!closedLinks.has(o.id) && (
+                      <div role="group">
+                        {linked.map((r) => (
+                          <div key={r.id}>
+                            <div
+                              role="treeitem"
+                              key={r.id}
+                              data-relation-reference={r.id}
+                              draggable={!r.archived}
+                              onDragStart={(e) => {
+                                e.dataTransfer.setData('application/maket-relation', r.id);
+                                e.dataTransfer.effectAllowed = 'copyMove';
+                              }}
+                              onDragOver={(e) => {
+                                if (
+                                  e.dataTransfer.types.some(
+                                    (t) =>
+                                      t === 'application/maket-object' ||
+                                      t === 'application/maket-relation',
+                                  )
+                                ) {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                }
+                              }}
+                              onDrop={(e) => {
+                                const id =
+                                  e.dataTransfer.getData('application/maket-object') ||
+                                  e.dataTransfer.getData('application/maket-relation');
+                                if (id) {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  void move(id, r.id);
+                                }
+                              }}
+                              className={`object-relation-reference ${r.archived ? 'archived' : ''}`}
+                              style={{ paddingLeft: 20 + (depth + 1) * 12 }}
+                            >
+                              <button
+                                title={r.name}
+                                onClick={() => onRelationLocate?.(r.id)}
+                                onDoubleClick={() => onRelationEdit?.(r)}
+                              >
+                                {r.sourceId === o.id ? '→' : '←'} {r.name}
+                                <small>
+                                  {
+                                    entities.find(
+                                      (x) =>
+                                        x.id === (r.sourceId === o.id ? r.targetId : r.sourceId),
+                                    )?.name
+                                  }
+                                </small>
+                              </button>
+                              <button
+                                aria-label={`Вернуть представление связи ${r.name}`}
+                                title="Разместить стрелку на диаграмме"
+                                disabled={r.archived}
+                                onClick={() => onRelationPlace?.(r)}
+                              >
+                                <Plus size={12} />
+                              </button>
+                              <button
+                                aria-label={`Создать дочерний объект связи ${r.name}`}
+                                title="Создать дочерний объект"
+                                disabled={r.archived}
+                                onClick={() => setEditing({ parentId: r.id })}
+                              >
+                                <FolderPlus size={12} />
+                              </button>
+                              <button
+                                aria-label={`Свойства вложенной связи ${r.name}`}
+                                onClick={() => onRelationEdit?.(r)}
+                              >
+                                <Pencil size={12} />
+                              </button>
+                            </div>
+                            {branch(r.id, depth + 2, new Set([...ancestors, o.id, r.id]))}
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
-                ))}
+                )}
               </div>
             )}
           </div>

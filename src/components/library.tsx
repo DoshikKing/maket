@@ -367,23 +367,31 @@ function ShapesIcon() {
   );
 }
 export function DiagramPreview({ document: d }: { document: DiagramDocument }) {
-  if (!d.nodes.length)
+  const geometry = edgeGeometry(d);
+  if (!d.nodes.length && !geometry.size)
     return (
       <div className="preview-empty">
         <Workflow size={34} />
         <span>Чистый лист для ваших идей</span>
       </div>
     );
-  const minX = Math.min(...d.nodes.map((n) => n.position.x)),
-    minY = Math.min(...d.nodes.map((n) => n.position.y));
+
   const appearance = (n: DiagramDocument['nodes'][number]) =>
     nodeAppearance(
       n,
       d.notation.nodeTypes.find((t) => t.id === n.typeId)!,
     );
-  const maxX = Math.max(...d.nodes.map((n) => n.position.x + appearance(n).width)),
-    maxY = Math.max(...d.nodes.map((n) => n.position.y + appearance(n).height));
-  const geometry = edgeGeometry(d);
+  const points = [
+    ...d.nodes.flatMap((n) => [
+      n.position,
+      { x: n.position.x + appearance(n).width, y: n.position.y + appearance(n).height },
+    ]),
+    ...[...geometry.values()].flatMap((g) => [g.source, g.target, g.center]),
+  ];
+  const minX = Math.min(...points.map((p) => p.x)),
+    minY = Math.min(...points.map((p) => p.y)),
+    maxX = Math.max(...points.map((p) => p.x)),
+    maxY = Math.max(...points.map((p) => p.y));
   return (
     <svg
       className="preview-svg"

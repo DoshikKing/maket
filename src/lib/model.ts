@@ -404,10 +404,16 @@ export function modelErrors(d: ModelDocument): string[] {
     )
       errors.push('Связь ссылается на отсутствующий объект');
   for (const e of d.edges) {
-    if (!e.relationId) continue; // Older v2 files are upgraded on the server.
+    if (!e.relationId) {
+      if (e.detachedSource || e.detachedTarget) errors.push('Свободный конец требует связи модели');
+      continue; // Older v2 files are upgraded on the server.
+    }
     const r = relations.get(e.relationId);
     if (!r) errors.push('Стрелка ссылается на отсутствующую связь модели');
-    else if (participantId(d, e.source) !== r.sourceId || participantId(d, e.target) !== r.targetId)
+    else if (
+      (!e.detachedSource && participantId(d, e.source) !== r.sourceId) ||
+      (!e.detachedTarget && participantId(d, e.target) !== r.targetId)
+    )
       errors.push('Участники стрелки не соответствуют связи модели');
   }
   // Universal connections are graphical annotations; notation connections stay within their own binding.
@@ -428,21 +434,26 @@ export function modelErrors(d: ModelDocument): string[] {
       errors.push('Неверные свойства поясняющей связи');
     const sourceEdge = d.edges.find((x) => x.id === e.source),
       targetEdge = d.edges.find((x) => x.id === e.target);
-    if ((!source && !sourceEdge) || (!target && !targetEdge)) {
+    if (
+      (!e.detachedSource && !source && !sourceEdge) ||
+      (!e.detachedTarget && !target && !targetEdge)
+    ) {
       errors.push('Связь ссылается на отсутствующее представление');
       continue;
     }
     if (
-      (sourceEdge
-        ? !['in', 'out'].includes(e.sourcePort)
-        : !view.notation.nodeTypes
-            .find((t) => t.id === source!.typeId)
-            ?.ports.some((p) => p.id === e.sourcePort && p.direction === 'output')) ||
-      (targetEdge
-        ? !['in', 'out'].includes(e.targetPort)
-        : !view.notation.nodeTypes
-            .find((t) => t.id === target!.typeId)
-            ?.ports.some((p) => p.id === e.targetPort && p.direction === 'input'))
+      (!e.detachedSource &&
+        (sourceEdge
+          ? !['in', 'out'].includes(e.sourcePort)
+          : !view.notation.nodeTypes
+              .find((t) => t.id === source!.typeId)
+              ?.ports.some((p) => p.id === e.sourcePort && p.direction === 'output'))) ||
+      (!e.detachedTarget &&
+        (targetEdge
+          ? !['in', 'out'].includes(e.targetPort)
+          : !view.notation.nodeTypes
+              .find((t) => t.id === target!.typeId)
+              ?.ports.some((p) => p.id === e.targetPort && p.direction === 'input')))
     )
       errors.push('Неизвестный порт поясняющей связи');
   }
@@ -455,7 +466,8 @@ export function modelErrors(d: ModelDocument): string[] {
     const e = edges.get(id);
     if (!e) return false;
     visiting.add(id);
-    const result = cyclic(e.source) || cyclic(e.target);
+    const result =
+      (!e.detachedSource && cyclic(e.source)) || (!e.detachedTarget && cyclic(e.target));
     visiting.delete(id);
     visited.add(id);
     return result;
@@ -468,10 +480,52 @@ export function modelErrors(d: ModelDocument): string[] {
         p.maxConnections !== undefined &&
         view.edges.filter((e) =>
           p.direction === 'output'
-            ? e.source === n.id && e.sourcePort === p.id
-            : e.target === n.id && e.targetPort === p.id,
+            ? !e.detachedSource && e.source === n.id && e.sourcePort === p.id
+            : !e.detachedTarget && e.target === n.id && e.targetPort === p.id,
         ).length > p.maxConnections
       )
         errors.push(`Превышено число связей порта ${p.id}`);
   return [...new Set(errors)];
+}
+
+// Rebinding one representation must not change the participants of its other aliases.
+export function rebindEdge(d: ViewDocument, edge: ViewDocument['edges'][number]): ViewDocument {
+  const next = {
+    ...d,
+    edges: d.edges.map((e) => ({ ...(e.id === edge.id ? edge : e) })),
+    relations: [...(d.relations ?? [])],
+  };
+  const pending = new Set(next.edges.map((e) => e.id));
+  const done = new Set<string>();
+  while (pending.size) {
+    const e = next.edges.find(
+      (e) =>
+        pending.has(e.id) &&
+        (!next.edges.some((x) => x.id === e.source) || e.detachedSource || done.has(e.source)) &&
+        (!next.edges.some((x) => x.id === e.target) || e.detachedTarget || done.has(e.target)),
+    );
+    if (!e) break; // modelErrors reports cycles.
+    pending.delete(e.id);
+    done.add(e.id);
+    const r = next.relations.find((r) => r.id === e.relationId);
+    if (!r) continue;
+    const sourceId = e.detachedSource ? r.sourceId : participantId(next, e.source),
+      targetId = e.detachedTarget ? r.targetId : participantId(next, e.target);
+    if (sourceId && targetId && (sourceId !== r.sourceId || targetId !== r.targetId)) {
+      const copy: ModelRelation = {
+        ...r,
+        id: crypto.randomUUID(),
+        sourceId,
+        targetId,
+        parentId: null,
+        revision: 1,
+        incarnation: undefined,
+        archived: false,
+        copiedFrom: { id: r.id, name: r.name },
+      };
+      next.relations.push(copy);
+      e.relationId = copy.id;
+    }
+  }
+  return next;
 }

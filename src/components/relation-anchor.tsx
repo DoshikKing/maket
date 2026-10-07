@@ -9,3 +9,20 @@ export function RelationAnchor({ data, selected }: NodeProps<RelationAnchorNode>
     </div>
   );
 }
+
+export type FreeEndpointNode = Node<{ edgeId: string; end: 'source' | 'target' }, 'free-endpoint'>;
+export function FreeEndpoint({ data }: NodeProps<FreeEndpointNode>) {
+  return (
+    <div
+      className="free-endpoint"
+      title="Свободный конец: перетащите конец стрелки к порту элемента"
+    >
+      <Handle
+        type={data.end === 'source' ? 'source' : 'target'}
+        position={data.end === 'source' ? Position.Right : Position.Left}
+        id="free"
+        isConnectable={false}
+      />
+    </div>
+  );
+}

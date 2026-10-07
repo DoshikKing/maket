@@ -116,7 +116,7 @@ export async function materializeRelations(
   const ordered: typeof d.edges = [];
   while (pending.length) {
     const index = pending.findIndex((e) =>
-      [e.source, e.target].every(
+      [...(!e.detachedSource ? [e.source] : []), ...(!e.detachedTarget ? [e.target] : [])].every(
         (id) => d.nodes.some((n) => n.id === id) || ordered.some((x) => x.id === id),
       ),
     );
@@ -136,8 +136,9 @@ export async function materializeRelations(
   };
   for (const original of ordered) {
     const e = document.edges.find((x) => x.id === original.id)!;
-    const sourceId = participantId(document, e.source),
-      targetId = participantId(document, e.target);
+    const snapshot = d.relations?.find((r) => r.id === e.relationId);
+    const sourceId = e.detachedSource ? snapshot?.sourceId : participantId(document, e.source),
+      targetId = e.detachedTarget ? snapshot?.targetId : participantId(document, e.target);
     if (!sourceId || !targetId) reject(400, 'Связь ссылается на отсутствующее представление');
     const relationId =
       e.relationId ??
@@ -180,7 +181,7 @@ export async function materializeRelations(
                 .map((p) => [p.objectKey ?? p.key, e.properties[p.key]]),
             ),
           archived: restoring ? proposed?.archived : false,
-          copiedFrom: restoring ? proposed?.copiedFrom : undefined,
+          copiedFrom: proposed?.copiedFrom,
         },
         restoring,
       );
