@@ -39,6 +39,31 @@ export const relationEntity = (r: ModelRelation): ModelObject => ({
 export function participantId(d: Pick<ViewDocument, 'nodes' | 'edges'>, id: string) {
   return d.nodes.find((n) => n.id === id)?.objectId ?? d.edges.find((e) => e.id === id)?.relationId;
 }
+export function normalizeConnection<
+  T extends {
+    source: string;
+    target: string;
+    sourceHandle?: string | null;
+    targetHandle?: string | null;
+  },
+>(d: ViewDocument, c: T): T {
+  if (!d.edges.some((e) => e.id === c.source || e.id === c.target)) return c;
+  const direction = (id: string, handle?: string | null) => {
+    const n = d.nodes.find((n) => n.id === id);
+    return d.notation.nodeTypes.find((t) => t.id === n?.typeId)?.ports.find((p) => p.id === handle)
+      ?.direction;
+  };
+  return direction(c.source, c.sourceHandle) === 'input' ||
+    direction(c.target, c.targetHandle) === 'output'
+    ? {
+        ...c,
+        source: c.target,
+        target: c.source,
+        sourceHandle: c.targetHandle,
+        targetHandle: c.sourceHandle,
+      }
+    : c;
+}
 // Include hierarchy ancestors and relation participants, even when they have no shape on this canvas.
 export function modelClosure(ids: string[], objects: ModelObject[], relations: ModelRelation[]) {
   const entities = new Map([...objects, ...relations.map(relationEntity)].map((o) => [o.id, o]));
@@ -409,12 +434,12 @@ export function modelErrors(d: ModelDocument): string[] {
     }
     if (
       (sourceEdge
-        ? e.sourcePort !== 'out'
+        ? !['in', 'out'].includes(e.sourcePort)
         : !view.notation.nodeTypes
             .find((t) => t.id === source!.typeId)
             ?.ports.some((p) => p.id === e.sourcePort && p.direction === 'output')) ||
       (targetEdge
-        ? e.targetPort !== 'in'
+        ? !['in', 'out'].includes(e.targetPort)
         : !view.notation.nodeTypes
             .find((t) => t.id === target!.typeId)
             ?.ports.some((p) => p.id === e.targetPort && p.direction === 'input'))

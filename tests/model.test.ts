@@ -3,6 +3,7 @@ import { builtinNotation } from '../src/lib/notation';
 import {
   modelDiagramSchema,
   connectionTypeForSource,
+  normalizeConnection,
   mergeModelObjects,
   modelErrors,
   projectDocument,
@@ -54,6 +55,41 @@ function document(): ModelDocument {
   };
 }
 describe('cross-notation model', () => {
+  it('keeps arrow attachment points neutral while honoring object port directions', () => {
+    const d = document();
+    d.edges = [
+      {
+        id: 'arrow',
+        relationId: 'relation',
+        bindingId: null,
+        typeId: 'association',
+        source: 'n1',
+        target: 'n2',
+        sourcePort: 'out',
+        targetPort: 'in',
+        properties: {},
+      },
+    ];
+    const view = projectDocument(d);
+    expect(
+      normalizeConnection(view, {
+        source: 'n1',
+        target: 'arrow',
+        sourceHandle: 'in',
+        targetHandle: 'out',
+      }),
+    ).toEqual({ source: 'arrow', target: 'n1', sourceHandle: 'out', targetHandle: 'in' });
+    expect(
+      normalizeConnection(view, {
+        source: 'arrow',
+        target: 'n1',
+        sourceHandle: 'in',
+        targetHandle: 'out',
+      }),
+    ).toEqual({ source: 'n1', target: 'arrow', sourceHandle: 'out', targetHandle: 'in' });
+    const outgoing = { source: 'arrow', target: 'n1', sourceHandle: 'in', targetHandle: 'in' };
+    expect(normalizeConnection(view, outgoing)).toEqual(outgoing);
+  });
   it('supports multiple representations and qualifies matching type ids', () => {
     const d = document();
     expect(modelDiagramSchema.safeParse(d).success).toBe(true);

@@ -14,6 +14,7 @@ import {
   type EdgeChange,
   type OnConnectEnd,
   BackgroundVariant,
+  ConnectionMode,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import {
@@ -66,6 +67,7 @@ import {
   mergeModelObjects,
   packDocument,
   participantId,
+  normalizeConnection,
   relationEntity,
   modelErrors,
   effectiveNode,
@@ -557,6 +559,7 @@ function Editor({ initial }: { initial: Diagram }) {
     targetHandle?: string | null;
   }): DiagramDocument {
     const current = docRef.current;
+    c = normalizeConnection(current, c);
     const typeId = current.edges.some((e) => e.id === c.source || e.id === c.target)
       ? 'universal:association'
       : connectionTypeForSource(current, c.source, edgeType, c.sourceHandle);
@@ -611,7 +614,10 @@ function Editor({ initial }: { initial: Diagram }) {
       state.fromHandle.type === 'source'
         ? [state.fromHandle, state.toHandle]
         : [state.toHandle, state.fromHandle];
-    if (source.type !== 'source' || target.type !== 'target') {
+    if (
+      !docRef.current.edges.some((e) => e.id === source.nodeId || e.id === target.nodeId) &&
+      (source.type !== 'source' || target.type !== 'target')
+    ) {
       setConnectionNotice({ message: 'Соедините выходной порт с входным' });
       return;
     }
@@ -687,13 +693,18 @@ function Editor({ initial }: { initial: Diagram }) {
             {
               id: e.id,
               type: 'relation-anchor',
-              position: { x: center.x - 12, y: center.y - 8 },
+              position: {
+                x: center.x - 12,
+                y: center.y + geometry.get(e.id)!.attachmentOffset - 8,
+              },
               width: 24,
               height: 16,
               draggable: false,
               zIndex: 1,
               selected: selected?.kind === 'edge' && selected.id === e.id,
-              data: { name: relationLookup.get(e.relationId ?? '')?.name ?? 'Связь' },
+              data: {
+                name: relationLookup.get(e.relationId ?? '')?.name ?? 'Связь',
+              },
             },
           ]
         : [];
@@ -1509,6 +1520,7 @@ function Editor({ initial }: { initial: Diagram }) {
               nodes={nodes}
               edges={edges}
               nodeTypes={canvasNodeTypes}
+              connectionMode={ConnectionMode.Loose}
               colorMode={user.settings.theme}
               elevateNodesOnSelect={false}
               elevateEdgesOnSelect={false}

@@ -1609,11 +1609,23 @@ details p {
   width: 24px;
   height: 16px;
   border-radius: 8px;
-  background: var(--panel);
-  color: var(--muted);
-  text-align: center;
-  font-size: 12px;
-  line-height: 16px;
+  background: transparent;
+}
+.relation-anchor::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: -2px;
+  height: 10px;
+  border-left: 1px dotted var(--muted);
+}
+.relation-anchor::after {
+  content: '';
+  position: absolute;
+  top: 8px;
+  left: 0;
+  right: 0;
+  border-top: 1px dotted var(--muted);
 }
 .relation-anchor.selected {
   outline: 1px solid var(--accent);

@@ -1258,21 +1258,34 @@ test('browser: return a tree arrow, nest objects under it and connect objects to
     ],
   });
   const primary = d.document.relations![0];
+  d = await save(request, d, {
+    ...d.document,
+    edges: d.document.edges.map((e) => ({ ...e, properties: { label: 'Подпись стрелки' } })),
+  });
   await page.goto(`/diagrams/${d.id}`);
   await expect(page.locator('.react-flow__node-notation')).toHaveCount(3);
-  async function connect(from: string, to: string) {
+  const caption = page.getByText('Подпись стрелки', { exact: true });
+  await expect(caption).toBeVisible();
+  const textBounds = (await caption.boundingBox())!;
+  const connectorBounds = (await page
+    .locator('[data-id="primary"] .relation-anchor')
+    .boundingBox())!;
+  expect(connectorBounds.y).toBeGreaterThan(textBounds.y + textBounds.height);
+  async function connect(from: string, to: string, fromPort = 'out', toPort = 'in') {
     await page.locator('.react-flow__controls-fitview').click();
     const a = (await page
-      .locator(`[data-id="${from}"] .source[data-handleid="out"]`)
+      .locator(`[data-id="${from}"] .react-flow__handle[data-handleid="${fromPort}"]`)
       .boundingBox())!;
-    const b = (await page.locator(`[data-id="${to}"] .target[data-handleid="in"]`).boundingBox())!;
+    const b = (await page
+      .locator(`[data-id="${to}"] .react-flow__handle[data-handleid="${toPort}"]`)
+      .boundingBox())!;
     await page.mouse.move(a.x + a.width / 2, a.y + a.height / 2);
     await page.mouse.down();
     await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 20 });
     await page.mouse.up();
     await expect(page.getByText(/Сохранено · ревизия/)).toBeVisible({ timeout: 15000 });
   }
-  await connect(d.document.nodes[2].id, 'primary');
+  await connect(d.document.nodes[2].id, 'primary', 'out', 'out');
   await expect(page.locator('.react-flow__edge')).toHaveCount(2);
   d = await (await request.get(`/api/diagrams/${d.id}`)).json();
   const secondary = d.document.edges[1];
@@ -1280,7 +1293,7 @@ test('browser: return a tree arrow, nest objects under it and connect objects to
     sourceId: c.id,
     targetId: primary.id,
   });
-  await connect('primary', secondary.id);
+  await connect('primary', secondary.id, 'in', 'out');
   await expect(page.locator('.react-flow__edge')).toHaveCount(3);
   d = await (await request.get(`/api/diagrams/${d.id}`)).json();
   const tertiary = d.document.edges[2];

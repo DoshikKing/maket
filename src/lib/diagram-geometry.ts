@@ -3,13 +3,18 @@ import { nodeAppearance, edgeAppearance } from './appearance';
 import type { DiagramDocument } from './notation';
 type Point = { x: number; y: number };
 export function edgeGeometry(d: DiagramDocument) {
-  const result = new Map<string, { path: string; center: Point; source: Point; target: Point }>();
+  const result = new Map<
+    string,
+    { path: string; center: Point; source: Point; target: Point; attachmentOffset: number }
+  >();
   const visiting = new Set<string>();
   function endpoint(id: string, port: string, output: boolean): Point | undefined {
     const n = d.nodes.find((n) => n.id === id);
     if (!n) {
-      const center = compute(id)?.center;
-      return center ? { x: center.x + (output ? 12 : -12), y: center.y } : undefined;
+      const g = compute(id);
+      return g
+        ? { x: g.center.x + (port === 'in' ? -12 : 12), y: g.center.y + g.attachmentOffset }
+        : undefined;
     }
     const t = d.notation.nodeTypes.find((t) => t.id === n.typeId);
     if (!t) return;
@@ -39,8 +44,14 @@ export function edgeGeometry(d: DiagramDocument) {
       sourceY: source.y,
       targetX: target.x,
       targetY: target.y,
-      sourcePosition: Position.Right,
-      targetPosition: Position.Left,
+      sourcePosition:
+        !d.nodes.some((n) => n.id === e.source) && e.sourcePort === 'in'
+          ? Position.Left
+          : Position.Right,
+      targetPosition:
+        !d.nodes.some((n) => n.id === e.target) && e.targetPort === 'out'
+          ? Position.Right
+          : Position.Left,
     };
     const [path, x, y] =
       a.routing === 'straight'
@@ -48,7 +59,13 @@ export function edgeGeometry(d: DiagramDocument) {
         : a.routing !== 'smoothstep'
           ? getBezierPath(params)
           : getSmoothStepPath(params);
-    const geometry = { path, center: { x, y }, source, target };
+    const geometry = {
+      path,
+      center: { x, y },
+      source,
+      target,
+      attachmentOffset: (a.fontSize ?? 12) / 2 + 16,
+    };
     result.set(id, geometry);
     return geometry;
   }

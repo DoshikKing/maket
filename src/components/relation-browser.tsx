@@ -573,12 +573,18 @@ export function RelationPlacement({
   const sourceType = document.notation.nodeTypes.find((t) => t.id === sourceNode?.typeId),
     targetType = document.notation.nodeTypes.find((t) => t.id === targetNode?.typeId);
   for (const s of sourceType?.ports.filter((p) => p.direction === 'output') ??
-    (document.edges.some((e) => e.id === source) ? [{ id: 'out' }] : []))
+    (document.edges.some((e) => e.id === source) ? [{ id: 'out' }, { id: 'in' }] : []))
     for (const t of targetType?.ports.filter((p) => p.direction === 'input') ??
-      (document.edges.some((e) => e.id === target) ? [{ id: 'in' }] : []))
+      (document.edges.some((e) => e.id === target) ? [{ id: 'in' }, { id: 'out' }] : []))
       options.push({ typeId: 'universal:association', sourcePort: s.id, targetPort: t.id });
   const keys = options.map((o) => JSON.stringify(o));
   const selected = keys.includes(choice) ? choice : (keys[0] ?? '');
+  const portLabel = (id: string, port: string) =>
+    document.edges.some((e) => e.id === id)
+      ? port === 'in'
+        ? 'левая точка'
+        : 'правая точка'
+      : port;
   const nodeLabel = (id: string) => {
     const n = document.nodes.find((n) => n.id === id);
     if (!n) return `Стрелка · ${id.slice(0, 14)}`;
@@ -651,8 +657,8 @@ export function RelationPlacement({
             {!options.length && <option value="">Нет допустимых соединений</option>}
             {options.map((o, i) => (
               <option key={i} value={keys[i]}>
-                {document.notation.edgeTypes.find((t) => t.id === o.typeId)?.name} · {o.sourcePort}{' '}
-                → {o.targetPort}
+                {document.notation.edgeTypes.find((t) => t.id === o.typeId)?.name} ·{' '}
+                {portLabel(source, o.sourcePort)} → {portLabel(target, o.targetPort)}
               </option>
             ))}
           </select>
