@@ -831,6 +831,9 @@ test('browser: draw a connection between representations in a secondary notation
   });
   await connect(d.document.nodes[1].id, d.document.nodes[2].id, 'uml-out', 'in');
   await expect(page.locator('.react-flow__edge')).toHaveCount(2);
+  await expect(
+    page.getByText('Соединение запрещено правилами нотации', { exact: true }),
+  ).toBeVisible();
   await chooser.selectOption('universal:association');
   await connect(d.document.nodes[1].id, d.document.nodes[2].id, 'uml-out', 'in');
   await expect(page.locator('.react-flow__edge')).toHaveCount(3);
@@ -1168,10 +1171,10 @@ test('browser: drag arrows between different model objects and their aliases', a
 }) => {
   await login(request, page);
   const source = await object(request, 'Первый объект'),
-    target = await object(request, 'Второй объект');
+    target = await object(request, 'Второй объект', source.id);
   let d = await create(request);
-  d = await place(request, d, source.id);
-  d = await place(request, d, target.id);
+  d = await place(request, d, source.id, d.document.bindings[0].id, 'decision');
+  d = await place(request, d, target.id, d.document.bindings[0].id, 'event');
   d = await place(request, d, source.id);
   d = await place(request, d, target.id);
   d = await save(request, d, {
@@ -1183,14 +1186,16 @@ test('browser: drag arrows between different model objects and their aliases', a
   });
   await page.goto(`/diagrams/${d.id}`);
   await expect(page.locator('.react-flow__node')).toHaveCount(4);
-  for (const [index, [from, to]] of [
-    [0, 1],
-    [2, 3],
-    [0, 2],
-  ].entries()) {
+  for (const [index, [from, to, port]] of (
+    [
+      [0, 1, 'yes'],
+      [2, 3, 'out'],
+      [0, 2, 'no'],
+    ] as const
+  ).entries()) {
     await page.locator('.react-flow__controls-fitview').click();
     const a = (await page
-      .locator(`[data-id="${d.document.nodes[from].id}"] .source[data-handleid="out"]`)
+      .locator(`[data-id="${d.document.nodes[from].id}"] .source[data-handleid="${port}"]`)
       .boundingBox())!;
     const b = (await page
       .locator(`[data-id="${d.document.nodes[to].id}"] .target[data-handleid="in"]`)
@@ -1201,6 +1206,8 @@ test('browser: drag arrows between different model objects and their aliases', a
     await page.mouse.up();
     await expect(page.locator('.react-flow__edge')).toHaveCount(index + 1);
     await expect(page.getByText(/Сохранено · ревизия/)).toBeVisible({ timeout: 15000 });
+    await page.reload();
+    await expect(page.locator('.react-flow__edge')).toHaveCount(index + 1);
   }
   const saved = await (await request.get(`/api/diagrams/${d.id}`)).json();
   expect(saved.document.relations).toHaveLength(3);

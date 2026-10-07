@@ -12,6 +12,7 @@ import {
   useNodesInitialized,
   type NodeChange,
   type EdgeChange,
+  type OnConnectEnd,
   BackgroundVariant,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
@@ -589,6 +590,30 @@ function Editor({ initial }: { initial: Diagram }) {
       ],
     };
   }
+  const connectionEnded: OnConnectEnd = (_, state) => {
+    if (state.isValid !== false || !state.fromHandle || !state.toHandle) return;
+    const [source, target] =
+      state.fromHandle.type === 'source'
+        ? [state.fromHandle, state.toHandle]
+        : [state.toHandle, state.fromHandle];
+    if (source.type !== 'source' || target.type !== 'target') {
+      setError('Соедините выходной порт с входным');
+      return;
+    }
+    const issues = modelErrors(
+      packDocument(
+        candidate({
+          source: source.nodeId,
+          target: target.nodeId,
+          sourceHandle: source.id,
+          targetHandle: target.id,
+        }),
+        objectsRef.current,
+        relationsRef.current,
+      ),
+    );
+    if (issues.length) setError(issues.join('; '));
+  };
   const flowRef = useRef(flow);
   flowRef.current = flow;
   const fittedIds = useRef('');
@@ -1423,6 +1448,8 @@ function Editor({ initial }: { initial: Diagram }) {
                   change(next);
                 }
               }}
+              onConnectEnd={connectionEnded}
+              onClickConnectEnd={connectionEnded}
               isValidConnection={(c) =>
                 modelErrors(packDocument(candidate(c), objectsRef.current, relationsRef.current))
                   .length === 0
