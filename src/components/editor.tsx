@@ -34,11 +34,14 @@ import {
   CheckCircle2,
   AlertCircle,
   X,
+  Share2,
 } from 'lucide-react';
 import { api, date, download, readJson } from '@/lib/client';
 import { type DiagramDocument as LegacyDocument, defaults } from '@/lib/notation';
 import { useUser } from './workspace';
 import { Modal } from './modal';
+import { ShareDialog } from './share-dialog';
+import { ExportDialog } from './export-dialog';
 import {
   diagramNodeTypes,
   NodeActionsContext,
@@ -144,6 +147,8 @@ function Editor({ initial }: { initial: Diagram }) {
     [connectionNotice, setConnectionNotice] = useState<{ message: string } | null>(null),
     [saving, setSaving] = useState(false),
     [historyOpen, setHistoryOpen] = useState(false),
+    [shareOpen, setShareOpen] = useState(false),
+    [exportOpen, setExportOpen] = useState(false),
     [revisions, setRevisions] = useState<{ number: number; createdAt: string; reason: string }[]>(
       [],
     ),
@@ -1282,13 +1287,15 @@ function Editor({ initial }: { initial: Diagram }) {
           </button>
           <button
             className="secondary small"
-            onClick={() =>
-              download(`${name}.maket.json`, {
-                name,
-                document: packDocument(docRef.current, objectsRef.current, relationsRef.current),
-              })
-            }
+            disabled={commandBusy || saving || interacting}
+            onClick={async () => {
+              if (await flush()) setShareOpen(true);
+            }}
           >
+            <Share2 size={16} />
+            Поделиться
+          </button>
+          <button className="secondary small" onClick={() => setExportOpen(true)}>
             <Download size={16} />
             Экспорт
           </button>
@@ -1302,6 +1309,25 @@ function Editor({ initial }: { initial: Diagram }) {
           </button>
         </div>
       </div>
+      {shareOpen && (
+        <ShareDialog
+          id={initial.id}
+          selectedId={selected?.id}
+          onClose={() => setShareOpen(false)}
+        />
+      )}
+      {exportOpen && (
+        <ExportDialog
+          name={name}
+          document={{ ...document, relations: allRelations }}
+          objects={objects}
+          json={{
+            name,
+            document: packDocument(docRef.current, objectsRef.current, relationsRef.current),
+          }}
+          onClose={() => setExportOpen(false)}
+        />
+      )}
       {error && (
         <div className="error editor-error" role="alert">
           {error}

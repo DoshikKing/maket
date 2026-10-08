@@ -257,7 +257,9 @@ test('browser: login, create, connect, edit, undo, save, reopen and export', asy
   await expect(page.locator('.react-flow__node-notation')).toHaveCount(3);
   const downloaded = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Экспорт', exact: true }).click();
+  await page.getByRole('button', { name: 'JSON', exact: true }).click();
   expect((await downloaded).suggestedFilename()).toMatch(/\.maket\.json$/);
+  await page.getByRole('button', { name: 'Закрыть', exact: true }).click();
   await page.getByRole('button', { name: 'История', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'История диаграммы' })).toBeVisible();
   await page.getByRole('button', { name: 'Закрыть', exact: true }).click();
@@ -313,7 +315,9 @@ test('browser: custom notation through JSON, diagram import and persistent dark 
   await page.screenshot({ path: 'test-results/editor.png', fullPage: true });
   const exported = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Экспорт', exact: true }).click();
+  await page.getByRole('button', { name: 'JSON', exact: true }).click();
   const file = await exported;
+  await page.getByRole('button', { name: 'Закрыть', exact: true }).click();
   const path = (await file.path())!;
   await page.getByRole('link', { name: 'Библиотека', exact: true }).click();
   await expect(page).toHaveURL(/\/library/);

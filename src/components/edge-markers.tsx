@@ -41,7 +41,7 @@ function Marker({
     </marker>
   );
 }
-export function EdgeMarkers({
+export function EdgeMarkerDefs({
   diagramId,
   edges,
 }: {
@@ -49,25 +49,31 @@ export function EdgeMarkers({
   edges: { id: string; appearance: EdgeAppearance }[];
 }) {
   return (
+    <defs>
+      {edges.flatMap((e) => [
+        <Marker
+          key={`${e.id}-end`}
+          id={markerId(diagramId, e.id, 'end')}
+          kind={e.appearance.targetMarker}
+          color={e.appearance.color}
+          size={e.appearance.markerSize ?? 18}
+        />,
+        <Marker
+          key={`${e.id}-start`}
+          id={markerId(diagramId, e.id, 'start')}
+          kind={e.appearance.sourceMarker ?? 'none'}
+          color={e.appearance.color}
+          size={e.appearance.markerSize ?? 18}
+        />,
+      ])}
+    </defs>
+  );
+}
+
+export function EdgeMarkers(props: Parameters<typeof EdgeMarkerDefs>[0]) {
+  return (
     <svg className="edge-marker-definitions" aria-hidden="true">
-      <defs>
-        {edges.flatMap((e) => [
-          <Marker
-            key={`${e.id}-end`}
-            id={markerId(diagramId, e.id, 'end')}
-            kind={e.appearance.targetMarker}
-            color={e.appearance.color}
-            size={e.appearance.markerSize ?? 18}
-          />,
-          <Marker
-            key={`${e.id}-start`}
-            id={markerId(diagramId, e.id, 'start')}
-            kind={e.appearance.sourceMarker ?? 'none'}
-            color={e.appearance.color}
-            size={e.appearance.markerSize ?? 18}
-          />,
-        ])}
-      </defs>
+      <EdgeMarkerDefs {...props} />
     </svg>
   );
 }

@@ -2642,3 +2642,122 @@ body {
   color: var(--accent);
   border-color: var(--accent);
 }
+
+.public-viewer {
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  color: #232334;
+  background: #ffffff;
+}
+.viewer-toolbar {
+  padding: 14px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.viewer-toolbar small {
+  display: block;
+  color: var(--muted);
+  margin-top: 4px;
+}
+.viewer-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+.viewer-tree {
+  width: 260px;
+  flex-shrink: 0;
+  overflow: auto;
+  padding: 16px;
+  border-right: 1px solid var(--border);
+}
+.viewer-tree h2 {
+  font-size: 15px;
+  margin-bottom: 15px;
+}
+.viewer-tree ul {
+  margin: 0;
+  list-style: none;
+  padding-left: 12px;
+}
+.viewer-tree > ul {
+  padding-left: 0;
+}
+.viewer-tree-row {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  padding: 5px 0;
+}
+.viewer-tree-row button {
+  text-align: left;
+}
+.viewer-relations {
+  margin-left: 20px;
+  font-size: 12px;
+}
+.viewer-relations summary {
+  cursor: pointer;
+}
+.viewer-canvas {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+  overflow: hidden;
+}
+.viewer-canvas > svg {
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+  user-select: none;
+}
+.viewer-controls {
+  position: absolute;
+  bottom: 16px;
+  left: 16px;
+  display: flex;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+}
+.viewer-controls button {
+  padding: 5px;
+}
+.viewer-notice {
+  padding: 8px 20px;
+  background: var(--accent-soft);
+}
+.public-error {
+  max-width: 600px;
+  margin: 15vh auto;
+  padding: 24px;
+}
+.export-preview {
+  height: 230px;
+  margin: 18px 0;
+  border: 1px solid var(--border);
+  background: #fff;
+}
+.export-preview > svg {
+  width: 100%;
+  height: 100%;
+}
+@media (max-width: 700px) {
+  .viewer-tree {
+    width: 180px;
+    padding: 10px;
+  }
+  .viewer-toolbar {
+    padding: 10px;
+  }
+  .viewer-toolbar .button-row {
+    flex-wrap: wrap;
+  }
+}

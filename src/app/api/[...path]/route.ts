@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { randomBytes } from 'node:crypto';
+import { publicDiagram } from '@/lib/sharing';
 import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { db } from '@/lib/db';
@@ -182,6 +184,12 @@ async function handle(req: NextRequest, context: { params: Promise<{ path: strin
         return json({ ok: true });
       }
       fail(404, 'Неизвестный запрос');
+    }
+    if (resource === 'public' && id && !action) {
+      if (method !== 'GET') fail(405, 'Доступен только просмотр');
+      const shared = await publicDiagram(id);
+      if (!shared) fail(404, 'Ссылка недоступна или отключена владельцем');
+      return json(shared);
     }
     const user = await currentUser();
     if (!user) fail(401, 'Войдите в аккаунт');
@@ -457,6 +465,29 @@ async function handle(req: NextRequest, context: { params: Promise<{ path: strin
       if (!id) fail(405, 'Укажите идентификатор диаграммы');
       const d = await db.diagram.findFirst({ where: { id, ownerId: user.id } });
       if (!d) fail(404, 'Диаграмма не найдена');
+      if (action === 'share') {
+        if (method === 'GET')
+          return json({
+            enabled: !!d.shareToken,
+            path: d.shareToken ? `/view/${d.shareToken}` : null,
+          });
+        if (method === 'POST') {
+          const input = z
+            .object({ enabled: z.boolean(), rotate: z.boolean().optional() })
+            .parse(await body(req));
+          const token = input.enabled
+            ? input.rotate || !d.shareToken
+              ? randomBytes(32).toString('base64url')
+              : d.shareToken
+            : null;
+          await db.diagram.updateMany({
+            where: { id, ownerId: user.id },
+            data: { shareToken: token },
+          });
+          return json({ enabled: !!token, path: token ? `/view/${token}` : null });
+        }
+        fail(405, 'Метод не поддерживается');
+      }
       if (method === 'GET' && action === 'revisions') {
         await ensureModel(user.id);
         return json(

@@ -1558,3 +1558,192 @@ test('browser: distinct tree actions, collapsible panels, detach and rebind arro
   const copy: ModelDiagram = await imported.json();
   expect(copy.document.edges.find((e) => e.id === 'editable')!.detachedTarget).toEqual(freePoint);
 });
+
+test('sharing: owner controls anonymous access, scope, rotation and revocation', async ({
+  request,
+  playwright,
+}) => {
+  await login(request);
+  const parent = await object(request, 'Папка диаграммы'),
+    child = await object(request, 'Публичный объект', parent.id);
+  await object(request, 'Секретный объект другой диаграммы');
+  let d = await create(request, 'Публичная диаграмма');
+  d = await place(request, d, child.id);
+  const anonymous = await playwright.request.newContext({ baseURL: 'http://localhost:3000' });
+  const foreign = await playwright.request.newContext({ baseURL: 'http://localhost:3000' });
+  try {
+    await login(foreign);
+    expect((await anonymous.get(`/api/diagrams/${d.id}/share`)).status()).toBe(401);
+    expect(
+      (await foreign.post(`/api/diagrams/${d.id}/share`, { data: { enabled: true } })).status(),
+    ).toBe(404);
+    const enable = await request.post(`/api/diagrams/${d.id}/share`, { data: { enabled: true } });
+    expect(enable.status()).toBe(200);
+    const sharing = await enable.json(),
+      token = sharing.path.split('/').pop();
+    const response = await anonymous.get(`/api/public/${token}`);
+    expect(response.status()).toBe(200);
+    expect(response.headers()['cache-control']).toBe('no-store');
+    const publicData = await response.json();
+    expect(publicData.document.objects.map((o: ModelObject) => o.name).sort()).toEqual(
+      ['Папка диаграммы', 'Публичный объект'].sort(),
+    );
+    expect(publicData.ownerId).toBeUndefined();
+    expect(publicData.shareToken).toBeUndefined();
+    expect(publicData.document.modelSpaceId).toBe('public');
+    await request.patch(`/api/objects/${child.id}`, {
+      data: { revision: child.revision, name: 'Изменено владельцем' },
+    });
+    const live = await (await anonymous.get(`/api/public/${token}`)).json();
+    expect(live.document.objects.find((o: ModelObject) => o.id === child.id).name).toBe(
+      'Изменено владельцем',
+    );
+    const duplicate = await (
+      await request.post(`/api/diagrams/${d.id}/duplicate`, { data: {} })
+    ).json();
+    expect((await (await request.get(`/api/diagrams/${duplicate.id}/share`)).json()).enabled).toBe(
+      false,
+    );
+
+    expect(
+      (await anonymous.put(`/api/public/${token}`, { data: { name: 'Изменение' } })).status(),
+    ).toBe(405);
+    expect(
+      (
+        await anonymous.put(`/api/diagrams/${d.id}`, {
+          data: { revision: d.revision, document: d.document },
+        })
+      ).status(),
+    ).toBe(401);
+    expect(
+      (await request.post(`/api/diagrams/${d.id}/share`, { data: { enabled: true } })).status(),
+    ).toBe(200);
+    expect((await (await request.get(`/api/diagrams/${d.id}/share`)).json()).path).toBe(
+      sharing.path,
+    );
+    const rotated = await (
+      await request.post(`/api/diagrams/${d.id}/share`, { data: { enabled: true, rotate: true } })
+    ).json();
+    expect(rotated.path).not.toBe(sharing.path);
+    expect((await anonymous.get(`/api/public/${token}`)).status()).toBe(404);
+    const newToken = rotated.path.split('/').pop();
+    expect((await anonymous.get(`/api/public/${newToken}`)).status()).toBe(200);
+    await request.post(`/api/diagrams/${d.id}/share`, { data: { enabled: false } });
+    expect((await anonymous.get(`/api/public/${newToken}`)).status()).toBe(404);
+  } finally {
+    await anonymous.dispose();
+    await foreign.dispose();
+  }
+});
+
+test('browser: share viewer deep links, read-only controls and PNG JPEG PDF exports', async ({
+  page,
+  request,
+  browser,
+}) => {
+  test.setTimeout(120000);
+  await login(request, page);
+  const o = await object(request, 'Текст вьюера');
+  let d = await create(request, 'Экспорт вьюера');
+  d = await place(request, d, o.id);
+  d = await place(request, d, (await object(request, 'Получатель вьюера')).id);
+  d = await save(request, d, {
+    ...d.document,
+    edges: [
+      {
+        id: 'public-arrow',
+        bindingId: d.document.bindings[0].id,
+        typeId: 'flow',
+        source: d.document.nodes[0].id,
+        target: d.document.nodes[1].id,
+        sourcePort: 'out',
+        targetPort: 'in',
+        properties: { label: 'Подпись стрелки' },
+        appearance: {
+          line: 'dashed',
+          targetMarker: 'hollow-triangle',
+          sourceMarker: 'hollow-diamond',
+        },
+      },
+    ],
+    nodes: d.document.nodes.map((n) => ({ ...n, appearance: { fill: '#ff0000' } })),
+  });
+  await page.goto(`/diagrams/${d.id}`);
+  await expect(page.locator('.react-flow__node-notation')).toHaveCount(2);
+  await page.getByRole('button', { name: 'Поделиться', exact: true }).click();
+  await page.getByLabel('Доступ по ссылке', { exact: true }).check();
+  const field = page.getByLabel('Публичная ссылка', { exact: true });
+  await expect(field).toHaveValue(/\/view\//);
+  const link = await field.inputValue();
+  const guest = await browser.newContext();
+  try {
+    const viewer = await guest.newPage();
+    await viewer.goto(`${link}?element=${d.document.nodes[0].id}`);
+    await expect(
+      viewer.getByRole('heading', { name: 'Объекты диаграммы', exact: true }),
+    ).toBeVisible();
+    const figure = viewer.locator(`[data-representation-id="${d.document.nodes[0].id}"]`);
+    await expect(figure.locator('rect[stroke="#7060da"]')).toBeVisible();
+    await expect(viewer.locator('path[marker-end]').first()).toHaveAttribute(
+      'marker-end',
+      'url(#maket-svg-public-arrow-end)',
+    );
+    await expect(
+      viewer.locator('.viewer-canvas').getByText('Подпись стрелки', { exact: true }),
+    ).toBeVisible();
+    await expect(viewer.getByRole('button', { name: 'Сохранить', exact: true })).toHaveCount(0);
+    await expect(viewer.locator('.react-flow__handle')).toHaveCount(0);
+    await viewer.getByRole('button', { name: 'Экспорт', exact: true }).click();
+    const { readFile } = await import('node:fs/promises');
+    for (const [label, extension] of [
+      ['PNG', 'png'],
+      ['JPEG', 'jpeg'],
+      ['PDF', 'pdf'],
+    ] as const) {
+      const downloadPromise = viewer.waitForEvent('download');
+      await viewer.getByRole('button', { name: label, exact: true }).click();
+      const download = await downloadPromise;
+      expect(download.suggestedFilename()).toBe(`Экспорт вьюера.${extension}`);
+      const content = await readFile((await download.path())!);
+      expect(content.length).toBeGreaterThan(500);
+      if (label === 'PDF') expect(content.subarray(0, 5).toString()).toBe('%PDF-');
+      else {
+        expect(content.subarray(0, label === 'PNG' ? 8 : 3).toString('hex')).toBe(
+          label === 'PNG' ? '89504e470d0a1a0a' : 'ffd8ff',
+        );
+        const colored = await viewer.evaluate(
+          async ({ data, type }) => {
+            const image = new Image();
+            image.src = `data:image/${type};base64,${data}`;
+            await image.decode();
+            const canvas = document.createElement('canvas');
+            canvas.width = image.width;
+            canvas.height = image.height;
+            const ctx = canvas.getContext('2d')!;
+            ctx.drawImage(image, 0, 0);
+            const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+            for (let i = 0; i < pixels.length; i += 4)
+              if (pixels[i] > 200 && pixels[i + 1] < 80 && pixels[i + 2] < 80) return true;
+            return false;
+          },
+          { data: content.toString('base64'), type: extension },
+        );
+        expect(colored).toBe(true);
+      }
+    }
+    await viewer.getByRole('button', { name: 'Закрыть', exact: true }).click();
+    await page.getByLabel('Доступ по ссылке', { exact: true }).uncheck();
+    await expect(
+      viewer.getByRole('heading', { name: 'Диаграмма недоступна', exact: true }),
+    ).toBeVisible({ timeout: 22000 });
+    await viewer.reload();
+    await expect(
+      viewer.getByRole('heading', { name: 'Диаграмма недоступна', exact: true }),
+    ).toBeVisible();
+  } finally {
+    await guest.close();
+  }
+  await page.getByRole('button', { name: 'Закрыть', exact: true }).click();
+  await page.getByRole('button', { name: 'Экспорт', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'JSON', exact: true })).toBeVisible();
+});
