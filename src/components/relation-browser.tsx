@@ -13,11 +13,13 @@ import { Modal } from './modal';
 import { CopyOrigin } from './copy-origin';
 export function RelationEditor({
   relation,
+  parentId,
   objects,
   onSaved,
   onClose,
 }: {
   relation?: ModelRelation;
+  parentId?: string | null;
   objects: ModelObject[];
   onSaved: (r: ModelRelation) => void;
   onClose: () => void;
@@ -26,7 +28,7 @@ export function RelationEditor({
     [description, setDescription] = useState(relation?.description ?? ''),
     [source, setSource] = useState(relation?.sourceId ?? ''),
     [target, setTarget] = useState(relation?.targetId ?? ''),
-    [parent, setParent] = useState(relation?.parentId ?? ''),
+    [parent, setParent] = useState(relation?.parentId ?? parentId ?? ''),
     [attributes, setAttributes] = useState(
       Object.entries(relation?.attributes ?? {}).map(([key, value]) => ({ key, value })),
     ),

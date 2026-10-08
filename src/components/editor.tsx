@@ -1,7 +1,7 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -36,6 +36,7 @@ import {
   X,
   Share2,
 } from 'lucide-react';
+import type { Structure } from '@/lib/structure';
 import { api, date, download, readJson } from '@/lib/client';
 import { type DiagramDocument as LegacyDocument, defaults } from '@/lib/notation';
 import { useUser } from './workspace';
@@ -107,26 +108,38 @@ type Diagram = {
   document: ViewDocument;
   objects: ModelObject[];
   relations: ModelRelation[];
+  entityId?: string | null;
+  diagrams: Structure['diagrams'];
 };
 
 export function EditorPage({ id }: { id: string }) {
   const [diagram, setDiagram] = useState<Diagram | null>(null),
     [error, setError] = useState('');
   useEffect(() => {
+    setDiagram(null);
+    setError('');
+    let active = true;
     Promise.all([api<ModelDiagram>(`diagrams/${id}`), api<Space>('model')])
-      .then(([d, space]) =>
+      .then(([d, space]) => {
+        if (!active) return;
         setDiagram({
           ...d,
+          diagrams: space.diagrams ?? [],
           document: projectDocument(d.document),
           objects: mergeModelObjects(space.objects, d.document.objects),
           relations: mergeModelObjects(space.relations ?? [], d.document.relations ?? []),
-        }),
-      )
-      .catch((e) => setError(e.message));
+        });
+      })
+      .catch((e) => {
+        if (active) setError(e.message);
+      });
+    return () => {
+      active = false;
+    };
   }, [id]);
   return diagram ? (
     <ReactFlowProvider>
-      <Editor initial={diagram} />
+      <Editor key={id} initial={diagram} />
     </ReactFlowProvider>
   ) : (
     <div className="empty">{error || 'Открываем диаграмму…'}</div>
@@ -136,6 +149,7 @@ function Editor({ initial }: { initial: Diagram }) {
   const { user } = useUser(),
     flow = useReactFlow(),
     router = useRouter();
+  const focusedElement = useSearchParams().get('element');
   const nodesInitialized = useNodesInitialized();
   const [name, setName] = useState(initial.name),
     [document, setDocument] = useState(initial.document),
@@ -158,6 +172,7 @@ function Editor({ initial }: { initial: Diagram }) {
     [blocked, setBlocked] = useState(false),
     [interacting, setInteracting] = useState(false),
     [objects, setObjects] = useState(initial.objects),
+    [diagrams, setDiagrams] = useState(initial.diagrams),
     [relations, setRelations] = useState(initial.relations),
     [relationEditing, setRelationEditing] = useState<ModelRelation | 'new' | null>(null),
     [relationPlacement, setRelationPlacement] = useState<ModelRelation | null>(null),
@@ -228,6 +243,7 @@ function Editor({ initial }: { initial: Diagram }) {
     try {
       const space = await api<Space>('model');
       if (generation === objectGeneration.current && sequence === refreshSequence.current) {
+        if (space.diagrams) setDiagrams(space.diagrams);
         mergeObjects(space.objects, true);
         mergeRelations(space.relations ?? [], true);
       }
@@ -701,9 +717,23 @@ function Editor({ initial }: { initial: Diagram }) {
   useEffect(() => {
     if (nodesInitialized && nodeIds !== fittedIds.current) {
       fittedIds.current = nodeIds;
-      void flowRef.current.fitView({ padding: 0.25, maxZoom: 1, duration: 0 });
+      const node = docRef.current.nodes.find((n) => n.id === focusedElement);
+      const edge = docRef.current.edges.find((e) => e.id === focusedElement);
+      void flowRef.current.fitView({
+        ...(node || edge
+          ? { nodes: node ? [{ id: node.id }] : [{ id: edge!.source }, { id: edge!.target }] }
+          : {}),
+        padding: 0.25,
+        maxZoom: 1,
+        duration: 0,
+      });
     }
-  }, [nodesInitialized, nodeIds]);
+  }, [nodesInitialized, nodeIds, focusedElement]);
+  useEffect(() => {
+    const node = docRef.current.nodes.find((n) => n.id === focusedElement);
+    const edge = docRef.current.edges.find((e) => e.id === focusedElement);
+    if (node || edge) setSelected({ kind: node ? 'node' : 'edge', id: focusedElement! });
+  }, [focusedElement]);
   const nodeCache = useRef(new Map<string, ShapeNode>());
   const geometry = useMemo(
     () => edgeGeometry(document),
@@ -1219,6 +1249,9 @@ function Editor({ initial }: { initial: Diagram }) {
               <ChevronDown size={14} />
             </button>
             <small>
+              {initial.entityId && (
+                <Link href={`/solutions?parent=${initial.entityId}`}>Декомпозиция · </Link>
+              )}
               {document.notation.name} · v{document.notation.version}
             </small>
           </div>
@@ -1351,6 +1384,67 @@ function Editor({ initial }: { initial: Diagram }) {
         className={`editor-body model-editor-body ${panels.tree ? '' : 'hide-tree'} ${panels.palette ? '' : 'hide-palette'} ${panels.properties ? '' : 'hide-properties'}`}
       >
         <ObjectTree
+          diagramId={initial.id}
+          diagrams={diagrams}
+          defaultParentId={objects.find((o) => o.id === initial.entityId)?.parentId}
+          representations={[
+            ...document.nodes.map((n) => ({
+              id: n.id,
+              entityId: n.objectId!,
+              diagramId: initial.id,
+              diagramName: name,
+              notation:
+                document.bindings.find((b) => b.id === splitType(n.typeId)[0])?.document.name ?? '',
+              type: document.notation.nodeTypes.find((t) => t.id === n.typeId)?.name ?? '',
+              name: nodeLabel(
+                effectiveNode(
+                  n,
+                  document.notation.nodeTypes.find((t) => t.id === n.typeId)!,
+                  objectLookup.get(n.objectId!),
+                ),
+                document.notation.nodeTypes.find((t) => t.id === n.typeId)!,
+              ),
+            })),
+            ...document.edges
+              .filter((e) => e.relationId)
+              .map((e) => ({
+                id: e.id,
+                entityId: e.relationId!,
+                diagramId: initial.id,
+                diagramName: name,
+                notation:
+                  document.bindings.find((b) => b.id === splitType(e.typeId)[0])?.document.name ??
+                  'Универсальная связь',
+                type: document.notation.edgeTypes.find((t) => t.id === e.typeId)?.name ?? '',
+                name: String(
+                  effectiveEdge(
+                    e,
+                    document.notation.edgeTypes.find((t) => t.id === e.typeId)!,
+                    relationLookup.get(e.relationId!),
+                  ).properties.label ||
+                    relationLookup.get(e.relationId!)?.name ||
+                    'Связь',
+                ),
+              })),
+          ]}
+          onRepresentationLocate={(id, diagramId) => {
+            if (diagramId !== initial.id) {
+              void flush().then((ok) => {
+                if (ok) router.push(`/diagrams/${diagramId}?element=${encodeURIComponent(id)}`);
+              });
+              return;
+            }
+            const n = docRef.current.nodes.find((n) => n.id === id),
+              e = docRef.current.edges.find((e) => e.id === id);
+            if (n || e) {
+              setSelected({ kind: n ? 'node' : 'edge', id });
+              void flow.fitView({
+                nodes: n ? [{ id }] : [{ id: e!.source }, { id: e!.target }],
+                padding: 0.4,
+                maxZoom: 1,
+              });
+            }
+          }}
           objects={objects}
           relations={allRelations}
           onRelationLocate={locateRelation}

@@ -11,30 +11,46 @@ import {
   FolderPlus,
   Folder,
   Trash2,
+  GitBranch,
 } from 'lucide-react';
 import { api, date } from '@/lib/client';
 import {
   attributesSchema,
   relationEntity,
+  entityLabels,
   type ModelObject,
   type ModelRelation,
 } from '@/lib/model';
+import Link from 'next/link';
+import { RepresentationFolder } from './representation-folder';
+import type { Representation, Structure } from '@/lib/structure';
 import { CopyOrigin } from './copy-origin';
 import { Modal } from './modal';
 export function ObjectEditor({
   object,
+  kind = 'object',
   parentId,
   objects,
   onSaved,
   onClose,
 }: {
   object?: ModelObject;
+  kind?: ModelObject['kind'];
   parentId?: string | null;
   objects: ModelObject[];
   onSaved: (o: ModelObject) => void;
   onClose: () => void;
 }) {
-  const [name, setName] = useState(object?.name ?? 'Новый объект'),
+  const [name, setName] = useState(
+      object?.name ??
+        {
+          solution: 'Новое решение',
+          project: 'Новый проект',
+          folder: 'Новая папка',
+          diagram: 'Новая диаграмма',
+          object: 'Новый объект',
+        }[kind ?? 'object'],
+    ),
     [description, setDescription] = useState(object?.description ?? ''),
     [parent, setParent] = useState(object?.parentId ?? parentId ?? ''),
     [attributes, setAttributes] = useState(
@@ -60,7 +76,7 @@ export function ObjectEditor({
   }
   return (
     <Modal
-      title={object ? 'Общие свойства объекта' : 'Создать объект'}
+      title={object ? 'Общие свойства объекта' : `Создать: ${entityLabels[kind ?? 'object']}`}
       onClose={onClose}
       className="object-modal"
     >
@@ -84,6 +100,7 @@ export function ObjectEditor({
               object ? `objects/${object.id}` : 'objects',
               object ? 'PATCH' : 'POST',
               {
+                ...(!object ? { kind } : {}),
                 name,
                 description,
                 parentId: parent || null,
@@ -323,6 +340,11 @@ export function ObjectEditor({
   );
 }
 export function ObjectTree({
+  defaultParentId,
+  diagramId,
+  diagrams = [],
+  representations,
+  onRepresentationLocate,
   objects,
   counts,
   selectedId,
@@ -338,6 +360,11 @@ export function ObjectTree({
   onRelationSaved,
   relationsPanel,
 }: {
+  defaultParentId?: string | null;
+  diagramId?: string;
+  diagrams?: Structure['diagrams'];
+  representations?: Representation[];
+  onRepresentationLocate?: (id: string, diagramId: string) => void;
   objects: ModelObject[];
   relations?: ModelRelation[];
   onRelationLocate?: (id: string) => void;
@@ -425,7 +452,9 @@ export function ObjectTree({
             (r.sourceId === o.id || r.targetId === o.id || r.parentId === o.id) &&
             !ancestors.has(r.id),
         );
-        const children = entities.some((c) => c.parentId === o.id) || linked.length > 0,
+        const representable = !['folder', 'diagram'].includes(o.kind ?? 'object');
+        const children =
+            entities.some((c) => c.parentId === o.id) || linked.length > 0 || representable,
           closed = collapsed.has(o.id) && !query;
         return (
           <div
@@ -491,18 +520,31 @@ export function ObjectTree({
               <button
                 className="object-tree-name"
                 title={o.name}
-                onClick={() => (relationIds.has(o.id) ? onRelationLocate?.(o.id) : onLocate(o.id))}
+                onClick={() => {
+                  const d = diagrams.find((d) => d.entityId === o.id);
+                  if (d) window.location.assign(`/diagrams/${d.id}`);
+                  else if (relationIds.has(o.id)) onRelationLocate?.(o.id);
+                  else onLocate(o.id);
+                }}
                 onDoubleClick={() => editEntity(o)}
               >
                 {o.name}
+                {o.kind && o.kind !== 'object' && <small>{entityLabels[o.kind]}</small>}
                 {o.archived && <small>Архив</small>}
               </button>
               <span className="badge">{counts.get(o.id) ?? 0}</span>
               <div className="object-tree-actions">
+                <Link
+                  href={`/solutions?parent=${o.id}`}
+                  aria-label={`Декомпозиция ${o.name}`}
+                  title="Дочерние элементы и диаграммы"
+                >
+                  <GitBranch size={12} />
+                </Link>
                 <button
                   aria-label={`Разместить ${o.name}`}
                   title="Ещё одно представление"
-                  disabled={o.archived}
+                  disabled={o.archived || !representable}
                   onClick={() => {
                     const r = relations.find((r) => r.id === o.id);
                     if (r) onRelationPlace?.(r);
@@ -534,6 +576,7 @@ export function ObjectTree({
                 {!relationIds.has(o.id) && (
                   <>
                     <button
+                      hidden={o.kind === 'diagram'}
                       aria-label={`Копировать объект ${o.name}`}
                       disabled={o.archived}
                       onClick={async () => {
@@ -544,7 +587,8 @@ export function ObjectTree({
                               copyOf: o.id,
                               description: o.description,
                               attributes: o.attributes,
-                              parentId: null,
+                              parentId: o.parentId,
+                              kind: o.kind,
                             }),
                           );
                         } catch (err) {
@@ -609,6 +653,15 @@ export function ObjectTree({
             </div>
             {children && !closed && (
               <div role="group">
+                {representable && (
+                  <RepresentationFolder
+                    resource={relationIds.has(o.id) ? 'relations' : 'objects'}
+                    entityId={o.id}
+                    localItems={representations}
+                    currentDiagramId={diagramId}
+                    onLocate={onRepresentationLocate}
+                  />
+                )}
                 {branch(o.id, depth + 1, new Set([...ancestors, o.id]), true)}
                 {linked.length > 0 && (
                   <div role="treeitem" aria-expanded={!closedLinks.has(o.id)}>
@@ -708,6 +761,13 @@ export function ObjectTree({
                                 <Pencil size={12} />
                               </button>
                             </div>
+                            <RepresentationFolder
+                              resource="relations"
+                              entityId={r.id}
+                              localItems={representations}
+                              currentDiagramId={diagramId}
+                              onLocate={onRepresentationLocate}
+                            />
                             {branch(r.id, depth + 2, new Set([...ancestors, o.id, r.id]))}
                           </div>
                         ))}
@@ -732,7 +792,7 @@ export function ObjectTree({
           <button
             className="icon-button"
             aria-label="Создать объект"
-            onClick={() => setEditing({})}
+            onClick={() => setEditing({ parentId: defaultParentId })}
           >
             <Plus size={15} />
           </button>
@@ -782,7 +842,18 @@ export function ObjectTree({
         </div>
       )}
       {relationsPanel?.(
-        (id) => branch(id, 1, new Set([id])),
+        (id) => (
+          <>
+            <RepresentationFolder
+              resource="relations"
+              entityId={id}
+              localItems={representations}
+              currentDiagramId={diagramId}
+              onLocate={onRepresentationLocate}
+            />
+            {branch(id, 1, new Set([id]))}
+          </>
+        ),
         move,
         (id) => setEditing({ parentId: id }),
       )}

@@ -4,7 +4,8 @@ import { db } from './db';
 import { reject } from './model-errors';
 import {
   relationSnapshotSchema,
-  hierarchyError,
+  structureError,
+  objectSnapshotSchema,
   participantId,
   type ModelRelation,
   type ModelDocument,
@@ -278,8 +279,10 @@ export async function updateRelation(
       const entities = await modelEntities(tx, space.id);
       if (data.parentId && !entities.some((o) => o.id === data.parentId && !o.archived))
         reject(400, 'Активный родительский объект или связь не найдены');
-      const error = hierarchyError(
-        entities.map((o) => (o.id === id ? { ...o, parentId: data.parentId! } : o)),
+      const error = structureError(
+        entities.map((o) =>
+          objectSnapshotSchema.parse(o.id === id ? { ...o, parentId: data.parentId! } : o),
+        ),
       );
       if (error) reject(400, error);
     }

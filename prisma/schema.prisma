@@ -57,6 +57,8 @@ model NotationVersion {
   @@unique([notationId, number])
 }
 model Diagram {
+  entityId String? @unique
+  entity ModelObject? @relation(fields: [entityId], references: [id], onDelete: NoAction)
   shareToken String? @unique
   shareEnabled Boolean @default(false)
   id String @id @default(cuid())
@@ -104,6 +106,8 @@ model ModelSpace {
   diagrams Diagram[]
 }
 model ModelObject {
+  kind String @default("object")
+  diagram Diagram?
   id String @id @default(cuid())
   spaceId String
   space ModelSpace @relation(fields: [spaceId], references: [id], onDelete: Cascade)

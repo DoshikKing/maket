@@ -595,7 +595,11 @@ test('browser: mandatory local and shared properties are collected before atomic
     },
   });
   expect(invalid.status()).toBe(400);
-  expect((await (await request.get('/api/model')).json()).objects).toHaveLength(0);
+  expect(
+    (await (await request.get('/api/model')).json()).objects.filter(
+      (o: ModelObject) => o.kind !== 'diagram',
+    ),
+  ).toHaveLength(0);
   await page.goto(`/diagrams/${d.id}`);
   await page
     .getByRole('region', { name: 'Палитра Обязательные поля' })
@@ -631,9 +635,17 @@ test('object deletion checks ownership, revisions, children and usage; history r
   playwright,
 }) => {
   await login(request);
-  expect((await (await request.get('/api/model')).json()).objects).toHaveLength(0);
+  expect(
+    (await (await request.get('/api/model')).json()).objects.filter(
+      (o: ModelObject) => o.kind !== 'diagram',
+    ),
+  ).toHaveLength(0);
   let d = await create(request);
-  expect((await (await request.get('/api/model')).json()).objects).toHaveLength(0);
+  expect(
+    (await (await request.get('/api/model')).json()).objects.filter(
+      (o: ModelObject) => o.kind !== 'diagram',
+    ),
+  ).toHaveLength(0);
   const parent = await object(request, 'Родитель'),
     child = await object(request, 'Удаляемый', parent.id);
   expect(
@@ -658,7 +670,11 @@ test('object deletion checks ownership, revisions, children and usage; history r
     (await request.delete(`/api/objects/${child.id}`, { data: { revision: 1 } })).status(),
   ).toBe(200);
   expect((await request.get(`/api/objects/${child.id}`)).status()).toBe(404);
-  expect((await (await request.get('/api/model')).json()).objects).toHaveLength(1);
+  expect(
+    (await (await request.get('/api/model')).json()).objects.filter(
+      (o: ModelObject) => o.kind !== 'diagram',
+    ),
+  ).toHaveLength(1);
   const historical = await (
     await request.get(`/api/diagrams/${d.id}/history?number=${historyNumber}`)
   ).json();
@@ -731,10 +747,11 @@ test('browser: delete an unused tree object, including saving removal of its rep
     .getByRole('button', { name: 'Удалить объект Удалить из дерева', exact: true })
     .click();
   await expect(treeRow).toHaveCount(0);
-  await expect(page.locator('[role="treeitem"]')).toHaveCount(0);
+  await expect(page.locator('[role="treeitem"]')).toHaveCount(1);
   expect((await request.get(`/api/objects/${o.id}`)).status()).toBe(404);
   await page.reload();
-  await expect(page.locator('[role="treeitem"]')).toHaveCount(0);
+  await expect(page.locator('[role="treeitem"]')).toHaveCount(1);
+  await expect(page.locator(`[data-object-id="${d.entityId}"]`)).toContainText('Диаграмма');
 });
 
 test('browser: draw a connection between representations in a secondary notation', async ({
@@ -1140,7 +1157,7 @@ test('browser: relation explorer, nested references, shared arrow placement and 
   await expect(page.locator(`[data-relation-reference="${relation.id}"]`)).toHaveCount(2);
   const sourceRow = page.locator(`[data-object-id="${source.id}"]`);
   await sourceRow.getByRole('button', { name: 'Копировать объект Заказ', exact: true }).click();
-  await expect(page.locator('.object-tree-row[data-object-id]')).toHaveCount(3);
+  await expect(page.locator('.object-tree-row[data-object-id]')).toHaveCount(4);
   const copied = (await (await request.get('/api/model')).json()).objects.find(
     (o: ModelObject) => o.copiedFrom?.id === source.id,
   );
@@ -1799,4 +1816,279 @@ test('browser: persistent share link and explicit regeneration while access is d
   await access.check();
   await expect(access).toBeEnabled();
   await expect(field).toHaveValue(regenerated);
+});
+
+test('solution hierarchy: decomposition, reuse, migration-compatible roots and safe moves', async ({
+  request,
+  playwright,
+}) => {
+  await login(request);
+  const entity = async (name: string, kind: string, parentId?: string) => {
+    const response = await request.post('/api/objects', { data: { name, kind, parentId } });
+    expect(response.status(), await response.text()).toBe(201);
+    return response.json() as Promise<ModelObject>;
+  };
+  expect((await (await request.get('/api/model/structure')).json()).objects).toEqual([]);
+  const solution = await entity('Платформа', 'solution');
+  const grouping = await entity('Разработка', 'folder', solution.id);
+  const project = await entity('Платежи', 'project', grouping.id);
+  const folder = await entity('Доменные объекты', 'folder', project.id);
+  const order = await entity('Заказ', 'object', folder.id);
+  const nested = await entity('Строка заказа', 'object', order.id);
+  expect(
+    (
+      await request.post('/api/objects', { data: { name: 'Вне решения', kind: 'project' } })
+    ).status(),
+  ).toBe(400);
+  expect(
+    (
+      await request.post('/api/objects', { data: { name: 'Ложная диаграмма', kind: 'diagram' } })
+    ).status(),
+  ).toBe(400);
+  expect(
+    (
+      await request.patch(`/api/objects/${grouping.id}`, { data: { revision: 1, parentId: null } })
+    ).status(),
+  ).toBe(400);
+  expect(
+    (
+      await request.patch(`/api/objects/${solution.id}`, {
+        data: { revision: 1, parentId: nested.id },
+      })
+    ).status(),
+  ).toBe(400);
+  let d: ModelDiagram = await (
+    await request.post('/api/diagrams', { data: { name: 'Устройство заказа', parentId: order.id } })
+  ).json();
+  const diagramEntity = (await (
+    await request.get(`/api/objects/${d.entityId}`)
+  ).json()) as ModelObject;
+  expect(diagramEntity.kind).toBe('diagram');
+  expect(diagramEntity.parentId).toBe(order.id);
+  d = await place(request, d, solution.id);
+  d = await place(request, d, project.id);
+  d = await place(request, d, order.id);
+  d = await place(request, d, order.id);
+  expect(d.document.nodes.filter((n) => n.objectId === order.id)).toHaveLength(2);
+  expect(
+    (
+      await request.post(`/api/diagrams/${d.id}/representations`, {
+        data: {
+          revision: d.revision,
+          objectId: folder.id,
+          bindingId: d.document.bindings[0].id,
+          typeId: 'process',
+          position: { x: 0, y: 100 },
+        },
+      })
+    ).status(),
+  ).toBe(400);
+  const relation = await (
+    await request.post('/api/relations', {
+      data: { name: 'Владеет', sourceId: project.id, targetId: order.id, parentId: solution.id },
+    })
+  ).json();
+  d = await save(request, d, {
+    ...d.document,
+    edges: [
+      {
+        id: 'ownership',
+        relationId: relation.id,
+        source: d.document.nodes[1].id,
+        target: d.document.nodes[2].id,
+        sourcePort: 'out',
+        targetPort: 'in',
+        bindingId: d.document.bindings[0].id,
+        typeId: 'flow',
+        properties: {},
+      },
+    ],
+  });
+  let other: ModelDiagram = await (
+    await request.post('/api/diagrams', { data: { name: 'Обзор', parentId: project.id } })
+  ).json();
+  other = await place(request, other, order.id);
+  other = await place(request, other, project.id);
+  other = await save(request, other, {
+    ...other.document,
+    edges: [
+      {
+        id: 'ownership_alias',
+        relationId: relation.id,
+        source: other.document.nodes[1].id,
+        target: other.document.nodes[0].id,
+        sourcePort: 'out',
+        targetPort: 'in',
+        bindingId: other.document.bindings[0].id,
+        typeId: 'flow',
+        properties: {},
+      },
+    ],
+  });
+  d = await save(request, d, {
+    ...d.document,
+    nodes: d.document.nodes.map((n, i) => (i === 3 ? { ...n, label: 'Локальный вид заказа' } : n)),
+  });
+  const detail = await entity('Деталь связи', 'object', relation.id);
+  const structure = await (await request.get('/api/model/structure')).json();
+  expect(
+    structure.representations.filter((r: { entityId: string }) => r.entityId === order.id),
+  ).toHaveLength(3);
+  expect(
+    structure.representations.filter((r: { entityId: string }) => r.entityId === relation.id),
+  ).toHaveLength(2);
+  expect(structure.objects.find((o: ModelObject) => o.id === detail.id).parentId).toBe(relation.id);
+  const objectRepresentations = await (
+    await request.get(`/api/objects/${order.id}/representations`)
+  ).json();
+  expect(objectRepresentations).toHaveLength(3);
+  expect(
+    objectRepresentations.find((r: { id: string }) => r.id === d.document.nodes[3].id).name,
+  ).toBe('Локальный вид заказа');
+  expect(
+    await (await request.get(`/api/relations/${relation.id}/representations`)).json(),
+  ).toHaveLength(2);
+
+  const copy = await (await request.post(`/api/diagrams/${d.id}/duplicate`, { data: {} })).json();
+  expect(copy.entityId).not.toBe(d.entityId);
+  expect((await (await request.get(`/api/objects/${copy.entityId}`)).json()).parentId).toBe(
+    order.id,
+  );
+  const diagramChild = await entity('Внутренний элемент диаграммы', 'object', copy.entityId);
+  expect((await request.delete(`/api/diagrams/${copy.id}`)).status()).toBe(409);
+  expect(
+    (
+      await request.patch(`/api/objects/${diagramChild.id}`, {
+        data: { revision: 1, parentId: folder.id },
+      })
+    ).status(),
+  ).toBe(200);
+  expect((await request.delete(`/api/diagrams/${copy.id}`)).status()).toBe(200);
+  expect((await request.get(`/api/objects/${copy.entityId}`)).status()).toBe(404);
+  expect(
+    (await request.delete(`/api/objects/${order.id}`, { data: { revision: 1 } })).status(),
+  ).toBe(409);
+  expect(
+    (
+      await request.patch(`/api/objects/${diagramEntity.id}`, {
+        data: { revision: 1, name: 'Декомпозиция заказа' },
+      })
+    ).status(),
+  ).toBe(200);
+  expect((await (await request.get(`/api/diagrams/${d.id}`)).json()).name).toBe(
+    'Декомпозиция заказа',
+  );
+  expect(
+    (await request.patch(`/api/diagrams/${d.id}`, { data: { name: 'Состав заказа' } })).status(),
+  ).toBe(200);
+  expect((await (await request.get(`/api/objects/${diagramEntity.id}`)).json()).name).toBe(
+    'Состав заказа',
+  );
+  // Palette creation follows the decomposition container, not a notation-specific catalog.
+  d = await place(request, d);
+  const paletteObject = d.document.objects.find((o) => o.id === d.document.nodes.at(-1)!.objectId)!;
+  expect(paletteObject.kind).toBe('object');
+  expect(paletteObject.parentId).toBe(order.id);
+  const diagramOwned = await entity('Деталь канваса', 'object', d.entityId!);
+  d = await place(request, d, diagramOwned.id);
+  expect(d.document.objects.find((o) => o.id === d.entityId)!.kind).toBe('diagram');
+  const importedResponse = await request.post('/api/diagrams', {
+    data: { name: 'Импорт декомпозиции', document: d.document },
+  });
+  expect(importedResponse.status(), await importedResponse.text()).toBe(201);
+  const imported: ModelDiagram = await importedResponse.json();
+  expect(imported.document.objects.find((o) => o.copiedFrom?.id === d.entityId)!.kind).toBe(
+    'folder',
+  );
+  expect(imported.document.objects.find((o) => o.copiedFrom?.id === solution.id)!.kind).toBe(
+    'solution',
+  );
+  expect(imported.document.objects.find((o) => o.copiedFrom?.id === project.id)!.kind).toBe(
+    'project',
+  );
+  expect(
+    imported.document.nodes.filter(
+      (n) =>
+        n.objectId === imported.document.objects.find((o) => o.copiedFrom?.id === order.id)!.id,
+    ),
+  ).toHaveLength(2);
+  const foreign = await playwright.request.newContext({ baseURL: 'http://localhost:3000' });
+  await login(foreign);
+  expect(
+    (
+      await foreign.post('/api/diagrams', {
+        data: { name: 'Чужая декомпозиция', parentId: order.id },
+      })
+    ).status(),
+  ).toBe(400);
+  expect((await (await foreign.get('/api/model/structure')).json()).objects).toEqual([]);
+  expect((await foreign.get(`/api/objects/${order.id}/representations`)).status()).toBe(404);
+  expect((await foreign.get(`/api/relations/${relation.id}/representations`)).status()).toBe(404);
+  await foreign.dispose();
+});
+
+test('browser: solutions, projects, decomposition diagrams and representation deep links', async ({
+  request,
+  page,
+}) => {
+  test.setTimeout(120000);
+  await login(request, page);
+  await page.goto('/solutions');
+  await page.getByRole('button', { name: 'Создать внутри' }).click();
+  await page.getByLabel('Имя объекта', { exact: true }).fill('Магазин');
+  await page.getByRole('button', { name: 'Сохранить объект', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Магазин', exact: true })).toBeVisible();
+  await expect(page.getByLabel('Тип нового элемента')).toHaveValue('project');
+  await page.getByRole('button', { name: 'Создать внутри' }).click();
+  await page.getByLabel('Имя объекта', { exact: true }).fill('Каталог');
+  await page.getByRole('button', { name: 'Сохранить объект', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Каталог', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Создать внутри' }).click();
+  await page.getByLabel('Имя объекта', { exact: true }).fill('Товар');
+  await page.getByRole('button', { name: 'Сохранить объект', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Товар', exact: true })).toBeVisible();
+  await page.getByLabel('Тип нового элемента').selectOption('diagram');
+  await page.getByRole('button', { name: 'Создать внутри' }).click();
+  await page.getByRole('dialog').getByLabel('Название').fill('Состав товара');
+  await page.getByRole('button', { name: 'Создать диаграмму', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Состав товара', exact: true })).toBeVisible();
+  const structure = await (await request.get('/api/model/structure')).json();
+  const product = structure.objects.find((o: ModelObject) => o.name === 'Товар');
+  const d = structure.diagrams.find((d: { name: string }) => d.name === 'Состав товара');
+  let diagram: ModelDiagram = await (await request.get(`/api/diagrams/${d.id}`)).json();
+  diagram = await place(request, diagram, product.id);
+  diagram = await place(request, diagram, product.id);
+  await page.goto(`/solutions?parent=${product.id}`);
+  await expect(page.getByRole('heading', { name: 'Товар', exact: true })).toBeVisible();
+  const representations = page.locator('.solution-content .representation-folder');
+  await representations.locator('summary').click();
+  await expect(representations.locator('a')).toHaveCount(2);
+  await representations.locator('a').nth(1).click();
+  await expect(page).toHaveURL(new RegExp(`element=${diagram.document.nodes[1].id}`), {
+    timeout: 30000,
+  });
+  await expect(page.locator('.react-flow__node-notation.selected')).toHaveCount(1);
+  await expect(page.locator('.react-flow__node-notation.selected')).toHaveAttribute(
+    'data-id',
+    diagram.document.nodes[1].id,
+  );
+  const row = page.locator(`[data-object-id="${product.id}"]`);
+  await expect(row.getByRole('link', { name: 'Декомпозиция Товар' })).toBeVisible();
+  const folder = row.locator('..').locator(':scope > [role="group"] > .representation-folder');
+  await folder.locator('summary').click();
+  await expect(folder.locator('a')).toHaveCount(2);
+  await folder.locator('a').first().click();
+  await expect(page.locator('.react-flow__node-notation.selected')).toHaveAttribute(
+    'data-id',
+    diagram.document.nodes[0].id,
+  );
+
+  await row.getByRole('link', { name: 'Декомпозиция Товар' }).click();
+  await expect(page.getByRole('heading', { name: 'Товар', exact: true })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Открыть диаграмму →', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Свойства', exact: true }).click();
+  await expect(
+    page.getByLabel('Родительский объект').locator(`option[value="${product.id}"]`),
+  ).toHaveCount(0);
+  await page.getByRole('button', { name: 'Закрыть', exact: true }).click();
 });

@@ -33,6 +33,7 @@ export function Workspace({
   }, [user.settings.theme]);
   const editor = pathname.startsWith('/diagrams/');
   const links = [
+    { href: '/solutions', label: 'Решения', icon: Workflow },
     { href: '/library', label: 'Библиотека', icon: Library },
     { href: '/notations', label: 'Нотации', icon: Shapes },
     { href: '/settings', label: 'Настройки', icon: Settings },

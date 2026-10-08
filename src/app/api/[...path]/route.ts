@@ -15,7 +15,8 @@ import {
   tokenHash,
 } from '@/lib/auth';
 import { builtinNotation, notationSchema } from '@/lib/notation';
-import { attributesSchema } from '@/lib/model';
+import { getStructure, deleteDiagram } from '@/lib/structure-service';
+import { attributesSchema, entityKindSchema } from '@/lib/model';
 import {
   ModelError,
   ensureModel,
@@ -303,7 +304,8 @@ async function handle(req: NextRequest, context: { params: Promise<{ path: strin
         return json({ ok: true });
       }
     }
-    if (resource === 'model' && method === 'GET') return json(await ensureModel(user.id));
+    if (resource === 'model' && method === 'GET')
+      return json(id === 'structure' ? await getStructure(user.id) : await ensureModel(user.id));
     if (resource === 'relations') {
       const space = await ensureModel(user.id);
       if (method === 'POST' && !id) {
@@ -323,6 +325,8 @@ async function handle(req: NextRequest, context: { params: Promise<{ path: strin
       if (!id) fail(405, 'Укажите идентификатор связи');
       const relation = await db.modelRelation.findFirst({ where: { id, spaceId: space.id } });
       if (!relation) fail(404, 'Связь не найдена');
+      if (method === 'GET' && action === 'representations')
+        return json((await getStructure(user.id, id)).representations);
       if (method === 'GET' && action === 'usages')
         return json(
           await db.diagramRelationUsage.findMany({
@@ -372,6 +376,7 @@ async function handle(req: NextRequest, context: { params: Promise<{ path: strin
       if (method === 'POST' && !id) {
         const input = z
           .object({
+            kind: entityKindSchema.optional(),
             name: nameSchema,
             description: z.string().max(4000).optional(),
             parentId: z.string().nullable().optional(),
@@ -385,6 +390,8 @@ async function handle(req: NextRequest, context: { params: Promise<{ path: strin
       const space = await ensureModel(user.id);
       const object = await db.modelObject.findFirst({ where: { id, spaceId: space.id } });
       if (!object) fail(404, 'Объект не найден');
+      if (method === 'GET' && action === 'representations')
+        return json((await getStructure(user.id, id)).representations);
       if (method === 'GET' && action === 'usages')
         return json(
           await db.diagramObjectUsage.findMany({
@@ -448,6 +455,7 @@ async function handle(req: NextRequest, context: { params: Promise<{ path: strin
       if (method === 'POST' && !id) {
         const input = z
           .object({
+            parentId: z.string().nullable().optional(),
             name: nameSchema,
             notationId: z.string().optional(),
             notationIds: z.array(z.string()).min(1).max(12).optional(),
@@ -517,12 +525,19 @@ async function handle(req: NextRequest, context: { params: Promise<{ path: strin
       }
       if (method === 'GET') return json(await getDiagram(user.id, id));
       if (method === 'DELETE') {
-        await db.diagram.delete({ where: { id } });
-        return json({ ok: true });
+        return json(await deleteDiagram(user.id, id));
       }
       if (method === 'PATCH') {
         const { name } = z.object({ name: nameSchema }).parse(await body(req));
-        return json(await db.diagram.update({ where: { id }, data: { name } }));
+        await ensureModel(user.id);
+        const current = await db.diagram.findUniqueOrThrow({ where: { id } });
+        if (current.entityId) {
+          const entity = await db.modelObject.findUniqueOrThrow({
+            where: { id: current.entityId },
+          });
+          await updateObject(user.id, entity.id, { revision: entity.revision, name });
+        }
+        return json(await db.diagram.findUniqueOrThrow({ where: { id } }));
       }
       if (method === 'POST' && action === 'duplicate')
         return json(await duplicateModelDiagram(user.id, id), 201);

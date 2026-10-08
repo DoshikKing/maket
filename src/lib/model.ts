@@ -14,7 +14,17 @@ export const attributesSchema = z
   .record(id, z.union([z.string().max(2000), z.number().finite(), z.boolean()]))
   .refine((v) => Object.keys(v).length <= 100, 'Не больше 100 атрибутов');
 export const copyOriginSchema = z.object({ id, name: z.string().min(1).max(100) });
+export const entityKindSchema = z.enum(['solution', 'project', 'folder', 'diagram', 'object']);
+export const entityLabels = {
+  solution: 'Решение',
+  project: 'Проект',
+  folder: 'Папка',
+  diagram: 'Диаграмма',
+  object: 'Объект',
+  relation: 'Связь',
+};
 export const objectSnapshotSchema = z.object({
+  kind: entityKindSchema.optional(),
   id,
   parentId: id.nullable(),
   name: z.string().trim().min(1).max(100),
@@ -121,8 +131,15 @@ export type ViewDocument = Omit<DiagramDocument, 'edges'> & {
   relations?: ModelRelation[];
   edges: (DiagramDocument['edges'][number] & { relationId?: string })[];
 };
-export type ModelDiagram = { id: string; name: string; revision: number; document: ModelDocument };
+export type ModelDiagram = {
+  entityId?: string | null;
+  id: string;
+  name: string;
+  revision: number;
+  document: ModelDocument;
+};
 export type Space = {
+  diagrams?: { id: string; entityId: string | null; name: string }[];
   id: string;
   name: string;
   revision: number;
@@ -361,6 +378,26 @@ export function hierarchyError(objects: Pick<ModelObject, 'id' | 'parentId'>[]):
   }
   return null;
 }
+export function structureError(objects: ModelObject[]): string | null {
+  const error = hierarchyError(objects);
+  if (error) return error;
+  const lookup = new Map(objects.map((o) => [o.id, o]));
+  for (const o of objects) {
+    const ancestors: ModelObject[] = [];
+    let parent = o.parentId ? lookup.get(o.parentId) : undefined;
+    while (parent) {
+      ancestors.push(parent);
+      parent = parent.parentId ? lookup.get(parent.parentId) : undefined;
+    }
+    if (o.kind === 'solution' && ancestors.some((p) => p.kind !== 'folder'))
+      return 'Решение должно находиться в корне пространства или в корневой папке';
+    if (o.kind === 'project' && !ancestors.some((p) => p.kind === 'solution'))
+      return 'Проект должен принадлежать решению';
+    if (o.kind === 'project' && ancestors.some((p) => p.kind === 'project'))
+      return 'Проекты одного решения не вкладываются друг в друга';
+  }
+  return null;
+}
 export function modelErrors(d: ModelDocument): string[] {
   const errors: string[] = [];
   if (new Set(d.edges.map((e) => e.id)).size !== d.edges.length)
@@ -369,11 +406,13 @@ export function modelErrors(d: ModelDocument): string[] {
     errors.push('Повторяющиеся подключения нотаций');
   if (d.nodes.some((n) => d.edges.some((e) => e.id === n.id)))
     errors.push('Идентификаторы представлений объектов и связей должны различаться');
-  const tree = hierarchyError([...d.objects, ...(d.relations ?? []).map(relationEntity)]);
+  const tree = structureError([...d.objects, ...(d.relations ?? []).map(relationEntity)]);
   if (tree) errors.push(tree);
   const objects = new Map(d.objects.map((o) => [o.id, o]));
   for (const n of d.nodes) {
     if (!objects.has(n.objectId)) errors.push('Представление ссылается на отсутствующий объект');
+    if (['folder', 'diagram'].includes(objects.get(n.objectId)?.kind ?? 'object'))
+      errors.push('Папки и диаграммы не размещаются на канвасе');
     for (const key of Object.keys(n.profiles ?? {})) {
       const [bindingId, typeId] = splitType(key);
       if (

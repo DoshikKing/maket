@@ -13,6 +13,7 @@ import {
   effectiveNode,
   effectiveEdge,
   hierarchyError,
+  structureError,
   objectClosure,
   type ModelDocument,
   type ModelObject,
@@ -471,4 +472,24 @@ it('free endpoint routing ignores the side of its former arrow attachment', () =
     edges: view.edges.map((e) => ({ ...e, sourcePort: 'out', targetPort: 'in' })),
   };
   expect(edgeGeometry(view).get('free')).toEqual(edgeGeometry(expected).get('free'));
+});
+
+it('keeps projects in their solution when moving an entire folder and rejects cycles', () => {
+  const solution = { ...object, id: 'solution', kind: 'solution' as const, parentId: null };
+  const folder = { ...object, id: 'folder', kind: 'folder' as const, parentId: 'solution' };
+  const project = { ...object, id: 'project', kind: 'project' as const, parentId: 'folder' };
+  expect(structureError([solution, folder, project])).toBeNull();
+  expect(structureError([solution, { ...folder, parentId: null }, project])).toContain(
+    'принадлежать решению',
+  );
+  expect(structureError([{ ...solution, parentId: 'project' }, folder, project])).toContain('цикл');
+  expect(
+    structureError([
+      solution,
+      folder,
+      project,
+      { ...object, id: 'nested', kind: 'project', parentId: 'project' },
+    ]),
+  ).toContain('не вкладываются');
+  expect(structureError([object])).toBeNull();
 });

@@ -12,7 +12,7 @@ import {
   modelDiagramSchema,
   bindingSchema,
   modelErrors,
-  hierarchyError,
+  structureError,
   objectSnapshotSchema,
   modelClosure,
   splitType,
@@ -42,6 +42,7 @@ export const snapshot = (o: {
   revision: number;
   createdAt?: Date;
   copiedFrom?: unknown;
+  kind?: string;
 }): ModelObject => objectSnapshotSchema.parse({ ...o, incarnation: o.createdAt?.toISOString() });
 async function recordObject(tx: Tx, object: Parameters<typeof snapshot>[0]) {
   await tx.modelObjectRevision.create({
@@ -53,6 +54,7 @@ async function createObject(
   spaceId: string,
   data: {
     id?: string;
+    kind?: ModelObject['kind'];
     name: string;
     description?: string;
     parentId?: string | null;
@@ -228,13 +230,22 @@ export async function ensureModel(ownerId: string) {
         await tx.diagram.update({ where: { id: diagram.id }, data: { modelSpaceId: space.id } });
         await commit(tx, diagram, document, diagram.revision, 'migration');
       }
-      if (diagrams.length)
+      const unlinked = await tx.diagram.findMany({ where: { ownerId, entityId: null } });
+      for (const diagram of unlinked) {
+        const entity = await createObject(tx, space.id, { kind: 'diagram', name: diagram.name });
+        await tx.diagram.update({ where: { id: diagram.id }, data: { entityId: entity.id } });
+      }
+      if (diagrams.length || unlinked.length)
         await tx.modelSpace.update({
           where: { id: space.id },
           data: { revision: { increment: 1 } },
         });
       return {
         ...(await tx.modelSpace.findUniqueOrThrow({ where: { id: space.id } })),
+        diagrams: await tx.diagram.findMany({
+          where: { ownerId },
+          select: { id: true, entityId: true, name: true },
+        }),
         relations: (
           await tx.modelRelation.findMany({
             where: { spaceId: space.id },
@@ -298,12 +309,17 @@ async function notationBinding(
 }
 export async function newDiagram(
   ownerId: string,
-  input: { name: string; notationIds?: string[]; document?: unknown },
+  input: { name: string; parentId?: string | null; notationIds?: string[]; document?: unknown },
 ) {
   const space = await ensureModel(ownerId);
   return db.$transaction(
     async (tx) => {
       await tx.modelSpace.update({ where: { id: space.id }, data: { revision: { increment: 0 } } });
+      if (
+        input.parentId &&
+        !(await modelEntities(tx, space.id)).some((o) => o.id === input.parentId && !o.archived)
+      )
+        reject(400, 'Активный родитель диаграммы не найден');
       let document: ModelDocument;
       if (input.document) {
         if ((input.document as { schemaVersion?: number }).schemaVersion === 1)
@@ -322,6 +338,7 @@ export async function newDiagram(
             objects.push(
               await createObject(tx, space.id, {
                 id: ids.get(o.id),
+                kind: o.kind === 'diagram' ? 'folder' : o.kind,
                 parentId: o.parentId ? ids.get(o.parentId) : null,
                 name: o.name,
                 description: o.description,
@@ -399,8 +416,14 @@ export async function newDiagram(
       document = await materializeRelations(tx, document, undefined, undefined, !!input.document);
       document = await liveDocument(tx, document);
       valid(document);
+      const entity = await createObject(tx, space.id, {
+        kind: 'diagram',
+        name: input.name,
+        parentId: input.parentId,
+      });
       const d = await tx.diagram.create({
         data: {
+          entityId: entity.id,
           ownerId,
           modelSpaceId: space.id,
           name: input.name,
@@ -540,6 +563,7 @@ export async function saveModelDiagram(
           const o = pending.shift()!;
           await createObject(tx, current.modelSpaceId, {
             id: o.id,
+            kind: o.kind === 'diagram' ? 'folder' : o.kind,
             name: o.name,
             parentId: o.parentId,
             description: o.description,
@@ -645,8 +669,17 @@ export async function duplicateModelDiagram(ownerId: string, diagramId: string) 
     if (!original) reject(404, 'Диаграмма не найдена');
     const document = await liveDocument(tx, modelDiagramSchema.parse(original.document));
     valid(document);
+    const parent = original.entityId
+      ? await tx.modelObject.findUnique({ where: { id: original.entityId } })
+      : null;
+    const entity = await createObject(tx, space.id, {
+      kind: 'diagram',
+      name: `${original.name.slice(0, 90)} — копия`,
+      parentId: parent?.parentId,
+    });
     const d = await tx.diagram.create({
       data: {
+        entityId: entity.id,
         ownerId,
         modelSpaceId: document.modelSpaceId,
         name: `${original.name.slice(0, 90)} — копия`,
@@ -662,6 +695,7 @@ export async function duplicateModelDiagram(ownerId: string, diagramId: string) 
 export async function addObject(
   ownerId: string,
   input: {
+    kind?: ModelObject['kind'];
     name: string;
     description?: string;
     parentId?: string | null;
@@ -678,6 +712,22 @@ export async function addObject(
     )
       reject(400, 'Активный родительский объект не найден');
     const { copyOf, ...data } = input;
+    if (data.kind === 'diagram') reject(400, 'Создайте диаграмму через API диаграмм');
+    const existingEntities = (await modelEntities(tx, space.id)).map((o) => snapshot(o));
+    const kindError = structureError([
+      ...existingEntities,
+      {
+        id: uuid(),
+        parentId: data.parentId ?? null,
+        name: data.name,
+        kind: data.kind,
+        description: '',
+        attributes: {},
+        archived: false,
+        revision: 1,
+      },
+    ]);
+    if (kindError) reject(400, kindError);
     let copiedFrom: ModelObject['copiedFrom'];
     if (copyOf) {
       const origin = await tx.modelObject.findFirst({ where: { id: copyOf, spaceId: space.id } });
@@ -719,6 +769,8 @@ export async function deleteObject(
         409,
         `Объект используется в диаграммах: ${usages.map((u) => u.diagram.name).join(', ')}. Сначала удалите его представления и сохраните диаграммы`,
       );
+    if (object.kind === 'diagram')
+      reject(409, 'Удалите диаграмму через её карточку в обозревателе');
     await tx.modelObject.delete({ where: { id: objectId } });
     return { ok: true };
   });
@@ -767,8 +819,8 @@ export async function updateObject(
       const objects = await modelEntities(tx, space.id);
       if (data.parentId && !objects.some((o) => o.id === data.parentId && !o.archived))
         reject(400, 'Активный родительский объект не найден');
-      const error = hierarchyError(
-        objects.map((o) => (o.id === objectId ? { ...o, parentId: data.parentId! } : o)),
+      const error = structureError(
+        objects.map((o) => snapshot(o.id === objectId ? { ...o, parentId: data.parentId! } : o)),
       );
       if (error) reject(400, error);
     }
@@ -782,6 +834,8 @@ export async function updateObject(
     });
     if (changed.count !== 1) reject(409, 'Объект изменён в другой вкладке. Обновите модель');
     const object = await tx.modelObject.findUniqueOrThrow({ where: { id: objectId } });
+    if (object.kind === 'diagram')
+      await tx.diagram.updateMany({ where: { entityId: object.id }, data: { name: object.name } });
     await recordObject(tx, object);
     return snapshot(object);
   });
@@ -822,6 +876,8 @@ export async function addRepresentation(
         where: { id: input.objectId, spaceId: document.modelSpaceId, archived: false },
       });
       if (!existing) reject(404, 'Активный объект не найден');
+      if (existing.kind === 'folder' || existing.kind === 'diagram')
+        reject(400, 'Папки и диаграммы организуют структуру и не размещаются на канвасе');
       object = snapshot(existing);
       for (const p of type.properties)
         if (
@@ -854,6 +910,9 @@ export async function addRepresentation(
           type.name.trim() ||
           'Объект',
         attributes,
+        parentId: d.entityId
+          ? (await tx.modelObject.findUnique({ where: { id: d.entityId } }))?.parentId
+          : null,
       });
     }
     const properties: ModelObject['attributes'] = {};
