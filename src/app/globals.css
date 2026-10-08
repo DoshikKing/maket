@@ -2941,12 +2941,14 @@ body {
 }
 .hierarchy-children > [role='treeitem'],
 .hierarchy-children > .representation-folder,
+.hierarchy-children > .system-relation-folder,
 .hierarchy-children > .representation-entry,
 .hierarchy-children > div > .object-relation-reference {
   position: relative;
 }
 .hierarchy-children > [role='treeitem']::before,
 .hierarchy-children > .representation-folder::before,
+.hierarchy-children > .system-relation-folder::before,
 .hierarchy-children > .representation-entry::before,
 .hierarchy-children > div > .object-relation-reference::before {
   content: '';
@@ -3004,6 +3006,12 @@ body {
   background: var(--hover);
   border: 1px solid var(--border);
   border-radius: 6px;
+}
+.system-relation-folder {
+  margin: 4px 0;
+}
+.system-relation-folder > p {
+  margin: 6px 0 8px 22px;
 }
 .viewer-tree ul ul {
   position: relative;

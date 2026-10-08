@@ -20,6 +20,7 @@ import type { Structure } from '@/lib/structure';
 import { ObjectEditor } from './object-tree';
 import { RelationEditor } from './relation-browser';
 import { RepresentationFolder } from './representation-folder';
+import { RelationFolder } from './relation-folder';
 import { Modal } from './modal';
 import type { NotationItem } from './library';
 const icons = {
@@ -135,14 +136,62 @@ export function SolutionsPage() {
       setBusy(false);
     }
   }
-  function tree(parentId: string | null, depth = 0): React.ReactNode {
+  function linkedRelations(id: string, ancestors = new Set<string>()) {
+    return (space?.relations ?? []).filter(
+      (r) =>
+        r.id !== id &&
+        !ancestors.has(r.id) &&
+        (r.parentId === id || r.sourceId === id || r.targetId === id),
+    );
+  }
+  function relationFolder(id: string, name: string, level?: number) {
+    const linked = linkedRelations(id);
+    return (
+      <RelationFolder
+        key={`relations:${id}`}
+        entityId={id}
+        name={name}
+        count={linked.length}
+        level={level}
+      >
+        {linked.map((r) => (
+          <div
+            key={r.id}
+            role={level ? 'treeitem' : undefined}
+            aria-level={level ? level + 1 : undefined}
+          >
+            <button className="solution-tree-select" onClick={() => select(r.id)}>
+              <GitBranch size={16} />
+              <span>
+                {r.name}
+                <small>{r.parentId === id ? 'Дочерняя связь' : 'Ссылка'}</small>
+              </span>
+            </button>
+          </div>
+        ))}
+      </RelationFolder>
+    );
+  }
+  function tree(
+    parentId: string | null,
+    depth = 0,
+    ancestors = new Set<string>(),
+  ): React.ReactNode {
     return entities
-      .filter((o) => o.parentId === parentId && visible.has(o.id))
+      .filter(
+        (o) =>
+          o.parentId === parentId &&
+          !ancestors.has(o.id) &&
+          visible.has(o.id) &&
+          (parentId === null || !relationIds.has(o.id)),
+      )
       .map((o) => {
         const Icon = icons[entityKind(o)],
+          linked = linkedRelations(o.id, ancestors),
           hasChildren =
             entities.some((c) => c.parentId === o.id) ||
-            !['folder', 'diagram'].includes(o.kind ?? 'object'),
+            !['folder', 'diagram'].includes(o.kind ?? 'object') ||
+            linked.length > 0,
           collapsed = closed.has(o.id) && !query;
         return (
           <div
@@ -156,7 +205,10 @@ export function SolutionsPage() {
               className={`solution-tree-row ${selected?.id === o.id ? 'selected' : ''}`}
               title={`${entityLabels[entityKind(o)]} · Родитель: ${entities.find((p) => p.id === o.parentId)?.name ?? 'Корень пространства'}`}
               draggable={!o.archived}
-              onDragStart={(e) => e.dataTransfer.setData('application/maket-entity', o.id)}
+              onDragStart={(e) => {
+                e.stopPropagation();
+                e.dataTransfer.setData('application/maket-entity', o.id);
+              }}
               onDragOver={(e) => {
                 if (e.dataTransfer.types.includes('application/maket-entity')) e.preventDefault();
               }}
@@ -207,7 +259,57 @@ export function SolutionsPage() {
                     level={depth + 2}
                   />
                 )}
-                {tree(o.id, depth + 1)}
+                {(!['folder', 'diagram'].includes(o.kind ?? 'object') || linked.length > 0) && (
+                  <RelationFolder
+                    entityId={o.id}
+                    name={o.name}
+                    level={depth + 2}
+                    count={linked.length}
+                  >
+                    {linked.map((r) => (
+                      <div
+                        key={r.id}
+                        role="treeitem"
+                        aria-level={depth + 3}
+                        draggable={!r.archived}
+                        onDragStart={(e) => {
+                          e.stopPropagation();
+                          e.dataTransfer.setData('application/maket-entity', r.id);
+                        }}
+                        onDragOver={(e) => {
+                          if (e.dataTransfer.types.includes('application/maket-entity'))
+                            e.preventDefault();
+                        }}
+                        onDrop={(e) => {
+                          const id = e.dataTransfer.getData('application/maket-entity');
+                          if (id) {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            void move(id, r.id);
+                          }
+                        }}
+                      >
+                        <button className="solution-tree-select" onClick={() => select(r.id)}>
+                          <GitBranch size={16} />
+                          <span>
+                            {r.name}
+                            <small>{r.parentId === o.id ? 'Дочерняя связь' : 'Ссылка'}</small>
+                          </span>
+                        </button>
+                        <div className="hierarchy-children" role="group">
+                          <RepresentationFolder
+                            entityId={r.id}
+                            items={space?.representations}
+                            level={depth + 4}
+                          />
+                          {relationFolder(r.id, r.name, depth + 4)}
+                          {tree(r.id, depth + 3, new Set([...ancestors, o.id, r.id]))}
+                        </div>
+                      </div>
+                    ))}
+                  </RelationFolder>
+                )}
+                {tree(o.id, depth + 1, new Set([...ancestors, o.id]))}
               </div>
             )}
           </div>
@@ -333,30 +435,38 @@ export function SolutionsPage() {
               представлений на разных диаграммах.
             </p>
             {selected && !['folder', 'diagram'].includes(selected.kind ?? '') && (
-              <RepresentationFolder
-                key={selected.id}
-                entityId={selected.id}
-                items={space.representations}
-              />
+              <>
+                <RepresentationFolder
+                  key={selected.id}
+                  entityId={selected.id}
+                  items={space.representations}
+                />
+              </>
             )}
+            {selected &&
+              (!['folder', 'diagram'].includes(selected.kind ?? '') ||
+                linkedRelations(selected.id).length > 0) &&
+              relationFolder(selected.id, selected.name)}
             <div className="solution-cards">
-              {children.map((o) => {
-                const Icon = icons[entityKind(o)];
-                const diagram = space.diagrams.find((d) => d.entityId === o.id);
-                return (
-                  <article className="solution-card" key={o.id}>
-                    <button onClick={() => select(o.id)}>
-                      <Icon size={23} />
-                      <strong>{o.name}</strong>
-                      <small>
-                        {entityLabels[entityKind(o)]}
-                        {o.archived ? ' · Архив' : ''}
-                      </small>
-                    </button>
-                    {diagram && <Link href={`/diagrams/${diagram.id}`}>Открыть диаграмму →</Link>}
-                  </article>
-                );
-              })}
+              {children
+                .filter((o) => !selected || !relationIds.has(o.id))
+                .map((o) => {
+                  const Icon = icons[entityKind(o)];
+                  const diagram = space.diagrams.find((d) => d.entityId === o.id);
+                  return (
+                    <article className="solution-card" key={o.id}>
+                      <button onClick={() => select(o.id)}>
+                        <Icon size={23} />
+                        <strong>{o.name}</strong>
+                        <small>
+                          {entityLabels[entityKind(o)]}
+                          {o.archived ? ' · Архив' : ''}
+                        </small>
+                      </button>
+                      {diagram && <Link href={`/diagrams/${diagram.id}`}>Открыть диаграмму →</Link>}
+                    </article>
+                  );
+                })}
             </div>
             {children.length === 0 && (
               <p className="muted">На этом уровне пока нет дочерних элементов.</p>

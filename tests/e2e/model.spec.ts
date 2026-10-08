@@ -1489,6 +1489,13 @@ test('browser: distinct tree actions, collapsible panels, detach and rebind arro
   await row.getByRole('button', { name: 'Найти объект Источник', exact: true }).click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
   const folder = page.getByRole('button', { name: 'Связи объекта Источник', exact: true });
+  const relationFolder = folder.locator('..');
+  await expect(relationFolder).toHaveAttribute('data-folder-id', `relations:${a.id}`);
+  await expect(relationFolder.locator('..').locator(':scope > :nth-child(2)')).toHaveAttribute(
+    'data-folder-id',
+    `relations:${a.id}`,
+  );
+  await expect(relationFolder.locator(`[data-relation-reference="${original.id}"]`)).toHaveCount(1);
   await folder.click();
   await expect(folder).toHaveAttribute('aria-expanded', 'false');
   await folder.click();
@@ -2027,6 +2034,68 @@ test('solution hierarchy: decomposition, reuse, migration-compatible roots and s
   await foreign.dispose();
 });
 
+test('browser: system relation folders keep owned links inside the hierarchy without cycles', async ({
+  request,
+  page,
+}) => {
+  await login(request, page);
+  const owner = await object(request, 'Владелец связей');
+  const child = await object(request, 'Участник внутри связи', owner.id);
+  let d = await create(request);
+  d = await place(request, d, owner.id);
+  d = await place(request, d, child.id);
+  d = await save(request, d, {
+    ...d.document,
+    edges: [
+      {
+        id: 'owned-link',
+        bindingId: d.document.bindings[0].id,
+        typeId: 'flow',
+        source: d.document.nodes[0].id,
+        target: d.document.nodes[1].id,
+        sourcePort: 'out',
+        targetPort: 'in',
+        properties: { label: 'Дочерняя связь' },
+      },
+    ],
+  });
+  const relation = d.document.relations![0];
+  expect(
+    (
+      await request.patch(`/api/relations/${relation.id}`, {
+        data: { revision: relation.revision, parentId: owner.id },
+      })
+    ).status(),
+  ).toBe(200);
+  expect(
+    (
+      await request.patch(`/api/objects/${child.id}`, {
+        data: { revision: child.revision, parentId: relation.id },
+      })
+    ).status(),
+  ).toBe(200);
+  await page.goto(`/solutions?parent=${owner.id}`);
+  const folder = page.locator(
+    `.solutions-tree .system-relation-folder[data-parent-id="${owner.id}"]`,
+  );
+  await expect(folder).toHaveAttribute('aria-level', '2');
+  await expect(folder.locator('..').locator(':scope > :nth-child(2)')).toHaveAttribute(
+    'data-folder-id',
+    `relations:${owner.id}`,
+  );
+  await expect(folder.locator(':scope > [role="group"] > [role="treeitem"]')).toHaveCount(1);
+  await expect(folder).toContainText('Участник внутри связи');
+  await expect(
+    page.locator(
+      `.solution-content .system-relation-folder[data-parent-id="${owner.id}"] > button`,
+    ),
+  ).toHaveText('Связи (1)');
+  await folder.getByRole('button', { name: 'Связи объекта Владелец связей', exact: true }).click();
+  await expect(folder).toHaveAttribute('aria-expanded', 'false');
+  await folder.getByRole('button', { name: 'Связи объекта Владелец связей', exact: true }).click();
+  await expect(folder).toHaveAttribute('aria-expanded', 'true');
+});
+
 test('browser: solutions, projects, decomposition diagrams and representation deep links', async ({
   request,
   page,
@@ -2065,6 +2134,10 @@ test('browser: solutions, projects, decomposition diagrams and representation de
     `.solutions-tree .representation-folder[data-parent-id="${product.id}"]`,
   );
   await expect(treeFolder).toHaveAttribute('aria-level', '4');
+  const treeRelations = treeFolder.locator('..').locator(':scope > :nth-child(2)');
+  await expect(treeRelations).toHaveAttribute('data-folder-id', `relations:${product.id}`);
+  await expect(treeRelations).toHaveAttribute('aria-level', '4');
+  await expect(treeRelations.getByRole('button')).toHaveText('Связи (0)');
   await expect(treeFolder.locator('..')).toHaveClass('hierarchy-children');
   await expect(treeFolder.locator('..').locator(':scope > :first-child')).toHaveAttribute(
     'data-folder-id',
@@ -2092,6 +2165,11 @@ test('browser: solutions, projects, decomposition diagrams and representation de
   const folder = row.locator('..').locator(':scope > [role="group"] > .representation-folder');
   await expect(folder).toHaveAttribute('data-parent-id', product.id);
   await expect(folder).toHaveAttribute('aria-level', '4');
+  const objectRelations = folder.locator('..').locator(':scope > :nth-child(2)');
+  await expect(objectRelations).toHaveAttribute('data-folder-id', `relations:${product.id}`);
+  await expect(objectRelations).toHaveAttribute('aria-level', '4');
+  await expect(objectRelations.getByRole('button')).toHaveText('Связи (0)');
+  await expect(objectRelations.getByRole('button', { name: /Удалить/ })).toHaveCount(0);
   await expect(folder.locator('..').locator(':scope > :first-child')).toHaveAttribute(
     'data-folder-id',
     `representations:${product.id}`,
@@ -2128,6 +2206,8 @@ test('browser: solutions, projects, decomposition diagrams and representation de
   expect(moved.status()).toBe(200);
   await page.reload();
   await expect(treeFolder).toHaveAttribute('aria-level', '3');
+  await expect(treeRelations).toHaveAttribute('data-folder-id', `relations:${product.id}`);
+  await expect(treeRelations).toHaveAttribute('aria-level', '3');
   await treeFolder.locator('summary').click();
   await expect(treeFolder.locator('a')).toHaveCount(2);
 });
