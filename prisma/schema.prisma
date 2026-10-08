@@ -58,6 +58,7 @@ model NotationVersion {
 }
 model Diagram {
   shareToken String? @unique
+  shareEnabled Boolean @default(false)
   id String @id @default(cuid())
   ownerId String
   owner User @relation(fields: [ownerId], references: [id], onDelete: Cascade)

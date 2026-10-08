@@ -468,23 +468,31 @@ async function handle(req: NextRequest, context: { params: Promise<{ path: strin
       if (action === 'share') {
         if (method === 'GET')
           return json({
-            enabled: !!d.shareToken,
+            enabled: d.shareEnabled,
             path: d.shareToken ? `/view/${d.shareToken}` : null,
           });
         if (method === 'POST') {
           const input = z
             .object({ enabled: z.boolean(), rotate: z.boolean().optional() })
             .parse(await body(req));
-          const token = input.enabled
-            ? input.rotate || !d.shareToken
-              ? randomBytes(32).toString('base64url')
-              : d.shareToken
-            : null;
-          await db.diagram.updateMany({
+          // Initialize once without replacing a link created concurrently in another tab.
+          if (input.enabled && !d.shareToken && !input.rotate) {
+            await db.diagram.updateMany({
+              where: { id, ownerId: user.id, shareToken: null },
+              data: { shareToken: randomBytes(32).toString('base64url') },
+            });
+          }
+          const updated = await db.diagram.update({
             where: { id, ownerId: user.id },
-            data: { shareToken: token },
+            data: {
+              shareEnabled: input.enabled,
+              ...(input.rotate ? { shareToken: randomBytes(32).toString('base64url') } : {}),
+            },
           });
-          return json({ enabled: !!token, path: token ? `/view/${token}` : null });
+          return json({
+            enabled: updated.shareEnabled,
+            path: updated.shareToken ? `/view/${updated.shareToken}` : null,
+          });
         }
         fail(405, 'Метод не поддерживается');
       }

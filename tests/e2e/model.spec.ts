@@ -1630,6 +1630,26 @@ test('sharing: owner controls anonymous access, scope, rotation and revocation',
     expect((await anonymous.get(`/api/public/${newToken}`)).status()).toBe(200);
     await request.post(`/api/diagrams/${d.id}/share`, { data: { enabled: false } });
     expect((await anonymous.get(`/api/public/${newToken}`)).status()).toBe(404);
+    const disabled = await (await request.get(`/api/diagrams/${d.id}/share`)).json();
+    expect(disabled).toEqual({ enabled: false, path: rotated.path });
+    const reenabled = await (
+      await request.post(`/api/diagrams/${d.id}/share`, { data: { enabled: true } })
+    ).json();
+    expect(reenabled).toEqual({ enabled: true, path: rotated.path });
+    expect((await anonymous.get(`/api/public/${newToken}`)).status()).toBe(200);
+    const inactiveRotation = await (
+      await request.post(`/api/diagrams/${d.id}/share`, { data: { enabled: false, rotate: true } })
+    ).json();
+    expect(inactiveRotation.enabled).toBe(false);
+    expect(inactiveRotation.path).not.toBe(rotated.path);
+    const inactiveToken = inactiveRotation.path.split('/').pop();
+    expect((await anonymous.get(`/api/public/${newToken}`)).status()).toBe(404);
+    expect((await anonymous.get(`/api/public/${inactiveToken}`)).status()).toBe(404);
+    const final = await (
+      await request.post(`/api/diagrams/${d.id}/share`, { data: { enabled: true } })
+    ).json();
+    expect(final.path).toBe(inactiveRotation.path);
+    expect((await anonymous.get(`/api/public/${inactiveToken}`)).status()).toBe(200);
   } finally {
     await anonymous.dispose();
     await foreign.dispose();
@@ -1746,4 +1766,37 @@ test('browser: share viewer deep links, read-only controls and PNG JPEG PDF expo
   await page.getByRole('button', { name: 'Закрыть', exact: true }).click();
   await page.getByRole('button', { name: 'Экспорт', exact: true }).click();
   await expect(page.getByRole('button', { name: 'JSON', exact: true })).toBeVisible();
+});
+
+test('browser: persistent share link and explicit regeneration while access is disabled', async ({
+  page,
+  request,
+}) => {
+  await login(request, page);
+  const d = await create(request, 'Постоянная ссылка');
+  await page.goto(`/diagrams/${d.id}`);
+  await page.getByRole('button', { name: 'Поделиться', exact: true }).click();
+  await page.getByRole('button', { name: 'Сгенерировать новую', exact: true }).click();
+  const field = page.getByLabel('Публичная ссылка', { exact: true });
+  await expect(field).toHaveValue(/\/view\//);
+  const original = await field.inputValue();
+  const access = page.getByLabel('Доступ по ссылке', { exact: true });
+  await expect(access).not.toBeChecked();
+  await access.check();
+  await expect(access).toBeEnabled();
+  await expect(field).toHaveValue(original);
+  await access.uncheck();
+  await expect(access).toBeEnabled();
+  await expect(field).toHaveValue(original);
+  await page.getByRole('button', { name: 'Закрыть', exact: true }).click();
+  await page.getByRole('button', { name: 'Поделиться', exact: true }).click();
+  await expect(field).toHaveValue(original);
+  await expect(access).not.toBeChecked();
+  await page.getByRole('button', { name: 'Сгенерировать новую', exact: true }).click();
+  await expect(field).not.toHaveValue(original);
+  const regenerated = await field.inputValue();
+  await expect(access).not.toBeChecked();
+  await access.check();
+  await expect(access).toBeEnabled();
+  await expect(field).toHaveValue(regenerated);
 });

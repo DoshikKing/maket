@@ -31,7 +31,7 @@ export function ShareDialog({
   }, [id]);
   async function change(enabled: boolean, rotate = false) {
     const previous = sharing;
-    setSharing((s) => (s ? { ...s, enabled, path: enabled ? s.path : null } : s));
+    setSharing((s) => (s ? { ...s, enabled } : s));
     setBusy(true);
     setError('');
     setCopied('');
@@ -100,14 +100,21 @@ export function ShareDialog({
           <a href={url} target="_blank" rel="noreferrer">
             Открыть вьюер
           </a>
-          <button className="secondary" disabled={busy} onClick={() => void change(true, true)}>
-            Заменить ссылку
-          </button>
           <small className="muted">
-            Замена или отключение ссылки закрывает доступ по прежнему адресу.
+            Отключение доступа сохраняет адрес. Новая ссылка делает прежний адрес недействительным.
           </small>
         </div>
       )}
+      {sharing && (
+        <button
+          className="secondary"
+          disabled={busy}
+          onClick={() => void change(sharing.enabled, true)}
+        >
+          Сгенерировать новую
+        </button>
+      )}
+      {sharing && !sharing.enabled && <p className="muted">Доступ по ссылке отключён.</p>}
       {copied && <p role="status">{copied}</p>}
       {error && (
         <p role="alert" className="error">
