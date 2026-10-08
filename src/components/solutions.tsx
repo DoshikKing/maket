@@ -160,9 +160,12 @@ export function SolutionsPage() {
             role={level ? 'treeitem' : undefined}
             aria-level={level ? level + 1 : undefined}
           >
-            <button className="solution-tree-select" onClick={() => select(r.id)}>
-              <GitBranch size={16} />
-              <span>
+            <button
+              className="solution-tree-select tree-row tree-row-leaf"
+              onClick={() => select(r.id)}
+            >
+              <GitBranch className="tree-icon" size={16} />
+              <span className="tree-label">
                 {r.name}
                 <small>{r.parentId === id ? 'Дочерняя связь' : 'Ссылка'}</small>
               </span>
@@ -202,7 +205,7 @@ export function SolutionsPage() {
             aria-expanded={hasChildren ? !collapsed : undefined}
           >
             <div
-              className={`solution-tree-row ${selected?.id === o.id ? 'selected' : ''}`}
+              className={`solution-tree-row tree-row ${selected?.id === o.id ? 'selected' : ''}`}
               title={`${entityLabels[entityKind(o)]} · Родитель: ${entities.find((p) => p.id === o.parentId)?.name ?? 'Корень пространства'}`}
               draggable={!o.archived}
               onDragStart={(e) => {
@@ -222,7 +225,7 @@ export function SolutionsPage() {
               }}
             >
               <button
-                className="icon-button"
+                className="icon-button tree-toggle"
                 aria-label={`${collapsed ? 'Развернуть' : 'Свернуть'} ${o.name}`}
                 disabled={!hasChildren}
                 onClick={() =>
@@ -242,10 +245,15 @@ export function SolutionsPage() {
                   }}
                 />
               </button>
-              <button className="solution-tree-select" onClick={() => select(o.id)}>
-                <Icon size={16} />
+              <button
+                className="solution-tree-select tree-label"
+                aria-label={o.name}
+                onClick={() => select(o.id)}
+              >
+                <Icon className="tree-icon" size={16} />
                 <span>
                   {o.name}
+                  <small>{entityLabels[entityKind(o)]}</small>
                   {o.archived && <small>Архив</small>}
                 </span>
               </button>
@@ -289,9 +297,12 @@ export function SolutionsPage() {
                           }
                         }}
                       >
-                        <button className="solution-tree-select" onClick={() => select(r.id)}>
-                          <GitBranch size={16} />
-                          <span>
+                        <button
+                          className="solution-tree-select tree-row tree-row-leaf"
+                          onClick={() => select(r.id)}
+                        >
+                          <GitBranch className="tree-icon" size={16} />
+                          <span className="tree-label">
                             {r.name}
                             <small>{r.parentId === o.id ? 'Дочерняя связь' : 'Ссылка'}</small>
                           </span>

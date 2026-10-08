@@ -2573,12 +2573,6 @@ body {
   color: inherit;
   text-align: left;
 }
-.object-relation-reference button:first-child {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
 .object-relation-reference small {
   display: block;
 }
@@ -2884,28 +2878,15 @@ body {
   font-size: 12px;
 }
 .representation-folder {
-  margin: 8px 0;
-  padding: 8px 12px;
+  margin: 4px 0;
+  padding: 0;
   font-size: 12px;
 }
 .representation-folder summary {
-  cursor: pointer;
-  color: var(--muted);
+  list-style: none;
 }
-.representation-folder summary svg {
-  vertical-align: middle;
-  margin: 0 5px;
-}
-.representation-folder a {
-  display: flex;
-  gap: 7px;
-  align-items: center;
-  padding: 8px 0;
-}
-.representation-folder a small {
-  display: block;
-  margin-top: 3px;
-  color: var(--muted);
+.representation-folder summary::-webkit-details-marker {
+  display: none;
 }
 @media (max-width: 1000px) {
   .solutions-layout {
@@ -2990,28 +2971,127 @@ body {
   background: var(--accent-soft);
   box-shadow: inset 3px 0 var(--accent);
 }
-.hierarchy-children > .representation-folder {
-  margin: 4px 0;
-  padding: 6px 4px;
-}
-.hierarchy-children > .representation-folder::before {
-  top: 14px;
-}
 .representation-folder > .hierarchy-children:empty {
   display: none;
-}
-.relation-folder {
-  font-size: 12px;
-  font-weight: 600;
-  background: var(--hover);
-  border: 1px solid var(--border);
-  border-radius: 6px;
 }
 .system-relation-folder {
   margin: 4px 0;
 }
-.system-relation-folder > p {
-  margin: 6px 0 8px 22px;
+.system-relation-folder > p,
+.representation-folder > p {
+  margin: 6px 0 8px 52px;
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+/* All hierarchy entries share the same row, label, icon and disclosure styling. */
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 4px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+.tree-row:hover,
+.tree-row:focus-within {
+  background: var(--hover);
+}
+.tree-row.selected {
+  background: var(--accent-soft);
+  box-shadow: inset 3px 0 var(--accent);
+}
+.tree-row:focus-visible,
+.tree-row .tree-label:focus-visible,
+.tree-row .tree-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.tree-row .tree-label {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.tree-row .tree-label small {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 400;
+  line-height: 1.4;
+}
+.tree-row.solution-tree-select,
+.tree-row .solution-tree-select {
+  gap: 6px;
+}
+.tree-row .object-tree-actions button {
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 3px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+}
+.tree-row .object-tree-actions button:hover {
+  background: var(--accent-soft);
+}
+.tree-row:hover .object-tree-actions,
+.tree-row:focus-within .object-tree-actions {
+  opacity: 1;
+}
+.object-relation-reference.tree-row {
+  flex-wrap: wrap;
+}
+.tree-icon {
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+  color: var(--accent);
+}
+.tree-row > .tree-toggle,
+.tree-row-leaf::before {
+  flex: 0 0 20px;
+  width: 20px;
+  height: 20px;
+}
+.tree-row > .tree-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+}
+.tree-row-leaf::before {
+  content: '';
+}
+.tree-row .tree-count {
+  flex-shrink: 0;
+  padding: 2px 6px;
+  border-radius: 5px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 400;
 }
 .viewer-tree ul ul {
   position: relative;

@@ -26,14 +26,17 @@ export function RelationFolder({
       aria-expanded={!closed}
     >
       <button
-        className="relation-folder"
+        className="relation-folder tree-row"
         aria-label={`Связи объекта ${name}`}
         aria-expanded={!closed}
         title="Системная папка связей владельца. Удаление папки недоступно."
         onClick={() => setClosed((prev) => !prev)}
       >
-        <ChevronRight size={13} style={{ transform: closed ? 'none' : 'rotate(90deg)' }} />
-        <Folder size={14} /> Связи ({count})
+        <span className="tree-toggle" aria-hidden="true">
+          <ChevronRight size={14} style={{ transform: closed ? 'none' : 'rotate(90deg)' }} />
+        </span>
+        <Folder className="tree-icon" size={16} />
+        <span className="tree-label">Связи</span> <span className="tree-count">({count})</span>
       </button>
       {!closed &&
         (count ? (

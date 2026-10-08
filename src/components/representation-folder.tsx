@@ -1,7 +1,7 @@
 'use client';
 import { useState } from 'react';
 import Link from 'next/link';
-import { Folder, Layers } from 'lucide-react';
+import { ChevronRight, Folder, Layers } from 'lucide-react';
 import { api } from '@/lib/client';
 import type { Representation } from '@/lib/structure';
 export function RepresentationFolder({
@@ -51,8 +51,16 @@ export function RepresentationFolder({
         }
       }}
     >
-      <summary title="Системная папка представлений владельца. Удаление папки недоступно.">
-        <Folder size={14} /> Представления {representations ? `(${representations.length})` : ''}
+      <summary
+        className="tree-row"
+        title="Системная папка представлений владельца. Удаление папки недоступно."
+      >
+        <span className="tree-toggle" aria-hidden="true">
+          <ChevronRight size={14} style={{ transform: open ? 'rotate(90deg)' : 'none' }} />
+        </span>
+        <Folder className="tree-icon" size={16} />
+        <span className="tree-label">Представления</span>{' '}
+        {representations && <span className="tree-count">({representations.length})</span>}
       </summary>
       {error && (
         <p className="error" role="alert">
@@ -72,6 +80,7 @@ export function RepresentationFolder({
             aria-level={level ? level + 1 : undefined}
           >
             <Link
+              className="tree-row tree-row-leaf"
               href={`/diagrams/${r.diagramId}?element=${encodeURIComponent(r.id)}`}
               onClick={(e) => {
                 if (onLocate) {
@@ -80,8 +89,8 @@ export function RepresentationFolder({
                 }
               }}
             >
-              <Layers size={13} />
-              <span>
+              <Layers className="tree-icon" size={16} />
+              <span className="tree-label">
                 {r.name}
                 <small>
                   {r.diagramName} · {r.notation} · {r.type}

@@ -1,6 +1,15 @@
 'use client';
 import { useState } from 'react';
-import { FolderPlus, Plus, Pencil, Trash2, Archive, Copy, LocateFixed } from 'lucide-react';
+import {
+  FolderPlus,
+  Plus,
+  Pencil,
+  Trash2,
+  Archive,
+  Copy,
+  LocateFixed,
+  GitBranch,
+} from 'lucide-react';
 import { api, date } from '@/lib/client';
 import {
   attributesSchema,
@@ -390,7 +399,7 @@ export function RelationBrowser({
         .map((r) => (
           <div key={r.id}>
             <div
-              className={`object-tree-row ${r.archived ? 'archived' : ''}`}
+              className={`object-tree-row tree-row tree-row-leaf ${r.archived ? 'archived' : ''}`}
               data-model-relation-id={r.id}
               draggable={!r.archived}
               onDragStart={(e) => {
@@ -419,8 +428,9 @@ export function RelationBrowser({
               }}
               key={r.id}
             >
+              <GitBranch className="tree-icon" size={16} />
               <button
-                className="object-tree-name"
+                className="object-tree-name tree-label"
                 onClick={() => onLocate(r.id)}
                 onDoubleClick={() => onEdit(r)}
                 title={r.name}
@@ -431,7 +441,7 @@ export function RelationBrowser({
                   {name(r.sourceId)} → {name(r.targetId)}
                 </small>
               </button>
-              <span className="badge">{counts.get(r.id) ?? 0}</span>
+              <span className="badge tree-count">{counts.get(r.id) ?? 0}</span>
               <div className="object-tree-actions">
                 <button
                   aria-label={`Создать дочерний объект связи ${r.name}`}

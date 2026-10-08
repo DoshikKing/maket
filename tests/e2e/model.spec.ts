@@ -2075,6 +2075,9 @@ test('browser: system relation folders keep owned links inside the hierarchy wit
     ).status(),
   ).toBe(200);
   await page.goto(`/solutions?parent=${owner.id}`);
+  await expect(page.getByRole('heading', { name: owner.name, exact: true })).toBeVisible({
+    timeout: 15000,
+  });
   const folder = page.locator(
     `.solutions-tree .system-relation-folder[data-parent-id="${owner.id}"]`,
   );
@@ -2094,6 +2097,10 @@ test('browser: system relation folders keep owned links inside the hierarchy wit
   await expect(folder).toHaveAttribute('aria-expanded', 'false');
   await folder.getByRole('button', { name: 'Связи объекта Владелец связей', exact: true }).click();
   await expect(folder).toHaveAttribute('aria-expanded', 'true');
+  await page
+    .locator(`.solutions-tree .representation-folder[data-parent-id="${owner.id}"] > summary`)
+    .click();
+  await page.screenshot({ path: 'test-results/hierarchy-style-relations.png', fullPage: true });
 });
 
 test('browser: solutions, projects, decomposition diagrams and representation deep links', async ({

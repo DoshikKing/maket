@@ -449,12 +449,12 @@ export function ObjectTree({
         {linked.map((r) => (
           <div key={r.id} role="treeitem" aria-level={level + 1}>
             <button
-              className="solution-tree-select"
+              className="solution-tree-select tree-row tree-row-leaf"
               onClick={() => onRelationLocate?.(r.id)}
               onDoubleClick={() => onRelationEdit?.(r)}
             >
-              <GitBranch size={14} />
-              <span>
+              <GitBranch className="tree-icon" size={16} />
+              <span className="tree-label">
                 {r.name}
                 <small>{r.parentId === id ? 'Дочерняя связь' : 'Ссылка'}</small>
               </span>
@@ -507,7 +507,7 @@ export function ObjectTree({
             aria-selected={selectedId === o.id}
           >
             <div
-              className={`object-tree-row ${selectedId === o.id ? 'selected' : ''} ${o.archived ? 'archived' : ''}`}
+              className={`object-tree-row tree-row ${selectedId === o.id ? 'selected' : ''} ${o.archived ? 'archived' : ''}`}
               title={`${entityLabels[kind]} · Родитель: ${entities.find((p) => p.id === o.parentId)?.name ?? 'Корень пространства'}`}
               draggable={!o.archived}
               data-object-id={o.id}
@@ -540,7 +540,7 @@ export function ObjectTree({
               }}
             >
               <button
-                className="tree-expander"
+                className="tree-expander tree-toggle"
                 aria-label={`${closed ? 'Развернуть' : 'Свернуть'} ${o.name}`}
                 disabled={!children}
                 onClick={() =>
@@ -560,9 +560,9 @@ export function ObjectTree({
                   }}
                 />
               </button>
-              <Icon className="tree-entity-icon" size={15} aria-hidden="true" />
+              <Icon className="tree-entity-icon tree-icon" size={16} aria-hidden="true" />
               <button
-                className="object-tree-name"
+                className="object-tree-name tree-label"
                 aria-label={o.name}
                 title={`${o.name} · Родитель: ${entities.find((p) => p.id === o.parentId)?.name ?? 'Корень пространства'}`}
                 onClick={() => {
@@ -577,7 +577,7 @@ export function ObjectTree({
                 <small>{entityLabels[kind]}</small>
                 {o.archived && <small>Архив</small>}
               </button>
-              <span className="badge">{counts.get(o.id) ?? 0}</span>
+              <span className="badge tree-count">{counts.get(o.id) ?? 0}</span>
               <div className="object-tree-actions">
                 <Link
                   href={`/solutions?parent=${o.id}`}
@@ -748,15 +748,18 @@ export function ObjectTree({
                               void move(id, r.id);
                             }
                           }}
-                          className={`object-relation-reference ${r.archived ? 'archived' : ''}`}
+                          className={`object-relation-reference tree-row tree-row-leaf ${r.archived ? 'archived' : ''}`}
                         >
+                          <GitBranch className="tree-icon" size={16} />
                           <button
+                            className="tree-label"
                             title={`${r.name} · Родитель: ${entities.find((p) => p.id === r.parentId)?.name ?? 'Корень пространства'}`}
                             onClick={() => onRelationLocate?.(r.id)}
                             onDoubleClick={() => onRelationEdit?.(r)}
                           >
-                            {r.sourceId === o.id ? '→' : '←'} {r.name}
+                            {r.name}
                             <small>
+                              {r.sourceId === o.id ? '→ ' : '← '}
                               {
                                 entities.find(
                                   (x) => x.id === (r.sourceId === o.id ? r.targetId : r.sourceId),
@@ -765,28 +768,30 @@ export function ObjectTree({
                               {r.parentId === o.id ? ' · Дочерняя связь' : ' · Ссылка'}
                             </small>
                           </button>
-                          <button
-                            aria-label={`Вернуть представление связи ${r.name}`}
-                            title="Разместить стрелку на диаграмме"
-                            disabled={r.archived}
-                            onClick={() => onRelationPlace?.(r)}
-                          >
-                            <Plus size={12} />
-                          </button>
-                          <button
-                            aria-label={`Создать дочерний объект связи ${r.name}`}
-                            title="Создать дочерний объект"
-                            disabled={r.archived}
-                            onClick={() => setEditing({ parentId: r.id })}
-                          >
-                            <FolderPlus size={12} />
-                          </button>
-                          <button
-                            aria-label={`Свойства вложенной связи ${r.name}`}
-                            onClick={() => onRelationEdit?.(r)}
-                          >
-                            <Pencil size={12} />
-                          </button>
+                          <div className="object-tree-actions">
+                            <button
+                              aria-label={`Вернуть представление связи ${r.name}`}
+                              title="Разместить стрелку на диаграмме"
+                              disabled={r.archived}
+                              onClick={() => onRelationPlace?.(r)}
+                            >
+                              <Plus size={12} />
+                            </button>
+                            <button
+                              aria-label={`Создать дочерний объект связи ${r.name}`}
+                              title="Создать дочерний объект"
+                              disabled={r.archived}
+                              onClick={() => setEditing({ parentId: r.id })}
+                            >
+                              <FolderPlus size={12} />
+                            </button>
+                            <button
+                              aria-label={`Свойства вложенной связи ${r.name}`}
+                              onClick={() => onRelationEdit?.(r)}
+                            >
+                              <Pencil size={12} />
+                            </button>
+                          </div>
                         </div>
                         <div className="hierarchy-children">
                           <RepresentationFolder
