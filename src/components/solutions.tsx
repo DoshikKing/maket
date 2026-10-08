@@ -148,12 +148,13 @@ export function SolutionsPage() {
           <div
             key={o.id}
             role="treeitem"
+            aria-level={depth + 1}
             aria-selected={selected?.id === o.id}
             aria-expanded={hasChildren ? !collapsed : undefined}
           >
             <div
               className={`solution-tree-row ${selected?.id === o.id ? 'selected' : ''}`}
-              style={{ paddingLeft: depth * 16 + 6 }}
+              title={`${entityLabels[entityKind(o)]} · Родитель: ${entities.find((p) => p.id === o.parentId)?.name ?? 'Корень пространства'}`}
               draggable={!o.archived}
               onDragStart={(e) => e.dataTransfer.setData('application/maket-entity', o.id)}
               onDragOver={(e) => {
@@ -198,7 +199,7 @@ export function SolutionsPage() {
               </button>
             </div>
             {hasChildren && !collapsed && (
-              <div role="group">
+              <div role="group" className="hierarchy-children">
                 {tree(o.id, depth + 1)}
                 {!['folder', 'diagram'].includes(o.kind ?? 'object') && (
                   <RepresentationFolder entityId={o.id} items={space?.representations} />

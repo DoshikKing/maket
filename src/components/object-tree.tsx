@@ -12,6 +12,10 @@ import {
   Folder,
   Trash2,
   GitBranch,
+  Box,
+  Network,
+  Workflow,
+  FileText,
 } from 'lucide-react';
 import { api, date } from '@/lib/client';
 import {
@@ -452,6 +456,15 @@ export function ObjectTree({
             (r.sourceId === o.id || r.targetId === o.id || r.parentId === o.id) &&
             !ancestors.has(r.id),
         );
+        const kind = relationIds.has(o.id) ? 'relation' : (o.kind ?? 'object');
+        const Icon = {
+          object: Box,
+          solution: Network,
+          project: Workflow,
+          folder: Folder,
+          diagram: FileText,
+          relation: GitBranch,
+        }[kind];
         const representable = !['folder', 'diagram'].includes(o.kind ?? 'object');
         const children =
             entities.some((c) => c.parentId === o.id) || linked.length > 0 || representable,
@@ -460,12 +473,13 @@ export function ObjectTree({
           <div
             key={o.id}
             role="treeitem"
+            aria-level={depth + 1}
             aria-expanded={children ? !closed : undefined}
             aria-selected={selectedId === o.id}
           >
             <div
               className={`object-tree-row ${selectedId === o.id ? 'selected' : ''} ${o.archived ? 'archived' : ''}`}
-              style={{ paddingLeft: 8 + depth * 12 }}
+              title={`${entityLabels[kind]} · Родитель: ${entities.find((p) => p.id === o.parentId)?.name ?? 'Корень пространства'}`}
               draggable={!o.archived}
               data-object-id={o.id}
               onDragStart={(e) => {
@@ -517,9 +531,11 @@ export function ObjectTree({
                   }}
                 />
               </button>
+              <Icon className="tree-entity-icon" size={15} aria-hidden="true" />
               <button
                 className="object-tree-name"
-                title={o.name}
+                aria-label={o.name}
+                title={`${o.name} · Родитель: ${entities.find((p) => p.id === o.parentId)?.name ?? 'Корень пространства'}`}
                 onClick={() => {
                   const d = diagrams.find((d) => d.entityId === o.id);
                   if (d) window.location.assign(`/diagrams/${d.id}`);
@@ -529,7 +545,7 @@ export function ObjectTree({
                 onDoubleClick={() => editEntity(o)}
               >
                 {o.name}
-                {o.kind && o.kind !== 'object' && <small>{entityLabels[o.kind]}</small>}
+                <small>{entityLabels[kind]}</small>
                 {o.archived && <small>Архив</small>}
               </button>
               <span className="badge">{counts.get(o.id) ?? 0}</span>
@@ -652,7 +668,8 @@ export function ObjectTree({
               </div>
             </div>
             {children && !closed && (
-              <div role="group">
+              <div role="group" className="hierarchy-children">
+                {branch(o.id, depth + 1, new Set([...ancestors, o.id]), true)}
                 {representable && (
                   <RepresentationFolder
                     resource={relationIds.has(o.id) ? 'relations' : 'objects'}
@@ -662,14 +679,12 @@ export function ObjectTree({
                     onLocate={onRepresentationLocate}
                   />
                 )}
-                {branch(o.id, depth + 1, new Set([...ancestors, o.id]), true)}
                 {linked.length > 0 && (
                   <div role="treeitem" aria-expanded={!closedLinks.has(o.id)}>
                     <button
                       className="relation-folder"
                       aria-label={`Связи объекта ${o.name}`}
                       aria-expanded={!closedLinks.has(o.id)}
-                      style={{ paddingLeft: 20 + (depth + 1) * 12 }}
                       onClick={() =>
                         setClosedLinks((prev) => {
                           const next = new Set(prev);
@@ -686,7 +701,7 @@ export function ObjectTree({
                       <Folder size={14} /> Связи ({linked.length})
                     </button>
                     {!closedLinks.has(o.id) && (
-                      <div role="group">
+                      <div role="group" className="hierarchy-children">
                         {linked.map((r) => (
                           <div key={r.id}>
                             <div
@@ -721,10 +736,9 @@ export function ObjectTree({
                                 }
                               }}
                               className={`object-relation-reference ${r.archived ? 'archived' : ''}`}
-                              style={{ paddingLeft: 20 + (depth + 1) * 12 }}
                             >
                               <button
-                                title={r.name}
+                                title={`${r.name} · Родитель: ${entities.find((p) => p.id === r.parentId)?.name ?? 'Корень пространства'}`}
                                 onClick={() => onRelationLocate?.(r.id)}
                                 onDoubleClick={() => onRelationEdit?.(r)}
                               >
@@ -736,6 +750,7 @@ export function ObjectTree({
                                         x.id === (r.sourceId === o.id ? r.targetId : r.sourceId),
                                     )?.name
                                   }
+                                  {r.parentId === o.id ? ' · Дочерняя связь' : ' · Ссылка'}
                                 </small>
                               </button>
                               <button
@@ -761,14 +776,16 @@ export function ObjectTree({
                                 <Pencil size={12} />
                               </button>
                             </div>
-                            <RepresentationFolder
-                              resource="relations"
-                              entityId={r.id}
-                              localItems={representations}
-                              currentDiagramId={diagramId}
-                              onLocate={onRepresentationLocate}
-                            />
-                            {branch(r.id, depth + 2, new Set([...ancestors, o.id, r.id]))}
+                            <div className="hierarchy-children">
+                              <RepresentationFolder
+                                resource="relations"
+                                entityId={r.id}
+                                localItems={representations}
+                                currentDiagramId={diagramId}
+                                onLocate={onRepresentationLocate}
+                              />
+                              {branch(r.id, depth + 2, new Set([...ancestors, o.id, r.id]))}
+                            </div>
                           </div>
                         ))}
                       </div>
@@ -843,7 +860,7 @@ export function ObjectTree({
       )}
       {relationsPanel?.(
         (id) => (
-          <>
+          <div className="hierarchy-children" role="group">
             <RepresentationFolder
               resource="relations"
               entityId={id}
@@ -852,7 +869,7 @@ export function ObjectTree({
               onLocate={onRepresentationLocate}
             />
             {branch(id, 1, new Set([id]))}
-          </>
+          </div>
         ),
         move,
         (id) => setEditing({ parentId: id }),

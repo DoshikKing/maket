@@ -2931,3 +2931,98 @@ body {
 .solution-create select {
   width: auto;
 }
+
+/* Child groups carry the indentation, so every descendant shares its parent's guide. */
+.hierarchy-children {
+  position: relative;
+  margin: 3px 0 8px 12px;
+  padding-left: 12px;
+  border-left: 1px solid var(--muted);
+}
+.hierarchy-children > [role='treeitem'],
+.hierarchy-children > .representation-folder,
+.hierarchy-children > div > .object-relation-reference {
+  position: relative;
+}
+.hierarchy-children > [role='treeitem']::before,
+.hierarchy-children > .representation-folder::before,
+.hierarchy-children > div > .object-relation-reference::before {
+  content: '';
+  position: absolute;
+  left: -13px;
+  top: 18px;
+  width: 12px;
+  border-top: 1px solid var(--muted);
+  pointer-events: none;
+}
+.object-tree-row {
+  padding: 4px;
+  min-width: 180px;
+}
+.object-tree-name {
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.object-tree-name small {
+  font-size: 10px;
+  margin-top: 2px;
+}
+.tree-entity-icon {
+  flex-shrink: 0;
+  color: var(--accent);
+}
+.object-tree-row.selected {
+  box-shadow: inset 3px 0 var(--accent);
+}
+.object-tree-actions {
+  gap: 3px;
+}
+.solution-tree-row {
+  padding-left: 4px;
+  min-width: 180px;
+}
+.solution-tree-row.selected {
+  background: var(--accent-soft);
+  box-shadow: inset 3px 0 var(--accent);
+}
+.hierarchy-children > .representation-folder {
+  margin: 4px 0;
+  padding: 6px 4px;
+}
+.hierarchy-children > .representation-folder::before {
+  top: 14px;
+}
+.relation-folder {
+  font-size: 12px;
+  font-weight: 600;
+  background: var(--hover);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.viewer-tree ul ul {
+  position: relative;
+  margin: 3px 0 8px 12px;
+  padding-left: 18px;
+  border-left: 1px solid var(--muted);
+}
+.viewer-tree ul:empty {
+  display: none;
+}
+.viewer-tree ul ul > li {
+  position: relative;
+}
+.viewer-tree ul ul > li::before {
+  content: '';
+  position: absolute;
+  top: 16px;
+  left: -19px;
+  width: 18px;
+  border-top: 1px solid var(--muted);
+}
+@media (min-width: 1100px) {
+  .model-editor-body .object-panel {
+    width: 280px;
+    flex-basis: 280px;
+  }
+}

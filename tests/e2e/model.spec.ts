@@ -2077,6 +2077,7 @@ test('browser: solutions, projects, decomposition diagrams and representation de
   const folder = row.locator('..').locator(':scope > [role="group"] > .representation-folder');
   await folder.locator('summary').click();
   await expect(folder.locator('a')).toHaveCount(2);
+  await page.screenshot({ path: 'test-results/hierarchy-editor.png', fullPage: true });
   await folder.locator('a').first().click();
   await expect(page.locator('.react-flow__node-notation.selected')).toHaveAttribute(
     'data-id',
@@ -2086,6 +2087,7 @@ test('browser: solutions, projects, decomposition diagrams and representation de
   await row.getByRole('link', { name: 'Декомпозиция Товар' }).click();
   await expect(page.getByRole('heading', { name: 'Товар', exact: true })).toBeVisible();
   await expect(page.getByRole('link', { name: 'Открыть диаграмму →', exact: true })).toBeVisible();
+  await page.screenshot({ path: 'test-results/hierarchy-solutions.png', fullPage: true });
   await page.getByRole('button', { name: 'Свойства', exact: true }).click();
   await expect(
     page.getByLabel('Родительский объект').locator(`option[value="${product.id}"]`),
