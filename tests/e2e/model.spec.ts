@@ -2061,6 +2061,21 @@ test('browser: solutions, projects, decomposition diagrams and representation de
   await page.goto(`/solutions?parent=${product.id}`);
   await expect(page.getByRole('heading', { name: 'Товар', exact: true })).toBeVisible();
   const representations = page.locator('.solution-content .representation-folder');
+  const treeFolder = page.locator(
+    `.solutions-tree .representation-folder[data-parent-id="${product.id}"]`,
+  );
+  await expect(treeFolder).toHaveAttribute('aria-level', '4');
+  await expect(treeFolder.locator('..')).toHaveClass('hierarchy-children');
+  await expect(treeFolder.locator('..').locator(':scope > :first-child')).toHaveAttribute(
+    'data-folder-id',
+    `representations:${product.id}`,
+  );
+  const treeOwnerBox = await treeFolder
+    .locator('../..')
+    .locator(':scope > .solution-tree-row')
+    .boundingBox();
+  const treeFolderBox = await treeFolder.boundingBox();
+  expect(treeFolderBox!.x).toBeGreaterThan(treeOwnerBox!.x);
   await representations.locator('summary').click();
   await expect(representations.locator('a')).toHaveCount(2);
   await representations.locator('a').nth(1).click();
@@ -2075,8 +2090,21 @@ test('browser: solutions, projects, decomposition diagrams and representation de
   const row = page.locator(`[data-object-id="${product.id}"]`);
   await expect(row.getByRole('link', { name: 'Декомпозиция Товар' })).toBeVisible();
   const folder = row.locator('..').locator(':scope > [role="group"] > .representation-folder');
+  await expect(folder).toHaveAttribute('data-parent-id', product.id);
+  await expect(folder).toHaveAttribute('aria-level', '4');
+  await expect(folder.locator('..').locator(':scope > :first-child')).toHaveAttribute(
+    'data-folder-id',
+    `representations:${product.id}`,
+  );
   await folder.locator('summary').click();
   await expect(folder.locator('a')).toHaveCount(2);
+  await expect(folder.locator('.representation-entry').first()).toHaveAttribute('aria-level', '5');
+  const ownerBox = await row.boundingBox();
+  const folderBox = await folder.boundingBox();
+  const entryBox = await folder.locator('.representation-entry').first().boundingBox();
+  expect(folderBox!.x).toBeGreaterThan(ownerBox!.x);
+  expect(entryBox!.x).toBeGreaterThan(folderBox!.x);
+  await expect(folder.getByRole('button', { name: /Удалить/ })).toHaveCount(0);
   await page.screenshot({ path: 'test-results/hierarchy-editor.png', fullPage: true });
   await folder.locator('a').first().click();
   await expect(page.locator('.react-flow__node-notation.selected')).toHaveAttribute(
@@ -2093,4 +2121,13 @@ test('browser: solutions, projects, decomposition diagrams and representation de
     page.getByLabel('Родительский объект').locator(`option[value="${product.id}"]`),
   ).toHaveCount(0);
   await page.getByRole('button', { name: 'Закрыть', exact: true }).click();
+  const solution = structure.objects.find((o: ModelObject) => o.name === 'Магазин');
+  const moved = await request.patch(`/api/objects/${product.id}`, {
+    data: { revision: product.revision, parentId: solution.id },
+  });
+  expect(moved.status()).toBe(200);
+  await page.reload();
+  await expect(treeFolder).toHaveAttribute('aria-level', '3');
+  await treeFolder.locator('summary').click();
+  await expect(treeFolder.locator('a')).toHaveCount(2);
 });

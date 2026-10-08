@@ -200,10 +200,14 @@ export function SolutionsPage() {
             </div>
             {hasChildren && !collapsed && (
               <div role="group" className="hierarchy-children">
-                {tree(o.id, depth + 1)}
                 {!['folder', 'diagram'].includes(o.kind ?? 'object') && (
-                  <RepresentationFolder entityId={o.id} items={space?.representations} />
+                  <RepresentationFolder
+                    entityId={o.id}
+                    items={space?.representations}
+                    level={depth + 2}
+                  />
                 )}
+                {tree(o.id, depth + 1)}
               </div>
             )}
           </div>
@@ -328,6 +332,13 @@ export function SolutionsPage() {
               Дочерние элементы образуют декомпозицию. Одна сущность может иметь несколько
               представлений на разных диаграммах.
             </p>
+            {selected && !['folder', 'diagram'].includes(selected.kind ?? '') && (
+              <RepresentationFolder
+                key={selected.id}
+                entityId={selected.id}
+                items={space.representations}
+              />
+            )}
             <div className="solution-cards">
               {children.map((o) => {
                 const Icon = icons[entityKind(o)];
@@ -349,13 +360,6 @@ export function SolutionsPage() {
             </div>
             {children.length === 0 && (
               <p className="muted">На этом уровне пока нет дочерних элементов.</p>
-            )}
-            {selected && !['folder', 'diagram'].includes(selected.kind ?? '') && (
-              <RepresentationFolder
-                key={selected.id}
-                entityId={selected.id}
-                items={space.representations}
-              />
             )}
           </section>
         </div>

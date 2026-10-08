@@ -2941,11 +2941,13 @@ body {
 }
 .hierarchy-children > [role='treeitem'],
 .hierarchy-children > .representation-folder,
+.hierarchy-children > .representation-entry,
 .hierarchy-children > div > .object-relation-reference {
   position: relative;
 }
 .hierarchy-children > [role='treeitem']::before,
 .hierarchy-children > .representation-folder::before,
+.hierarchy-children > .representation-entry::before,
 .hierarchy-children > div > .object-relation-reference::before {
   content: '';
   position: absolute;
@@ -2992,6 +2994,9 @@ body {
 }
 .hierarchy-children > .representation-folder::before {
   top: 14px;
+}
+.representation-folder > .hierarchy-children:empty {
+  display: none;
 }
 .relation-folder {
   font-size: 12px;

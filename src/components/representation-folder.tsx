@@ -11,6 +11,7 @@ export function RepresentationFolder({
   localItems,
   currentDiagramId,
   onLocate,
+  level,
 }: {
   entityId: string;
   resource?: 'objects' | 'relations';
@@ -18,8 +19,10 @@ export function RepresentationFolder({
   localItems?: Representation[];
   currentDiagramId?: string;
   onLocate?: (id: string, diagramId: string) => void;
+  level?: number;
 }) {
   const [loaded, setLoaded] = useState<Representation[] | null>(null),
+    [open, setOpen] = useState(false),
     [error, setError] = useState('');
   const representations =
     items?.filter((r) => r.entityId === entityId) ??
@@ -32,7 +35,13 @@ export function RepresentationFolder({
   return (
     <details
       className="representation-folder"
+      data-parent-id={entityId}
+      data-folder-id={`representations:${entityId}`}
+      role={level ? 'treeitem' : undefined}
+      aria-level={level}
+      aria-expanded={level ? open : undefined}
       onToggle={async (e) => {
+        setOpen(e.currentTarget.open);
         if (!e.currentTarget.open || items || loaded) return;
         try {
           setLoaded(await api<Representation[]>(`${resource}/${entityId}/representations`));
@@ -42,7 +51,7 @@ export function RepresentationFolder({
         }
       }}
     >
-      <summary>
+      <summary title="Системная папка представлений владельца. Удаление папки недоступно.">
         <Folder size={14} /> Представления {representations ? `(${representations.length})` : ''}
       </summary>
       {error && (
@@ -54,26 +63,34 @@ export function RepresentationFolder({
       {representations?.length === 0 && (
         <p className="muted small-text">Пока нет представлений на диаграммах.</p>
       )}
-      {representations?.map((r) => (
-        <Link
-          key={`${r.diagramId}:${r.id}`}
-          href={`/diagrams/${r.diagramId}?element=${encodeURIComponent(r.id)}`}
-          onClick={(e) => {
-            if (onLocate) {
-              e.preventDefault();
-              onLocate(r.id, r.diagramId);
-            }
-          }}
-        >
-          <Layers size={13} />
-          <span>
-            {r.name}
-            <small>
-              {r.diagramName} · {r.notation} · {r.type}
-            </small>
-          </span>
-        </Link>
-      ))}
+      <div className="hierarchy-children" role={level ? 'group' : undefined}>
+        {representations?.map((r) => (
+          <div
+            className="representation-entry"
+            key={`${r.diagramId}:${r.id}`}
+            role={level ? 'treeitem' : undefined}
+            aria-level={level ? level + 1 : undefined}
+          >
+            <Link
+              href={`/diagrams/${r.diagramId}?element=${encodeURIComponent(r.id)}`}
+              onClick={(e) => {
+                if (onLocate) {
+                  e.preventDefault();
+                  onLocate(r.id, r.diagramId);
+                }
+              }}
+            >
+              <Layers size={13} />
+              <span>
+                {r.name}
+                <small>
+                  {r.diagramName} · {r.notation} · {r.type}
+                </small>
+              </span>
+            </Link>
+          </div>
+        ))}
+      </div>
     </details>
   );
 }

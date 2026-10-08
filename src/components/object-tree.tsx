@@ -669,16 +669,17 @@ export function ObjectTree({
             </div>
             {children && !closed && (
               <div role="group" className="hierarchy-children">
-                {branch(o.id, depth + 1, new Set([...ancestors, o.id]), true)}
                 {representable && (
                   <RepresentationFolder
                     resource={relationIds.has(o.id) ? 'relations' : 'objects'}
                     entityId={o.id}
+                    level={depth + 2}
                     localItems={representations}
                     currentDiagramId={diagramId}
                     onLocate={onRepresentationLocate}
                   />
                 )}
+                {branch(o.id, depth + 1, new Set([...ancestors, o.id]), true)}
                 {linked.length > 0 && (
                   <div role="treeitem" aria-expanded={!closedLinks.has(o.id)}>
                     <button
@@ -780,6 +781,7 @@ export function ObjectTree({
                               <RepresentationFolder
                                 resource="relations"
                                 entityId={r.id}
+                                level={depth + 4}
                                 localItems={representations}
                                 currentDiagramId={diagramId}
                                 onLocate={onRepresentationLocate}
@@ -864,6 +866,7 @@ export function ObjectTree({
             <RepresentationFolder
               resource="relations"
               entityId={id}
+              level={2}
               localItems={representations}
               currentDiagramId={diagramId}
               onLocate={onRepresentationLocate}
