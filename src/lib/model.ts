@@ -37,6 +37,7 @@ export const objectSnapshotSchema = z.object({
 });
 export type ModelObject = z.infer<typeof objectSnapshotSchema>;
 export const relationSnapshotSchema = objectSnapshotSchema.extend({
+  relationType: z.string().trim().max(100).optional(),
   parentId: id.nullable().optional(),
   sourceId: id,
   targetId: id,

@@ -2429,6 +2429,32 @@ body {
   border: 1px solid var(--border);
   border-radius: 7px;
 }
+.entity-relations {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+.entity-relations > input,
+.entity-relations select {
+  width: 100%;
+}
+.model-links-list article {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+}
+.model-links-list article > div {
+  flex: 1;
+  min-width: 180px;
+}
+.model-links-list small {
+  display: block;
+  color: var(--muted);
+  margin-top: 4px;
+}
 .model-object-summary small {
   font-size: 10px;
   color: var(--muted);

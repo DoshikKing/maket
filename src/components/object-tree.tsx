@@ -31,6 +31,8 @@ import { RelationFolder } from './relation-folder';
 import type { Representation, Structure } from '@/lib/structure';
 import { CopyOrigin } from './copy-origin';
 import { Modal } from './modal';
+import { useTreeExpansion } from './use-tree-expansion';
+import { EntityRelations } from './entity-relations';
 export function ObjectEditor({
   object,
   kind = 'object',
@@ -38,6 +40,7 @@ export function ObjectEditor({
   objects,
   onSaved,
   onClose,
+  onRelationsChanged,
 }: {
   object?: ModelObject;
   kind?: ModelObject['kind'];
@@ -45,6 +48,7 @@ export function ObjectEditor({
   objects: ModelObject[];
   onSaved: (o: ModelObject) => void;
   onClose: () => void;
+  onRelationsChanged?: () => void;
 }) {
   const [name, setName] = useState(
       object?.name ??
@@ -264,6 +268,7 @@ export function ObjectEditor({
           {busy ? 'Сохраняем…' : 'Сохранить объект'}
         </button>
       </form>
+      {object && <EntityRelations entityId={object.id} onChanged={onRelationsChanged} />}
       {object && (
         <div className="object-history">
           <button
@@ -353,6 +358,7 @@ export function ObjectTree({
   objects,
   counts,
   selectedId,
+  focusId,
   onPlace,
   onLocate,
   onSaved,
@@ -378,11 +384,14 @@ export function ObjectTree({
     children: (id: string) => React.ReactNode,
     move: (id: string, parent: string | null) => Promise<void>,
     createChild: (id: string) => void,
+    isExpanded: (id: string) => boolean,
+    toggle: (id: string) => void,
   ) => React.ReactNode;
   onRelationPlace?: (r: ModelRelation) => void;
   onRelationSaved?: (r: ModelRelation) => void;
   counts: Map<string, number>;
   selectedId?: string;
+  focusId?: string | null;
   onPlace: (id: string) => void;
   onLocate: (id: string) => void;
   onSaved: (o: ModelObject) => void;
@@ -390,12 +399,12 @@ export function ObjectTree({
   onRemove: (object: ModelObject) => Promise<void>;
 }) {
   const [query, setQuery] = useState(''),
-    [collapsed, setCollapsed] = useState(new Set<string>()),
     [editing, setEditing] = useState<{ object?: ModelObject; parentId?: string | null } | null>(
       null,
     ),
     [error, setError] = useState('');
   const entities = [...objects, ...relations.map(relationEntity)];
+  const expansion = useTreeExpansion(entities, focusId);
   const relationIds = new Set(relations.map((r) => r.id));
   const editEntity = (o: ModelObject) => {
     const r = relations.find((r) => r.id === o.id);
@@ -497,17 +506,19 @@ export function ObjectTree({
         const representable = !['folder', 'diagram'].includes(o.kind ?? 'object');
         const children =
             entities.some((c) => c.parentId === o.id) || linked.length > 0 || representable,
-          closed = collapsed.has(o.id) && !query;
+          closed = !expansion.isExpanded(o.id) && !query;
         return (
           <div
             key={o.id}
             role="treeitem"
             aria-level={depth + 1}
             aria-expanded={children ? !closed : undefined}
-            aria-selected={selectedId === o.id}
+            aria-selected={(selectedId ?? focusId) === o.id}
+            data-tree-entity={o.id}
+            aria-current={focusId === o.id ? 'page' : undefined}
           >
             <div
-              className={`object-tree-row tree-row ${selectedId === o.id ? 'selected' : ''} ${o.archived ? 'archived' : ''}`}
+              className={`object-tree-row tree-row ${(selectedId ?? focusId) === o.id ? 'selected' : ''} ${o.archived ? 'archived' : ''}`}
               title={`${entityLabels[kind]} · Родитель: ${entities.find((p) => p.id === o.parentId)?.name ?? 'Корень пространства'}`}
               draggable={!o.archived}
               data-object-id={o.id}
@@ -543,14 +554,7 @@ export function ObjectTree({
                 className="tree-expander tree-toggle"
                 aria-label={`${closed ? 'Развернуть' : 'Свернуть'} ${o.name}`}
                 disabled={!children}
-                onClick={() =>
-                  setCollapsed((prev) => {
-                    const next = new Set(prev);
-                    if (next.has(o.id)) next.delete(o.id);
-                    else next.add(o.id);
-                    return next;
-                  })
-                }
+                onClick={() => expansion.toggle(o.id)}
               >
                 <ChevronRight
                   size={13}
@@ -567,14 +571,17 @@ export function ObjectTree({
                 title={`${o.name} · Родитель: ${entities.find((p) => p.id === o.parentId)?.name ?? 'Корень пространства'}`}
                 onClick={() => {
                   const d = diagrams.find((d) => d.entityId === o.id);
-                  if (d) window.location.assign(`/diagrams/${d.id}`);
+                  if (d) window.location.assign(`/solutions?diagram=${d.id}`);
                   else if (relationIds.has(o.id)) onRelationLocate?.(o.id);
                   else onLocate(o.id);
                 }}
                 onDoubleClick={() => editEntity(o)}
               >
                 {o.name}
-                <small>{entityLabels[kind]}</small>
+                <small>
+                  {entityLabels[kind]}
+                  {focusId === o.id ? ' · Открыта' : ''}
+                </small>
                 {o.archived && <small>Архив</small>}
               </button>
               <span className="badge tree-count">{counts.get(o.id) ?? 0}</span>
@@ -614,7 +621,10 @@ export function ObjectTree({
                   aria-label={`Создать дочерний объект ${o.name}`}
                   title="Создать дочерний объект"
                   disabled={o.archived}
-                  onClick={() => setEditing({ parentId: o.id })}
+                  onClick={() => {
+                    if (!expansion.isExpanded(o.id)) expansion.toggle(o.id);
+                    setEditing({ parentId: o.id });
+                  }}
                 >
                   <FolderPlus size={12} />
                 </button>
@@ -719,6 +729,8 @@ export function ObjectTree({
                       <div key={r.id}>
                         <div
                           role="treeitem"
+                          aria-expanded={expansion.isExpanded(r.id)}
+                          aria-level={depth + 3}
                           key={r.id}
                           data-relation-reference={r.id}
                           draggable={!r.archived}
@@ -748,8 +760,20 @@ export function ObjectTree({
                               void move(id, r.id);
                             }
                           }}
-                          className={`object-relation-reference tree-row tree-row-leaf ${r.archived ? 'archived' : ''}`}
+                          className={`object-relation-reference tree-row ${r.archived ? 'archived' : ''}`}
                         >
+                          <button
+                            className="tree-toggle"
+                            aria-label={`${expansion.isExpanded(r.id) ? 'Свернуть' : 'Развернуть'} связь ${r.name}`}
+                            onClick={() => expansion.toggle(r.id)}
+                          >
+                            <ChevronRight
+                              size={14}
+                              style={{
+                                transform: expansion.isExpanded(r.id) ? 'rotate(90deg)' : undefined,
+                              }}
+                            />
+                          </button>
                           <GitBranch className="tree-icon" size={16} />
                           <button
                             className="tree-label"
@@ -793,18 +817,20 @@ export function ObjectTree({
                             </button>
                           </div>
                         </div>
-                        <div className="hierarchy-children">
-                          <RepresentationFolder
-                            resource="relations"
-                            entityId={r.id}
-                            level={depth + 4}
-                            localItems={representations}
-                            currentDiagramId={diagramId}
-                            onLocate={onRepresentationLocate}
-                          />
-                          {relationFolder(r.id, depth + 4)}
-                          {branch(r.id, depth + 3, new Set([...ancestors, o.id, r.id]), true)}
-                        </div>
+                        {expansion.isExpanded(r.id) && (
+                          <div className="hierarchy-children">
+                            <RepresentationFolder
+                              resource="relations"
+                              entityId={r.id}
+                              level={depth + 4}
+                              localItems={representations}
+                              currentDiagramId={diagramId}
+                              onLocate={onRepresentationLocate}
+                            />
+                            {relationFolder(r.id, depth + 4)}
+                            {branch(r.id, depth + 3, new Set([...ancestors, o.id, r.id]), true)}
+                          </div>
+                        )}
                       </div>
                     ))}
                   </RelationFolder>
@@ -877,25 +903,32 @@ export function ObjectTree({
         </div>
       )}
       {relationsPanel?.(
-        (id) => (
-          <div className="hierarchy-children" role="group">
-            <RepresentationFolder
-              resource="relations"
-              entityId={id}
-              level={2}
-              localItems={representations}
-              currentDiagramId={diagramId}
-              onLocate={onRepresentationLocate}
-            />
-            {relationFolder(id, 2)}
-            {branch(id, 1, new Set([id]), true)}
-          </div>
-        ),
+        (id) =>
+          expansion.isExpanded(id) && (
+            <div className="hierarchy-children" role="group">
+              <RepresentationFolder
+                resource="relations"
+                entityId={id}
+                level={2}
+                localItems={representations}
+                currentDiagramId={diagramId}
+                onLocate={onRepresentationLocate}
+              />
+              {relationFolder(id, 2)}
+              {branch(id, 1, new Set([id]), true)}
+            </div>
+          ),
         move,
-        (id) => setEditing({ parentId: id }),
+        (id) => {
+          if (!expansion.isExpanded(id)) expansion.toggle(id);
+          setEditing({ parentId: id });
+        },
+        expansion.isExpanded,
+        expansion.toggle,
       )}
       {editing && (
         <ObjectEditor
+          onRelationsChanged={onRefresh}
           object={editing.object}
           parentId={editing.parentId}
           objects={entities}

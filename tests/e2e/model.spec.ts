@@ -32,6 +32,17 @@ async function create(request: APIRequestContext, name = 'Модель'): Promis
   expect(r.status()).toBe(201);
   return r.json();
 }
+async function showObjectLinks(page: Page, o: ModelObject) {
+  const item = page.locator(`[data-tree-entity="${o.id}"]`);
+  if ((await item.getAttribute('aria-expanded')) === 'false')
+    await item
+      .locator(':scope > .object-tree-row')
+      .getByRole('button', { name: `Развернуть ${o.name}`, exact: true })
+      .click();
+  const folder = item.locator(':scope > [role="group"] > .system-relation-folder');
+  if ((await folder.getAttribute('aria-expanded')) === 'false')
+    await folder.locator(':scope > button').click();
+}
 async function object(
   request: APIRequestContext,
   name: string,
@@ -1136,6 +1147,8 @@ test('browser: relation explorer, nested references, shared arrow placement and 
   const relation = (await (await request.get('/api/model')).json()).relations[0];
   const row = page.locator(`[data-model-relation-id="${relation.id}"]`);
   await expect(row).toBeVisible();
+  await showObjectLinks(page, source);
+  await showObjectLinks(page, target);
   await expect(page.locator(`[data-relation-reference="${relation.id}"]`)).toHaveCount(2);
   for (let i = 0; i < 2; i++) {
     await row
@@ -1336,6 +1349,7 @@ test('browser: return a tree arrow, nest objects under it and connect objects to
       })
     ).status(),
   ).toBe(400);
+  await showObjectLinks(page, a);
   await primaryRow.getByRole('button', { name: 'Найти связь Переход', exact: true }).click();
   await page.getByRole('button', { name: 'Удалить связь', exact: true }).click();
   await expect(page.locator('.react-flow__edge')).toHaveCount(0);
@@ -1488,6 +1502,7 @@ test('browser: distinct tree actions, collapsible panels, detach and rebind arro
   const row = page.locator(`[data-object-id="${a.id}"]`);
   await row.getByRole('button', { name: 'Найти объект Источник', exact: true }).click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
+  await showObjectLinks(page, a);
   const folder = page.getByRole('button', { name: 'Связи объекта Источник', exact: true });
   const relationFolder = folder.locator('..');
   await expect(relationFolder).toHaveAttribute('data-folder-id', `relations:${a.id}`);
@@ -2082,11 +2097,15 @@ test('browser: system relation folders keep owned links inside the hierarchy wit
     `.solutions-tree .system-relation-folder[data-parent-id="${owner.id}"]`,
   );
   await expect(folder).toHaveAttribute('aria-level', '2');
+  await folder.locator(':scope > button').click();
   await expect(folder.locator('..').locator(':scope > :nth-child(2)')).toHaveAttribute(
     'data-folder-id',
     `relations:${owner.id}`,
   );
   await expect(folder.locator(':scope > [role="group"] > [role="treeitem"]')).toHaveCount(1);
+  await folder
+    .getByRole('button', { name: `Развернуть связь ${relation.name}`, exact: true })
+    .click();
   await expect(folder).toContainText('Участник внутри связи');
   await expect(
     page.locator(
@@ -2181,7 +2200,7 @@ test('browser: solutions, projects, decomposition diagrams and representation de
     'data-folder-id',
     `representations:${product.id}`,
   );
-  await folder.locator('summary').click();
+  if ((await folder.getAttribute('open')) === null) await folder.locator('summary').click();
   await expect(folder.locator('a')).toHaveCount(2);
   await expect(folder.locator('.representation-entry').first()).toHaveAttribute('aria-level', '5');
   const ownerBox = await row.boundingBox();
@@ -2217,4 +2236,179 @@ test('browser: solutions, projects, decomposition diagrams and representation de
   await expect(treeRelations).toHaveAttribute('aria-level', '3');
   await treeFolder.locator('summary').click();
   await expect(treeFolder.locator('a')).toHaveCount(2);
+});
+
+test('browser: diagram-free bindings, editable participants, workspace focus and remembered tree', async ({
+  request,
+  page,
+}) => {
+  test.setTimeout(120000);
+  await login(request, page);
+  const a = await object(request, 'Владелец привязки');
+  const b = await object(request, 'Вложенный участник', a.id);
+  const c = await object(request, 'Другая ветка');
+  await page.goto('/solutions');
+  await expect(page.locator(`[data-tree-entity="${a.id}"]`)).toHaveAttribute(
+    'aria-expanded',
+    'false',
+  );
+  await expect(page.locator(`[data-tree-entity="${b.id}"]`)).toHaveCount(0);
+  await page.goto(`/solutions?parent=${a.id}`);
+  await expect(page.getByRole('heading', { name: a.name, exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Свойства', exact: true }).click();
+  const card = page.getByRole('dialog', { name: 'Общие свойства объекта', exact: true });
+  await expect(card.getByText('Связей пока нет.', { exact: true })).toBeVisible();
+  await card.getByRole('button', { name: 'Создать связь без диаграммы', exact: true }).click();
+  const relationForm = page.getByRole('dialog', { name: 'Создать связь модели', exact: true });
+  await expect(relationForm.getByLabel('Источник связи', { exact: true })).toHaveValue(a.id);
+  await relationForm.getByLabel('Назначение связи', { exact: true }).selectOption(b.id);
+  await relationForm.getByLabel('Имя связи', { exact: true }).fill('Привязка без канваса');
+  await relationForm.getByLabel('Тип связи', { exact: true }).fill('Ассоциация');
+  await relationForm.getByRole('button', { name: 'Сохранить связь', exact: true }).click();
+  await expect(
+    card.locator('.entity-relations').getByText('Привязка без канваса', { exact: true }),
+  ).toBeVisible();
+  const structure = await (await request.get('/api/model/structure')).json();
+  expect(structure.diagrams).toHaveLength(0);
+  expect(structure.relations).toHaveLength(1);
+  expect(structure.relations[0]).toMatchObject({
+    sourceId: a.id,
+    targetId: b.id,
+    relationType: 'Ассоциация',
+    parentId: null,
+  });
+  await card
+    .getByRole('button', { name: 'Редактировать привязку Привязка без канваса', exact: true })
+    .click();
+  const edit = page.getByRole('dialog', { name: 'Общие свойства связи', exact: true });
+  await edit.getByLabel('Назначение связи', { exact: true }).selectOption(c.id);
+  await edit.getByRole('button', { name: 'Сохранить связь', exact: true }).click();
+  await expect(card.getByText(/Ассоциация · Владелец привязки → Другая ветка/)).toBeVisible();
+  await card.getByRole('button', { name: 'Закрыть', exact: true }).click();
+  await page.getByRole('button', { name: 'Менеджер связей', exact: true }).click();
+  const manager = page.getByRole('dialog', { name: 'Менеджер связей', exact: true });
+  await expect(manager.getByText('Привязка без канваса', { exact: true })).toBeVisible();
+  await manager.getByRole('button', { name: 'Закрыть', exact: true }).click();
+  const dResponse = await request.post('/api/diagrams', {
+    data: { name: 'Диаграмма привязок', parentId: b.id },
+  });
+  expect(dResponse.status()).toBe(201);
+  let d: ModelDiagram = await dResponse.json();
+  const link = await request.post('/api/relations', {
+    data: {
+      name: 'Открывает диаграмму',
+      sourceId: c.id,
+      targetId: d.entityId,
+      relationType: 'Навигация',
+    },
+  });
+  expect(link.status()).toBe(201);
+  d = await place(request, d, a.id);
+  d = await place(request, d, b.id);
+  d = await save(request, d, {
+    ...d.document,
+    edges: [
+      {
+        id: 'protected-arrow',
+        bindingId: d.document.bindings[0].id,
+        typeId: 'flow',
+        source: d.document.nodes[0].id,
+        target: d.document.nodes[1].id,
+        sourcePort: 'out',
+        targetPort: 'in',
+        properties: {},
+      },
+    ],
+  });
+  const used = d.document.relations![0];
+  expect(
+    (
+      await request.patch(`/api/relations/${used.id}`, {
+        data: { revision: used.revision, targetId: c.id },
+      })
+    ).status(),
+  ).toBe(409);
+  await page.goto(`/solutions?diagram=${d.id}`);
+  await expect(
+    page.locator('.editor-toolbar').getByRole('button', { name: d.name, exact: true }),
+  ).toBeVisible();
+  await expect(page.locator(`[data-tree-entity="${d.entityId}"]`)).toHaveAttribute(
+    'aria-selected',
+    'true',
+  );
+  await expect(page.locator(`[data-tree-entity="${b.id}"]`)).toHaveAttribute(
+    'aria-expanded',
+    'true',
+  );
+  const other = page.locator(`[data-tree-entity="${c.id}"]`);
+  await expect(other).toHaveAttribute('aria-expanded', 'false');
+  await other.getByRole('button', { name: `Развернуть ${c.name}`, exact: true }).click();
+  const links = other.locator(`.system-relation-folder[data-parent-id="${c.id}"]`);
+  await links.getByRole('button', { name: `Связи объекта ${c.name}`, exact: true }).click();
+  await expect(links).toHaveAttribute('aria-expanded', 'true');
+  await page.reload();
+  await expect(other).toHaveAttribute('aria-expanded', 'true');
+  await expect(links).toHaveAttribute('aria-expanded', 'true');
+  await expect(page.locator(`[data-tree-entity="${d.entityId}"]`)).toHaveAttribute(
+    'aria-selected',
+    'true',
+  );
+});
+
+test('relation types and editable participants survive history and diagram import', async ({
+  request,
+}) => {
+  await login(request);
+  const a = await object(request, 'A'),
+    b = await object(request, 'B'),
+    c = await object(request, 'C');
+  let r = await (
+    await request.post('/api/relations', {
+      data: { name: 'Привязка', sourceId: a.id, targetId: b.id, relationType: 'Документирует' },
+    })
+  ).json();
+  const updated = await request.patch(`/api/relations/${r.id}`, {
+    data: { revision: r.revision, targetId: c.id, relationType: 'Использует' },
+  });
+  expect(updated.status()).toBe(200);
+  r = await updated.json();
+  const restored = await request.post(`/api/relations/${r.id}/restore`, {
+    data: { revision: r.revision, number: 1 },
+  });
+  expect(restored.status()).toBe(200);
+  r = await restored.json();
+  expect(r).toMatchObject({ sourceId: a.id, targetId: b.id, relationType: 'Документирует' });
+  const cloned = await request.post('/api/relations', {
+    data: { name: 'Копия привязки', sourceId: a.id, targetId: b.id, copyOf: r.id },
+  });
+  expect(cloned.status()).toBe(201);
+  expect((await cloned.json()).relationType).toBe('Документирует');
+  let d = await create(request);
+  d = await place(request, d, a.id);
+  d = await place(request, d, b.id);
+  d = await save(request, d, {
+    ...d.document,
+    relations: [r],
+    edges: [
+      {
+        id: 'typed',
+        relationId: r.id,
+        bindingId: d.document.bindings[0].id,
+        typeId: 'flow',
+        source: d.document.nodes[0].id,
+        target: d.document.nodes[1].id,
+        sourcePort: 'out',
+        targetPort: 'in',
+        properties: {},
+      },
+    ],
+  });
+  expect(d.document.relations![0].relationType).toBe('Документирует');
+  const imported = await request.post('/api/diagrams', {
+    data: { name: 'Импорт типа связи', document: d.document },
+  });
+  expect(imported.status()).toBe(201);
+  const copy: ModelDiagram = await imported.json();
+  expect(copy.document.relations![0].relationType).toBe('Документирует');
+  expect(copy.document.relations![0].id).not.toBe(r.id);
 });

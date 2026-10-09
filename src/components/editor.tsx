@@ -41,6 +41,7 @@ import { api, date, download, readJson } from '@/lib/client';
 import { type DiagramDocument as LegacyDocument, defaults } from '@/lib/notation';
 import { useUser } from './workspace';
 import { Modal } from './modal';
+import { EntityRelations } from './entity-relations';
 import { ShareDialog } from './share-dialog';
 import { ExportDialog } from './export-dialog';
 import {
@@ -177,6 +178,7 @@ function Editor({ initial }: { initial: Diagram }) {
     [relationEditing, setRelationEditing] = useState<ModelRelation | 'new' | null>(null),
     [relationPlacement, setRelationPlacement] = useState<ModelRelation | null>(null),
     [objectEditing, setObjectEditing] = useState<ModelObject | null>(null),
+    [linksOpen, setLinksOpen] = useState(false),
     [commandBusy, setCommandBusy] = useState(false),
     [objectSaving, setObjectSaving] = useState(false),
     [notationsOpen, setNotationsOpen] = useState(false),
@@ -1226,7 +1228,11 @@ function Editor({ initial }: { initial: Diagram }) {
     <main className={`editor ${commandBusy || objectSaving ? 'remote-busy' : ''}`}>
       <div className="editor-toolbar">
         <div className="editor-title">
-          <Link href="/library" className="icon-button" aria-label="В библиотеку">
+          <Link
+            href={`/solutions${initial.entityId ? `?parent=${initial.entityId}` : ''}`}
+            className="icon-button"
+            aria-label="К модели решения"
+          >
             <ArrowLeft size={20} />
           </Link>
           <div>
@@ -1272,6 +1278,14 @@ function Editor({ initial }: { initial: Diagram }) {
           )}
         </div>
         <div className="button-row">
+          <button
+            className="secondary small"
+            onClick={async () => {
+              if (await flush()) setLinksOpen(true);
+            }}
+          >
+            <GitBranch size={14} /> Связи модели
+          </button>
           <details className="panel-controls">
             <summary className="secondary small">Панели</summary>
             <div className="panel-options">
@@ -1384,6 +1398,7 @@ function Editor({ initial }: { initial: Diagram }) {
         className={`editor-body model-editor-body ${panels.tree ? '' : 'hide-tree'} ${panels.palette ? '' : 'hide-palette'} ${panels.properties ? '' : 'hide-properties'}`}
       >
         <ObjectTree
+          focusId={initial.entityId}
           diagramId={initial.id}
           diagrams={diagrams}
           defaultParentId={objects.find((o) => o.id === initial.entityId)?.parentId}
@@ -1430,7 +1445,8 @@ function Editor({ initial }: { initial: Diagram }) {
           onRepresentationLocate={(id, diagramId) => {
             if (diagramId !== initial.id) {
               void flush().then((ok) => {
-                if (ok) router.push(`/diagrams/${diagramId}?element=${encodeURIComponent(id)}`);
+                if (ok)
+                  router.push(`/solutions?diagram=${diagramId}&element=${encodeURIComponent(id)}`);
               });
               return;
             }
@@ -1451,13 +1467,15 @@ function Editor({ initial }: { initial: Diagram }) {
           onRelationEdit={(r) => void editRelation(r)}
           onRelationPlace={setRelationPlacement}
           onRelationSaved={(r) => mergeRelations([r])}
-          relationsPanel={(renderChildren, move, createChild) => (
+          relationsPanel={(renderChildren, move, createChild, isExpanded, toggle) => (
             <RelationBrowser
               relations={allRelations}
               objects={[...objects, ...allRelations.map(relationEntity)]}
               renderChildren={renderChildren}
               onMove={move}
               onCreateChild={createChild}
+              isExpanded={isExpanded}
+              onToggle={toggle}
               counts={
                 new Map(
                   allRelations.map((r) => [
@@ -2309,7 +2327,19 @@ function Editor({ initial }: { initial: Diagram }) {
           objects={[...objects, ...allRelations.map(relationEntity)]}
           onSaved={(r) => mergeRelations([r])}
           onClose={() => setRelationEditing(null)}
-        />
+        >
+          {relationEditing !== 'new' && (
+            <EntityRelations
+              entityId={relationEditing.id}
+              onChanged={() => void refreshObjects()}
+            />
+          )}
+        </RelationEditor>
+      )}
+      {linksOpen && (
+        <Modal title="Менеджер связей" onClose={() => setLinksOpen(false)} className="object-modal">
+          <EntityRelations onChanged={() => void refreshObjects()} />
+        </Modal>
       )}
       {relationPlacement && (
         <RelationPlacement
@@ -2334,6 +2364,7 @@ function Editor({ initial }: { initial: Diagram }) {
       )}
       {objectEditing && (
         <ObjectEditor
+          onRelationsChanged={() => void refreshObjects()}
           key={`${objectEditing.id}:${objectEditing.revision}`}
           object={objectEditing}
           objects={objects}

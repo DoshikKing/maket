@@ -1,7 +1,7 @@
 'use client';
 import { createContext, useContext, useState, useLayoutEffect } from 'react';
 import Link from 'next/link';
-import { usePathname, useRouter } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { Workflow, Library, Shapes, Settings, LogOut, ChevronRight, Sparkles } from 'lucide-react';
 import { api } from '@/lib/client';
 export type User = {
@@ -23,7 +23,8 @@ export function Workspace({
 }) {
   const [user, setUser] = useState(initialUser);
   const pathname = usePathname(),
-    router = useRouter();
+    router = useRouter(),
+    searchParams = useSearchParams();
   const [error, setError] = useState('');
   useLayoutEffect(() => {
     document.documentElement.dataset.theme = user.settings.theme;
@@ -31,9 +32,9 @@ export function Workspace({
       delete document.documentElement.dataset.theme;
     };
   }, [user.settings.theme]);
-  const editor = pathname.startsWith('/diagrams/');
+  const editor = pathname.startsWith('/diagrams/') || !!searchParams.get('diagram');
   const links = [
-    { href: '/solutions', label: 'Решения', icon: Workflow },
+    { href: '/solutions', label: 'Рабочая область', icon: Workflow },
     { href: '/library', label: 'Библиотека', icon: Library },
     { href: '/notations', label: 'Нотации', icon: Shapes },
     { href: '/settings', label: 'Настройки', icon: Settings },
@@ -54,7 +55,7 @@ export function Workspace({
               <Link
                 key={href}
                 href={href}
-                className={pathname === href || (href === '/library' && editor) ? 'active' : ''}
+                className={pathname === href || (href === '/solutions' && editor) ? 'active' : ''}
               >
                 <Icon size={19} />
                 {label}

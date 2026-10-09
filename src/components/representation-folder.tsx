@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { ChevronRight, Folder, Layers } from 'lucide-react';
 import { api } from '@/lib/client';
 import type { Representation } from '@/lib/structure';
+import { useTreeDisclosure } from './use-tree-disclosure';
 export function RepresentationFolder({
   entityId,
   resource = 'objects',
@@ -22,8 +23,8 @@ export function RepresentationFolder({
   level?: number;
 }) {
   const [loaded, setLoaded] = useState<Representation[] | null>(null),
-    [open, setOpen] = useState(false),
     [error, setError] = useState('');
+  const { open, setOpen } = useTreeDisclosure(`representations:${entityId}`);
   const representations =
     items?.filter((r) => r.entityId === entityId) ??
     (loaded
@@ -34,6 +35,7 @@ export function RepresentationFolder({
       : null);
   return (
     <details
+      open={open}
       className="representation-folder"
       data-parent-id={entityId}
       data-folder-id={`representations:${entityId}`}
@@ -81,7 +83,7 @@ export function RepresentationFolder({
           >
             <Link
               className="tree-row tree-row-leaf"
-              href={`/diagrams/${r.diagramId}?element=${encodeURIComponent(r.id)}`}
+              href={`/solutions?diagram=${r.diagramId}&element=${encodeURIComponent(r.id)}`}
               onClick={(e) => {
                 if (onLocate) {
                   e.preventDefault();

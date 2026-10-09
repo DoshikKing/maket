@@ -23,6 +23,8 @@ import { RepresentationFolder } from './representation-folder';
 import { RelationFolder } from './relation-folder';
 import { Modal } from './modal';
 import type { NotationItem } from './library';
+import { useTreeExpansion } from './use-tree-expansion';
+import { EntityRelations } from './entity-relations';
 const icons = {
   solution: Network,
   project: Workflow,
@@ -36,12 +38,12 @@ export function SolutionsPage() {
   const [space, setSpace] = useState<Structure | null>(null),
     [notations, setNotations] = useState<NotationItem[]>([]),
     [selectedId, setSelectedId] = useState<string | null>(null),
-    [closed, setClosed] = useState(new Set<string>()),
     [query, setQuery] = useState(''),
     [error, setError] = useState(''),
     [kind, setKind] = useState<Kind>('solution'),
     [creating, setCreating] = useState(false),
     [editing, setEditing] = useState(false),
+    [linksOpen, setLinksOpen] = useState(false),
     [busy, setBusy] = useState(false),
     [diagramName, setDiagramName] = useState('Новая диаграмма'),
     [notationIds, setNotationIds] = useState<string[]>(['builtin']);
@@ -64,6 +66,7 @@ export function SolutionsPage() {
   }, []);
   const relationIds = new Set(space?.relations.map((r) => r.id));
   const entities = [...(space?.objects ?? []), ...(space?.relations.map(relationEntity) ?? [])];
+  const expansion = useTreeExpansion(entities, selectedId);
   const entityKind = (o: ModelObject): Kind =>
     relationIds.has(o.id) ? 'relation' : (o.kind ?? 'object');
   const selected = entities.find((o) => o.id === selectedId);
@@ -195,10 +198,11 @@ export function SolutionsPage() {
             entities.some((c) => c.parentId === o.id) ||
             !['folder', 'diagram'].includes(o.kind ?? 'object') ||
             linked.length > 0,
-          collapsed = closed.has(o.id) && !query;
+          collapsed = !expansion.isExpanded(o.id) && !query;
         return (
           <div
             key={o.id}
+            data-tree-entity={o.id}
             role="treeitem"
             aria-level={depth + 1}
             aria-selected={selected?.id === o.id}
@@ -228,14 +232,7 @@ export function SolutionsPage() {
                 className="icon-button tree-toggle"
                 aria-label={`${collapsed ? 'Развернуть' : 'Свернуть'} ${o.name}`}
                 disabled={!hasChildren}
-                onClick={() =>
-                  setClosed((prev) => {
-                    const next = new Set(prev);
-                    if (next.has(o.id)) next.delete(o.id);
-                    else next.add(o.id);
-                    return next;
-                  })
-                }
+                onClick={() => expansion.toggle(o.id)}
               >
                 <ChevronRight
                   size={14}
@@ -278,6 +275,7 @@ export function SolutionsPage() {
                       <div
                         key={r.id}
                         role="treeitem"
+                        aria-expanded={expansion.isExpanded(r.id)}
                         aria-level={depth + 3}
                         draggable={!r.archived}
                         onDragStart={(e) => {
@@ -297,25 +295,41 @@ export function SolutionsPage() {
                           }
                         }}
                       >
-                        <button
-                          className="solution-tree-select tree-row tree-row-leaf"
-                          onClick={() => select(r.id)}
-                        >
-                          <GitBranch className="tree-icon" size={16} />
-                          <span className="tree-label">
-                            {r.name}
-                            <small>{r.parentId === o.id ? 'Дочерняя связь' : 'Ссылка'}</small>
-                          </span>
-                        </button>
-                        <div className="hierarchy-children" role="group">
-                          <RepresentationFolder
-                            entityId={r.id}
-                            items={space?.representations}
-                            level={depth + 4}
-                          />
-                          {relationFolder(r.id, r.name, depth + 4)}
-                          {tree(r.id, depth + 3, new Set([...ancestors, o.id, r.id]))}
+                        <div className="tree-row">
+                          <button
+                            className="tree-toggle"
+                            aria-label={`${expansion.isExpanded(r.id) ? 'Свернуть' : 'Развернуть'} связь ${r.name}`}
+                            onClick={() => expansion.toggle(r.id)}
+                          >
+                            <ChevronRight
+                              size={14}
+                              style={{
+                                transform: expansion.isExpanded(r.id) ? 'rotate(90deg)' : undefined,
+                              }}
+                            />
+                          </button>
+                          <button
+                            className="solution-tree-select tree-label"
+                            onClick={() => select(r.id)}
+                          >
+                            <GitBranch className="tree-icon" size={16} />
+                            <span className="tree-label">
+                              {r.name}
+                              <small>{r.parentId === o.id ? 'Дочерняя связь' : 'Ссылка'}</small>
+                            </span>
+                          </button>
                         </div>
+                        {expansion.isExpanded(r.id) && (
+                          <div className="hierarchy-children" role="group">
+                            <RepresentationFolder
+                              entityId={r.id}
+                              items={space?.representations}
+                              level={depth + 4}
+                            />
+                            {relationFolder(r.id, r.name, depth + 4)}
+                            {tree(r.id, depth + 3, new Set([...ancestors, o.id, r.id]))}
+                          </div>
+                        )}
                       </div>
                     ))}
                   </RelationFolder>
@@ -330,6 +344,10 @@ export function SolutionsPage() {
   return (
     <main className="page solutions-page">
       <div className="page-heading">
+        <button className="secondary" onClick={() => setLinksOpen(true)}>
+          <GitBranch size={16} />
+          Менеджер связей
+        </button>
         <div>
           <div className="eyebrow">ОТ РЕШЕНИЯ К ДЕТАЛЯМ</div>
           <h1>Решения</h1>
@@ -413,7 +431,7 @@ export function SolutionsPage() {
               space.diagrams.some((d) => d.entityId === selected.id) && (
                 <Link
                   className="primary"
-                  href={`/diagrams/${space.diagrams.find((d) => d.entityId === selected.id)?.id}`}
+                  href={`/solutions?diagram=${space.diagrams.find((d) => d.entityId === selected.id)?.id}`}
                 >
                   Открыть диаграмму →
                 </Link>
@@ -474,7 +492,9 @@ export function SolutionsPage() {
                           {o.archived ? ' · Архив' : ''}
                         </small>
                       </button>
-                      {diagram && <Link href={`/diagrams/${diagram.id}`}>Открыть диаграмму →</Link>}
+                      {diagram && (
+                        <Link href={`/solutions?diagram=${diagram.id}`}>Открыть диаграмму →</Link>
+                      )}
                     </article>
                   );
                 })}
@@ -498,6 +518,11 @@ export function SolutionsPage() {
           }}
         />
       )}
+      {linksOpen && (
+        <Modal title="Менеджер связей" onClose={() => setLinksOpen(false)} className="object-modal">
+          <EntityRelations onChanged={() => void load()} />
+        </Modal>
+      )}
       {creating && kind === 'relation' && (
         <RelationEditor
           parentId={selected?.id ?? null}
@@ -511,6 +536,7 @@ export function SolutionsPage() {
       )}
       {editing && selected && !relationIds.has(selected.id) && (
         <ObjectEditor
+          onRelationsChanged={() => void load()}
           object={selected}
           objects={entities}
           onClose={() => setEditing(false)}
@@ -523,7 +549,9 @@ export function SolutionsPage() {
           objects={entities}
           onClose={() => setEditing(false)}
           onSaved={() => void load()}
-        />
+        >
+          <EntityRelations entityId={selected.id} onChanged={() => void load()} />
+        </RelationEditor>
       )}
       {creating && kind === 'diagram' && (
         <Modal title="Создать диаграмму декомпозиции" onClose={() => setCreating(false)}>

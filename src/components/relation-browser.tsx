@@ -1,5 +1,5 @@
 'use client';
-import { useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import {
   FolderPlus,
   Plus,
@@ -9,6 +9,7 @@ import {
   Copy,
   LocateFixed,
   GitBranch,
+  ChevronRight,
 } from 'lucide-react';
 import { api, date } from '@/lib/client';
 import {
@@ -23,19 +24,25 @@ import { CopyOrigin } from './copy-origin';
 export function RelationEditor({
   relation,
   parentId,
+  sourceId,
   objects,
   onSaved,
   onClose,
+  children,
 }: {
   relation?: ModelRelation;
   parentId?: string | null;
+  sourceId?: string;
   objects: ModelObject[];
   onSaved: (r: ModelRelation) => void;
   onClose: () => void;
+  children?: React.ReactNode;
 }) {
   const [name, setName] = useState(relation?.name ?? 'Новая связь'),
     [description, setDescription] = useState(relation?.description ?? ''),
-    [source, setSource] = useState(relation?.sourceId ?? ''),
+    [source, setSource] = useState(relation?.sourceId ?? sourceId ?? ''),
+    [relationType, setRelationType] = useState(relation?.relationType ?? 'Привязка'),
+    [types, setTypes] = useState<string[]>([]),
     [target, setTarget] = useState(relation?.targetId ?? ''),
     [parent, setParent] = useState(relation?.parentId ?? parentId ?? ''),
     [attributes, setAttributes] = useState(
@@ -50,6 +57,16 @@ export function RelationEditor({
       { count: number; diagram: { id: string; name: string } }[] | null
     >(null);
   const guard = { revision: relation?.revision, incarnation: relation?.incarnation };
+  const typeListId = useId();
+  useEffect(() => {
+    void api<{ relations: ModelRelation[] }>('model')
+      .then((s) =>
+        setTypes([
+          ...new Set(s.relations.map((r) => r.relationType).filter((t): t is string => !!t)),
+        ]),
+      )
+      .catch(() => {});
+  }, []);
   return (
     <Modal
       title={relation ? 'Общие свойства связи' : 'Создать связь модели'}
@@ -82,7 +99,10 @@ export function RelationEditor({
                   description,
                   attributes: values,
                   parentId: parent || null,
-                  ...(relation ? guard : { sourceId: source, targetId: target }),
+                  relationType,
+                  sourceId: source,
+                  targetId: target,
+                  ...(relation ? guard : {}),
                 },
               ),
             );
@@ -95,7 +115,7 @@ export function RelationEditor({
         }}
       >
         <label>
-          Родитель связи
+          Контейнер в дереве
           <select
             aria-label="Родитель связи"
             value={parent}
@@ -110,6 +130,28 @@ export function RelationEditor({
                 </option>
               ))}
           </select>
+          <small className="muted">
+            Только место хранения. Участники связи выбираются независимо от вложенности.
+          </small>
+        </label>
+        <label>
+          Тип связи
+          <input
+            aria-label="Тип связи"
+            list={typeListId}
+            maxLength={100}
+            value={relationType}
+            onChange={(e) => setRelationType(e.target.value)}
+            placeholder="Привязка или новый тип"
+          />
+          <datalist id={typeListId}>
+            {types.map((t) => (
+              <option key={t} value={t} />
+            ))}
+          </datalist>
+          <small className="muted">
+            Выберите существующий тип или введите новый. Тип не зависит от нотации.
+          </small>
         </label>
         <label>
           Имя связи
@@ -141,13 +183,12 @@ export function RelationEditor({
             <select
               aria-label={label}
               value={value}
-              disabled={!!relation}
               required
               onChange={(e) => setValue(e.target.value)}
             >
               <option value="">Выберите объект</option>
               {objects
-                .filter((o) => !o.archived || o.id === value)
+                .filter((o) => o.id !== relation?.id && (!o.archived || o.id === value))
                 .map((o) => (
                   <option key={o.id} value={o.id}>
                     {o.name}
@@ -158,7 +199,8 @@ export function RelationEditor({
         ))}
         {relation && (
           <small className="muted">
-            Участники определяют связь и не меняются при смене её отображения.
+            Источник — исходящий участник, назначение — входящий. Участников можно менять, если у
+            связи нет представлений на диаграммах.
           </small>
         )}
         <div className="section-title">
@@ -259,6 +301,7 @@ export function RelationEditor({
           {busy ? 'Сохраняем…' : 'Сохранить связь'}
         </button>
       </form>
+      {children}
       {relation && (
         <div className="form-stack relation-history">
           <button
@@ -348,6 +391,8 @@ export function RelationBrowser({
   renderChildren,
   onMove,
   onCreateChild,
+  isExpanded,
+  onToggle,
 }: {
   relations: ModelRelation[];
   objects: ModelObject[];
@@ -361,6 +406,8 @@ export function RelationBrowser({
   renderChildren?: (id: string) => React.ReactNode;
   onMove?: (id: string, parent: string | null) => Promise<void>;
   onCreateChild?: (id: string) => void;
+  isExpanded?: (id: string) => boolean;
+  onToggle?: (id: string) => void;
 }) {
   const [query, setQuery] = useState(''),
     [error, setError] = useState('');
@@ -399,7 +446,7 @@ export function RelationBrowser({
         .map((r) => (
           <div key={r.id}>
             <div
-              className={`object-tree-row tree-row tree-row-leaf ${r.archived ? 'archived' : ''}`}
+              className={`object-tree-row tree-row ${onToggle ? '' : 'tree-row-leaf'} ${r.archived ? 'archived' : ''}`}
               data-model-relation-id={r.id}
               draggable={!r.archived}
               onDragStart={(e) => {
@@ -428,6 +475,19 @@ export function RelationBrowser({
               }}
               key={r.id}
             >
+              {onToggle && (
+                <button
+                  className="tree-toggle"
+                  aria-label={`${isExpanded?.(r.id) ? 'Свернуть' : 'Развернуть'} связь ${r.name}`}
+                  aria-expanded={isExpanded?.(r.id) ?? false}
+                  onClick={() => onToggle(r.id)}
+                >
+                  <ChevronRight
+                    size={14}
+                    style={{ transform: isExpanded?.(r.id) ? 'rotate(90deg)' : undefined }}
+                  />
+                </button>
+              )}
               <GitBranch className="tree-icon" size={16} />
               <button
                 className="object-tree-name tree-label"

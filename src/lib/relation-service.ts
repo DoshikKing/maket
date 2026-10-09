@@ -18,6 +18,7 @@ export const relationSnapshot = (row: {
   targetId: string;
   parentId?: string | null;
   name: string;
+  relationType?: string;
   description: string;
   attributes: unknown;
   archived: boolean;
@@ -47,6 +48,7 @@ export async function createRelation(
     targetId: string;
     parentId?: string | null;
     name: string;
+    relationType?: string;
     description?: string;
     attributes?: ModelRelation['attributes'];
     archived?: boolean;
@@ -75,6 +77,7 @@ export async function createRelation(
       targetId: input.targetId,
       parentId: input.parentId,
       name: input.name.trim(),
+      relationType: input.relationType,
       description: input.description,
       archived: input.archived,
       spaceId,
@@ -173,6 +176,7 @@ export async function materializeRelations(
               ? e.properties.label.trim().slice(0, 100)
               : (type?.name ?? 'Поясняющая связь')),
           description: proposed?.description,
+          relationType: proposed?.relationType ?? type?.name,
           parentId: restoring ? proposed?.parentId : null,
           attributes:
             proposed?.attributes ??
@@ -216,6 +220,7 @@ export async function addRelation(
   ownerId: string,
   input: {
     name: string;
+    relationType?: string;
     sourceId: string;
     targetId: string;
     parentId?: string | null;
@@ -232,6 +237,7 @@ export async function addRelation(
       const origin = await tx.modelRelation.findFirst({ where: { id: copyOf, spaceId: space.id } });
       if (!origin) reject(404, 'Исходная связь не найдена');
       copiedFrom = { id: origin.id, name: origin.name };
+      if (data.relationType === undefined) data.relationType = origin.relationType;
     }
     return createRelation(tx, space.id, { ...data, copiedFrom });
   });
@@ -243,6 +249,9 @@ export async function updateRelation(
     revision: number;
     incarnation?: string;
     name?: string;
+    relationType?: string;
+    sourceId?: string;
+    targetId?: string;
     description?: string;
     attributes?: ModelRelation['attributes'];
     archived?: boolean;
@@ -273,7 +282,27 @@ export async function updateRelation(
         attributes: s.attributes,
         archived: s.archived,
         parentId: s.parentId ?? null,
+        relationType: s.relationType ?? '',
+        sourceId: s.sourceId,
+        targetId: s.targetId,
       };
+    }
+    if (
+      (data.sourceId !== undefined && data.sourceId !== r.sourceId) ||
+      (data.targetId !== undefined && data.targetId !== r.targetId)
+    ) {
+      if (await tx.diagramRelationUsage.count({ where: { relationId: id } }))
+        reject(
+          409,
+          'У связи есть представления на диаграммах. Сначала удалите или перепривяжите стрелки и сохраните диаграммы',
+        );
+      const ends = new Set([data.sourceId ?? r.sourceId, data.targetId ?? r.targetId]);
+      const entities = await modelEntities(tx, space.id);
+      if ([...ends].some((end) => end === id || !entities.some((o) => o.id === end && !o.archived)))
+        reject(
+          400,
+          'Выберите активных участников своей модели. Связь не может быть собственным участником',
+        );
     }
     if (data.parentId !== undefined && data.parentId !== r.parentId) {
       const entities = await modelEntities(tx, space.id);

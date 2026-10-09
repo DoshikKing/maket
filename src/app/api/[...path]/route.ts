@@ -314,6 +314,7 @@ async function handle(req: NextRequest, context: { params: Promise<{ path: strin
             name: nameSchema,
             sourceId: z.string(),
             targetId: z.string(),
+            relationType: z.string().trim().max(100).optional(),
             description: z.string().max(4000).optional(),
             attributes: attributesSchema.optional(),
             copyOf: z.string().optional(),
@@ -358,6 +359,9 @@ async function handle(req: NextRequest, context: { params: Promise<{ path: strin
             guard
               .extend({
                 name: nameSchema.optional(),
+                relationType: z.string().trim().max(100).optional(),
+                sourceId: z.string().optional(),
+                targetId: z.string().optional(),
                 description: z.string().max(4000).optional(),
                 attributes: attributesSchema.optional(),
                 archived: z.boolean().optional(),

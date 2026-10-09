@@ -1,5 +1,6 @@
 'use client';
-import { useState, type ReactNode } from 'react';
+import { type ReactNode } from 'react';
+import { useTreeDisclosure } from './use-tree-disclosure';
 import { ChevronRight, Folder } from 'lucide-react';
 
 export function RelationFolder({
@@ -15,7 +16,8 @@ export function RelationFolder({
   level?: number;
   children?: ReactNode;
 }) {
-  const [closed, setClosed] = useState(false);
+  const { open, setOpen } = useTreeDisclosure(`relations:${entityId}`);
+  const closed = !open;
   return (
     <div
       className="system-relation-folder"
@@ -30,7 +32,7 @@ export function RelationFolder({
         aria-label={`Связи объекта ${name}`}
         aria-expanded={!closed}
         title="Системная папка связей владельца. Удаление папки недоступно."
-        onClick={() => setClosed((prev) => !prev)}
+        onClick={() => setOpen((prev) => !prev)}
       >
         <span className="tree-toggle" aria-hidden="true">
           <ChevronRight size={14} style={{ transform: closed ? 'none' : 'rotate(90deg)' }} />
