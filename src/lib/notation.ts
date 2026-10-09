@@ -138,6 +138,10 @@ export const diagramSchema = z.object({
         label: z.string().max(2000).optional(),
         appearance: nodeOverrideSchema.optional(),
         position: z.object({ x: z.number().finite(), y: z.number().finite() }),
+        attributes: z
+          .record(identifier, z.union([z.string().max(2000), z.number().finite(), z.boolean()]))
+          .refine((v) => Object.keys(v).length <= 100, 'Не больше 100 атрибутов')
+          .optional(),
         properties: values,
       }),
     )
@@ -154,6 +158,10 @@ export const diagramSchema = z.object({
         detachedTarget: z.object({ x: z.number().finite(), y: z.number().finite() }).optional(),
         sourcePort: identifier,
         targetPort: identifier,
+        attributes: z
+          .record(identifier, z.union([z.string().max(2000), z.number().finite(), z.boolean()]))
+          .refine((v) => Object.keys(v).length <= 100, 'Не больше 100 атрибутов')
+          .optional(),
         properties: values,
       }),
     )

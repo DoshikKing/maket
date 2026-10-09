@@ -493,3 +493,62 @@ it('keeps projects in their solution when moving an entire folder and rejects cy
   ).toContain('не вкладываются');
   expect(structureError([object])).toBeNull();
 });
+
+it('inherits representation attributes dynamically, preserves local overrides and round-trips them', () => {
+  const d = document();
+  d.nodes[0].attributes = { automated: false, note: 'Только первое представление' };
+  const view = projectDocument(d);
+  const definition = view.notation.nodeTypes.find((t) => t.id === view.nodes[0].typeId)!;
+  const first = effectiveNode(view.nodes[0], definition, object);
+  const sibling = effectiveNode(
+    view.nodes[1],
+    view.notation.nodeTypes.find((t) => t.id === view.nodes[1].typeId)!,
+    object,
+  );
+  expect(first.attributes).toEqual({ automated: false, note: 'Только первое представление' });
+  expect(sibling.attributes).toEqual({ automated: true });
+  expect(
+    effectiveNode({ ...view.nodes[0], attributes: {} }, definition, {
+      ...object,
+      attributes: { automated: false, owner: 'Новый владелец' },
+    }).attributes,
+  ).toEqual({ automated: false, owner: 'Новый владелец' });
+  expect(modelDiagramSchema.parse(packDocument(view, [object])).nodes[0].attributes).toEqual(
+    d.nodes[0].attributes,
+  );
+  expect(
+    modelDiagramSchema.safeParse({ ...d, nodes: [{ ...d.nodes[0], attributes: { invalid: [] } }] })
+      .success,
+  ).toBe(false);
+});
+
+it('inherits relation attributes while keeping arrow overrides independent', () => {
+  const relation = {
+    ...object,
+    sourceId: object.id,
+    targetId: object.id,
+    attributes: { role: 'Владелец', enabled: true },
+  };
+  const type = {
+    ...builtinNotation.edgeTypes[0],
+    properties: [{ key: 'role', label: 'Роль', type: 'string' as const, scope: 'object' as const }],
+  };
+  const edge = {
+    id: 'e',
+    typeId: type.id,
+    source: 'a',
+    target: 'b',
+    sourcePort: 'out',
+    targetPort: 'in',
+    properties: {},
+    attributes: { role: 'Наблюдатель' },
+  };
+  expect(effectiveEdge(edge, type, relation)).toMatchObject({
+    attributes: { role: 'Наблюдатель', enabled: true },
+    properties: { role: 'Наблюдатель' },
+  });
+  expect(effectiveEdge({ ...edge, attributes: {} }, type, relation).properties.role).toBe(
+    'Владелец',
+  );
+  expect(relation.attributes.role).toBe('Владелец');
+});

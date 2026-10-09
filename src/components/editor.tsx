@@ -1,7 +1,7 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -41,6 +41,9 @@ import { api, date, download, readJson } from '@/lib/client';
 import { type DiagramDocument as LegacyDocument, defaults } from '@/lib/notation';
 import { useUser } from './workspace';
 import { Modal } from './modal';
+import { ContextMenu } from './tree-context-menu';
+import { RepresentationAttributes } from './representation-attributes';
+import { useUnsavedNavigation } from './use-unsaved-navigation';
 import { EntityRelations } from './entity-relations';
 import { ShareDialog } from './share-dialog';
 import { ExportDialog } from './export-dialog';
@@ -148,8 +151,7 @@ export function EditorPage({ id }: { id: string }) {
 }
 function Editor({ initial }: { initial: Diagram }) {
   const { user } = useUser(),
-    flow = useReactFlow(),
-    router = useRouter();
+    flow = useReactFlow();
   const focusedElement = useSearchParams().get('element');
   const nodesInitialized = useNodesInitialized();
   const [name, setName] = useState(initial.name),
@@ -158,6 +160,12 @@ function Editor({ initial }: { initial: Diagram }) {
     [selected, setSelected] = useState<{ kind: 'node' | 'edge'; id: string } | null>(null),
     [edgeType, setEdgeType] = useState(initial.document.notation.edgeTypes[0].id),
     [error, setError] = useState(''),
+    [canvasMenu, setCanvasMenu] = useState<{
+      x: number;
+      y: number;
+      target: { kind: 'node' | 'edge'; id: string } | null;
+    } | null>(null),
+    [treeFocus, setTreeFocus] = useState<{ id: string; token: number } | null>(null),
     [panels, setPanels] = useState({ tree: true, palette: true, properties: true }),
     [connectionNotice, setConnectionNotice] = useState<{ message: string } | null>(null),
     [saving, setSaving] = useState(false),
@@ -335,45 +343,10 @@ function Editor({ initial }: { initial: Diagram }) {
     saving,
     save,
   ]);
-  useEffect(() => {
-    const warn = (e: BeforeUnloadEvent) => {
-      if (dirty) {
-        e.preventDefault();
-        e.returnValue = '';
-      }
-    };
-    window.addEventListener('beforeunload', warn);
-    return () => window.removeEventListener('beforeunload', warn);
-  }, [dirty]);
-  useEffect(() => {
-    const navigate = async (event: MouseEvent) => {
-      const anchor = (event.target as Element).closest?.('a[href]') as HTMLAnchorElement | null;
-      if (
-        !dirty ||
-        !anchor ||
-        event.button !== 0 ||
-        event.ctrlKey ||
-        event.metaKey ||
-        anchor.target === '_blank' ||
-        anchor.hasAttribute('download')
-      )
-        return;
-      const url = new URL(anchor.href);
-      if (url.origin !== location.origin || url.pathname === location.pathname) return;
-      event.preventDefault();
-      event.stopPropagation();
-      if (savingRef.current) {
-        setError('Дождитесь завершения сохранения и повторите переход.');
-        return;
-      }
-      if (user.settings.autosave && !errors.length && !blocked) {
-        if (await save()) router.push(url.pathname + url.search);
-      } else if (confirm('Есть несохранённые изменения. Перейти и потерять их?'))
-        router.push(url.pathname + url.search);
-    };
-    window.document.addEventListener('click', navigate, true);
-    return () => window.document.removeEventListener('click', navigate, true);
-  });
+  useUnsavedNavigation(
+    dirty,
+    user.settings.autosave && !errors.length && !blocked ? () => save() : undefined,
+  );
   const beginGesture = useCallback((_kind: 'drag' | 'resize' | 'text') => {
     if (gesture.current) return;
     gesture.current = structuredClone(docRef.current);
@@ -1024,9 +997,39 @@ function Editor({ initial }: { initial: Diagram }) {
         document.notation.nodeTypes.find((t) => t.id === selectedNode.typeId)!,
       )
     : undefined;
+  function representationAttributes(attributes: ModelObject['attributes']) {
+    if (!selected) return;
+    const list = selected.kind === 'node' ? 'nodes' : 'edges';
+    change({
+      ...docRef.current,
+      [list]: docRef.current[list].map((item) =>
+        item.id === selected.id ? { ...item, attributes } : item,
+      ),
+    });
+  }
+  const selectedRelation = relationLookup.get(selectedEdge?.relationId ?? '');
+  const baseEntity = selectedNode
+    ? objectLookup.get(selectedNode.objectId ?? '')
+    : selectedRelation
+      ? relationEntity(selectedRelation)
+      : undefined;
+  function showInTree() {
+    if (!baseEntity) return;
+    setPanels((p) => ({ ...p, tree: true }));
+    setTreeFocus({ id: baseEntity.id, token: Date.now() });
+  }
   function propertyChange(key: string, value: string | number | boolean) {
     if (!selected) return;
     const p = definition?.properties.find((p) => p.key === key);
+    const attributeKey = p?.objectKey ?? key;
+    if (
+      p?.scope === 'object' &&
+      rawSelectedObject?.attributes &&
+      Object.hasOwn(rawSelectedObject.attributes, attributeKey)
+    ) {
+      representationAttributes({ ...rawSelectedObject.attributes, [attributeKey]: value });
+      return;
+    }
     if (selected.kind === 'edge' && p?.scope === 'object') {
       const relationId = selectedEdge?.relationId;
       setObjectSaving(true);
@@ -1399,6 +1402,7 @@ function Editor({ initial }: { initial: Diagram }) {
       >
         <ObjectTree
           focusId={initial.entityId}
+          focusRequest={treeFocus}
           diagramId={initial.id}
           diagrams={diagrams}
           defaultParentId={objects.find((o) => o.id === initial.entityId)?.parentId}
@@ -1446,7 +1450,9 @@ function Editor({ initial }: { initial: Diagram }) {
             if (diagramId !== initial.id) {
               void flush().then((ok) => {
                 if (ok)
-                  router.push(`/solutions?diagram=${diagramId}&element=${encodeURIComponent(id)}`);
+                  window.location.assign(
+                    `/solutions?diagram=${diagramId}&element=${encodeURIComponent(id)}`,
+                  );
               });
               return;
             }
@@ -1521,7 +1527,7 @@ function Editor({ initial }: { initial: Diagram }) {
               ),
             ])
           }
-          selectedId={selectedNode?.objectId}
+          selectedId={selectedNode?.objectId ?? selectedEdge?.relationId}
           onSaved={(o) => mergeObjects([o])}
           onRefresh={() => void refreshObjects()}
           onRemove={async (o) => {
@@ -1770,7 +1776,36 @@ function Editor({ initial }: { initial: Diagram }) {
                 setSelected({ kind: n.type === 'relation-anchor' ? 'edge' : 'node', id: n.id })
               }
               onEdgeClick={(_, e) => setSelected({ kind: 'edge', id: e.id })}
-              onPaneClick={() => setSelected(null)}
+              onNodeContextMenu={(event, node) => {
+                event.preventDefault();
+                const target = {
+                  kind:
+                    node.type === 'relation-anchor' || node.type === 'free-endpoint'
+                      ? ('edge' as const)
+                      : ('node' as const),
+                  id:
+                    node.type === 'free-endpoint'
+                      ? (node.data as FreeEndpointNode['data']).edgeId
+                      : node.id,
+                };
+                setSelected(target);
+                setCanvasMenu({ x: event.clientX, y: event.clientY, target });
+              }}
+              onEdgeContextMenu={(event, edge) => {
+                event.preventDefault();
+                const target = { kind: 'edge' as const, id: edge.id };
+                setSelected(target);
+                setCanvasMenu({ x: event.clientX, y: event.clientY, target });
+              }}
+              onPaneContextMenu={(event) => {
+                event.preventDefault();
+                setSelected(null);
+                setCanvasMenu({ x: event.clientX, y: event.clientY, target: null });
+              }}
+              onPaneClick={() => {
+                setSelected(null);
+                setCanvasMenu(null);
+              }}
               onNodeDragStart={() => beginGesture('drag')}
               onNodeDragStop={endGesture}
               onConnectStart={(_, { nodeId, handleId, handleType }) => {
@@ -1971,7 +2006,15 @@ function Editor({ initial }: { initial: Diagram }) {
                 {definition.properties.map((p) => (
                   <label key={p.key}>
                     {p.label}
-                    {p.scope === 'object' && <small> · общий атрибут</small>}
+                    {p.scope === 'object' && (
+                      <small>
+                        {' '}
+                        ·{' '}
+                        {Object.hasOwn(rawSelectedObject?.attributes ?? {}, p.objectKey ?? p.key)
+                          ? 'локальное переопределение'
+                          : 'общий атрибут'}
+                      </small>
+                    )}
                     {p.required && <span className="required"> *</span>}
                     {p.type === 'boolean' ? (
                       <PropertyCheckbox
@@ -2003,6 +2046,12 @@ function Editor({ initial }: { initial: Diagram }) {
                   <p className="muted">У этого типа нет дополнительных свойств.</p>
                 )}
               </div>
+              <RepresentationAttributes
+                key={selectedObject.id}
+                local={rawSelectedObject?.attributes}
+                object={baseEntity}
+                onChange={representationAttributes}
+              />
               {selectedNode && selectedNodeAppearance && (
                 <div className="inspector-appearance form-stack">
                   <h3>Размер и слои</h3>
@@ -2360,6 +2409,117 @@ function Editor({ initial }: { initial: Diagram }) {
             change(next);
             setSelected({ kind: 'edge', id: edge.id });
           }}
+        />
+      )}
+      {canvasMenu && (
+        <ContextMenu
+          position={canvasMenu}
+          onClose={() => setCanvasMenu(null)}
+          actions={
+            canvasMenu.target ? (
+              <>
+                <button
+                  aria-label="Показать в дереве объектов"
+                  disabled={!baseEntity}
+                  onClick={showInTree}
+                >
+                  <GitBranch size={14} />
+                </button>
+                <button
+                  aria-label="Изменить свойства объекта"
+                  disabled={!baseEntity}
+                  onClick={() => {
+                    if (selected?.kind === 'edge')
+                      void editRelation(relationLookup.get(selectedEdge?.relationId ?? ''));
+                    else if (baseEntity) setObjectEditing(baseEntity);
+                  }}
+                >
+                  <MousePointer2 size={14} />
+                </button>
+                <button
+                  aria-label="Свойства представления"
+                  onClick={() => setPanels((p) => ({ ...p, properties: true }))}
+                >
+                  <MousePointer2 size={14} />
+                </button>
+                {selectedNode && (
+                  <>
+                    <button
+                      aria-label="Ещё одно представление"
+                      onClick={() => void addNode(selectedNode.typeId, selectedNode.objectId)}
+                    >
+                      <Plus size={14} />
+                    </button>
+                    <button
+                      aria-label="На передний план"
+                      onClick={() => reorderNode(selectedNode.id, 'front')}
+                    >
+                      <Plus size={14} />
+                    </button>
+                    <button
+                      aria-label="На задний план"
+                      onClick={() => reorderNode(selectedNode.id, 'back')}
+                    >
+                      <Plus size={14} />
+                    </button>
+                  </>
+                )}
+                {selectedEdge && (
+                  <>
+                    <button
+                      aria-label="Отвязать начало связи"
+                      disabled={!!selectedEdge.detachedSource}
+                      onClick={() => detachEnd(selectedEdge.id, 'source')}
+                    >
+                      <GitBranch size={14} />
+                    </button>
+                    <button
+                      aria-label="Отвязать конец связи"
+                      disabled={!!selectedEdge.detachedTarget}
+                      onClick={() => detachEnd(selectedEdge.id, 'target')}
+                    >
+                      <GitBranch size={14} />
+                    </button>
+                  </>
+                )}
+                <button
+                  aria-label="Удалить представление"
+                  disabled={commandBusy || objectSaving}
+                  onClick={() =>
+                    deleteItems(
+                      selected?.kind === 'node' ? [selected.id] : [],
+                      selected?.kind === 'edge' ? [selected.id] : [],
+                    )
+                  }
+                >
+                  <Trash2 size={14} />
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  aria-label="Сохранить диаграмму"
+                  disabled={saving || !dirty}
+                  onClick={() => void save()}
+                >
+                  <Save size={14} />
+                </button>
+                <button
+                  aria-label="Отменить изменение"
+                  disabled={!undo.length}
+                  onClick={undoAction}
+                >
+                  <Undo2 size={14} />
+                </button>
+                <button
+                  aria-label="Показать все панели"
+                  onClick={() => setPanels({ tree: true, palette: true, properties: true })}
+                >
+                  <MousePointer2 size={14} />
+                </button>
+              </>
+            )
+          }
         />
       )}
       {objectEditing && (

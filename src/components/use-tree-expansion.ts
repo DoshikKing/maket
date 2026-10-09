@@ -3,7 +3,11 @@ import { useEffect, useRef, useState } from 'react';
 import { useUser } from './workspace';
 import type { ModelObject } from '@/lib/model';
 
-export function useTreeExpansion(entities: ModelObject[], focusId?: string | null) {
+export function useTreeExpansion(
+  entities: ModelObject[],
+  focusId?: string | null,
+  focusToken?: number,
+) {
   const { user } = useUser();
   const key = `maket:tree:${user.id}`;
   const [expanded, setExpanded] = useState<Set<string> | null>(null);
@@ -23,14 +27,15 @@ export function useTreeExpansion(entities: ModelObject[], focusId?: string | nul
       focused.current = '';
       return;
     }
+    const focusKey = `${focusId}:${focusToken ?? ''}`;
     if (
       !expanded ||
       !focusId ||
       !entities.some((o) => o.id === focusId) ||
-      focused.current === focusId
+      focused.current === focusKey
     )
       return;
-    focused.current = focusId;
+    focused.current = focusKey;
     const path = new Set<string>();
     let entity = entities.find((o) => o.id === focusId);
     while (entity && !path.has(entity.id)) {
@@ -40,10 +45,10 @@ export function useTreeExpansion(entities: ModelObject[], focusId?: string | nul
     setExpanded((prev) => new Set([...(prev ?? []), ...path]));
     requestAnimationFrame(() =>
       document
-        .querySelector(`[data-tree-entity="${focusId}"]`)
+        .querySelector(`[data-model-relation-id="${focusId}"], [data-tree-entity="${focusId}"]`)
         ?.scrollIntoView({ block: 'nearest' }),
     );
-  }, [entities, expanded, focusId]);
+  }, [entities, expanded, focusId, focusToken]);
   useEffect(() => {
     if (expanded)
       try {

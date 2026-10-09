@@ -2508,3 +2508,190 @@ test('browser: Chromium context menus on solution objects, relation references a
   );
   await expect(page.locator('.react-flow__node-notation.selected')).toHaveCount(1);
 });
+
+test('browser: canvas context menu and inherited representation attributes', async ({
+  page,
+  request,
+}) => {
+  await login(request, page);
+  const parent = await object(request, 'Контейнер канваса');
+  let entity = await object(request, 'Объект канваса', parent.id);
+  entity = await (
+    await request.patch(`/api/objects/${entity.id}`, {
+      data: { revision: entity.revision, attributes: { owner: 'Команда', automated: true } },
+    })
+  ).json();
+  let d = await create(request);
+  d = await place(request, d, entity.id);
+  d = await place(request, d, entity.id);
+  d = await save(request, d, {
+    ...d.document,
+    edges: [
+      {
+        id: 'canvas-link',
+        bindingId: d.document.bindings[0].id,
+        typeId: 'flow',
+        source: d.document.nodes[0].id,
+        target: d.document.nodes[1].id,
+        sourcePort: 'out',
+        targetPort: 'in',
+        properties: { label: 'Связь канваса' },
+      },
+    ],
+  });
+  await page.goto(`/solutions?diagram=${d.id}`);
+  const first = page.locator(`.react-flow__node[data-id="${d.document.nodes[0].id}"]`);
+  await first.click({ button: 'right' });
+  await page.getByRole('menuitem', { name: 'Показать в дереве объектов', exact: true }).click();
+  await expect(page.locator(`[data-tree-entity="${parent.id}"]`)).toHaveAttribute(
+    'aria-expanded',
+    'true',
+  );
+  await expect(page.locator(`[data-object-id="${entity.id}"]`)).toBeVisible();
+  await first.click({ button: 'right' });
+  await page.getByRole('menuitem', { name: 'Изменить свойства объекта', exact: true }).click();
+  await expect(page.getByLabel('Имя объекта', { exact: true })).toHaveValue(entity.name);
+  await page.getByRole('button', { name: 'Закрыть', exact: true }).click();
+  await first.click({ button: 'right' });
+  await page.getByRole('menuitem', { name: 'Свойства представления', exact: true }).click();
+  const attributes = page.locator('.representation-attributes');
+  await expect(attributes.getByLabel('Атрибут представления owner', { exact: true })).toHaveValue(
+    'Команда',
+  );
+  await attributes
+    .locator('.representation-attribute')
+    .filter({ hasText: 'owner' })
+    .getByRole('button', { name: 'Переопределить', exact: true })
+    .click();
+  await attributes
+    .getByLabel('Атрибут представления owner', { exact: true })
+    .fill('Локальный владелец');
+  await attributes.getByLabel('Ключ атрибута представления', { exact: true }).fill('note');
+  await attributes
+    .getByLabel('Значение нового атрибута представления', { exact: true })
+    .fill('Примечание');
+  await attributes
+    .getByRole('button', { name: 'Добавить атрибут представления', exact: true })
+    .click();
+  await page.getByRole('button', { name: 'Сохранить', exact: true }).click();
+  await expect(page.getByText(/Сохранено · ревизия/)).toBeVisible();
+  const saved = await (await request.get(`/api/diagrams/${d.id}`)).json();
+  expect(saved.document.nodes[0].attributes).toEqual({
+    owner: 'Локальный владелец',
+    note: 'Примечание',
+  });
+  expect(saved.document.nodes[1].attributes ?? {}).toEqual({});
+  await page.locator(`.react-flow__node[data-id="${d.document.nodes[1].id}"]`).click();
+  await expect(attributes.getByLabel('Атрибут представления owner', { exact: true })).toHaveValue(
+    'Команда',
+  );
+  await page.reload();
+  await page.locator(`.react-flow__node[data-id="${d.document.nodes[0].id}"]`).click();
+  await expect(attributes.getByLabel('Атрибут представления note', { exact: true })).toHaveValue(
+    'Примечание',
+  );
+  await attributes
+    .locator('.representation-attribute')
+    .filter({ hasText: 'owner' })
+    .getByRole('button', { name: 'Наследовать', exact: true })
+    .click();
+  await expect(attributes.getByLabel('Атрибут представления owner', { exact: true })).toHaveValue(
+    'Команда',
+  );
+  const edge = page.locator('.react-flow__edge-interaction');
+  async function rightClickEdge() {
+    await page.evaluate(() => window.scrollTo(0, 0));
+    const point = await edge.evaluate((element) => {
+      const path = element as SVGPathElement;
+      const point = path
+        .getPointAtLength(path.getTotalLength() / 2)
+        .matrixTransform(path.getScreenCTM()!);
+      return { x: point.x, y: point.y };
+    });
+    await page.mouse.click(point.x, point.y, { button: 'right' });
+  }
+  await rightClickEdge();
+  await page.getByRole('menuitem', { name: 'Показать в дереве объектов', exact: true }).click();
+  await expect(
+    page.locator(`[data-model-relation-id="${d.document.relations![0].id}"]`),
+  ).toBeVisible();
+  await rightClickEdge();
+  await page.getByRole('menuitem', { name: 'Свойства представления', exact: true }).click();
+  await attributes.getByLabel('Ключ атрибута представления', { exact: true }).fill('arrowNote');
+  await attributes
+    .getByLabel('Значение нового атрибута представления', { exact: true })
+    .fill('Локальное свойство стрелки');
+  await attributes
+    .getByRole('button', { name: 'Добавить атрибут представления', exact: true })
+    .click();
+  await page.getByRole('button', { name: 'Сохранить', exact: true }).click();
+  await expect(page.getByText(/Сохранено · ревизия/)).toBeVisible();
+  expect(
+    (await (await request.get(`/api/diagrams/${d.id}`)).json()).document.edges[0].attributes,
+  ).toEqual({ arrowNote: 'Локальное свойство стрелки' });
+});
+
+test('browser: native beforeunload protects links and browser history', async ({
+  page,
+  request,
+}) => {
+  await login(request, page);
+  expect(
+    (
+      await request.patch('/api/settings', {
+        data: { name: 'Модель', theme: 'light', snapToGrid: false, autosave: false },
+      })
+    ).status(),
+  ).toBe(200);
+  const entity = await object(request, 'Несохранённый объект');
+  let d = await create(request);
+  d = await place(request, d, entity.id);
+  await page.goto('/solutions');
+  await page.getByRole('link', { name: 'Открыть диаграмму →', exact: true }).click();
+  await expect(page.locator('.react-flow__node-notation')).toHaveCount(1);
+  const editorUrl = page.url();
+  await page.getByRole('link', { name: 'Библиотека', exact: true }).click();
+  await expect(page).toHaveURL(/\/library$/);
+  await page.evaluate(() => history.back());
+  await expect(page).toHaveURL(editorUrl);
+  await expect(page.locator('.react-flow__node-notation')).toHaveCount(1);
+  await page.locator('.react-flow__node-notation').click();
+  await page.getByLabel('Уровень слоя', { exact: true }).fill('5');
+  await page.getByLabel('Уровень слоя', { exact: true }).press('Tab');
+  await expect(page.getByText('Есть изменения', { exact: true })).toBeVisible();
+  let dialog = page.waitForEvent('dialog', { timeout: 10000 });
+  const leaving = page
+    .getByRole('link', { name: 'Библиотека', exact: true })
+    .click({ noWaitAfter: true });
+  const linkDialog = await dialog;
+  expect(linkDialog.type()).toBe('beforeunload');
+  await linkDialog.dismiss();
+  await leaving;
+  await expect(page).toHaveURL(editorUrl);
+  await expect(page.getByText('Есть изменения', { exact: true })).toBeVisible();
+  dialog = page.waitForEvent('dialog', { timeout: 10000 });
+  const goingBack = page.evaluate(() => history.back());
+  const backDialog = await dialog;
+  expect(backDialog.type()).toBe('beforeunload');
+  await backDialog.dismiss();
+  await goingBack;
+  await expect(page).toHaveURL(editorUrl);
+  await expect(page.locator('.react-flow__node-notation')).toHaveCount(1);
+  await expect(page.getByText('Есть изменения', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Уровень слоя', { exact: true })).toHaveValue('5');
+  dialog = page.waitForEvent('dialog', { timeout: 10000 });
+  const goingForward = page.evaluate(() => history.forward());
+  const forwardDialog = await dialog;
+  expect(forwardDialog.type()).toBe('beforeunload');
+  await forwardDialog.dismiss();
+  await goingForward;
+  await expect(page).toHaveURL(editorUrl);
+  await expect(page.getByLabel('Уровень слоя', { exact: true })).toHaveValue('5');
+  dialog = page.waitForEvent('dialog', { timeout: 10000 });
+  const confirmingBack = page.evaluate(() => history.back());
+  const accepted = await dialog;
+  expect(accepted.type()).toBe('beforeunload');
+  await accepted.accept();
+  await confirmingBack;
+  await expect(page).toHaveURL(/\/solutions$/);
+});

@@ -24,14 +24,54 @@ export function TreeContextMenu({
   actions: ReactNode;
 }) {
   const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
-  const menu = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLElement | null>(null);
   function close(restoreFocus = false) {
     setPosition(null);
     if (restoreFocus) trigger.current?.focus();
   }
+  return (
+    <div
+      {...props}
+      onContextMenu={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        trigger.current = event.currentTarget.querySelector<HTMLElement>(
+          'button.tree-label, a.tree-label, button:not(.tree-toggle):not(:disabled), a[href]',
+        );
+        setPosition({ x: event.clientX, y: event.clientY });
+      }}
+      onKeyDown={(event) => {
+        if (event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10')) return;
+        event.preventDefault();
+        event.stopPropagation();
+        trigger.current = event.target as HTMLElement;
+        const bounds = event.currentTarget.getBoundingClientRect();
+        setPosition({ x: bounds.left + 20, y: bounds.bottom });
+      }}
+    >
+      {children}
+      {position && <ContextMenu position={position} actions={actions} onClose={close} />}
+    </div>
+  );
+}
+
+export function ContextMenu({
+  position,
+  actions,
+  onClose,
+}: {
+  position: { x: number; y: number };
+  actions: ReactNode;
+  onClose: (restoreFocus?: boolean) => void;
+}) {
+  const menu = useRef<HTMLDivElement>(null);
+  const trigger = useRef(document.activeElement as HTMLElement | null);
+  function close(restoreFocus = false) {
+    onClose(restoreFocus);
+    if (restoreFocus && menu.current?.contains(document.activeElement)) trigger.current?.focus();
+  }
   useLayoutEffect(() => {
-    if (!position || !menu.current) return;
+    if (!menu.current) return;
     const element = menu.current;
     const bounds = element.getBoundingClientRect();
     element.style.left = `${Math.max(8, Math.min(position.x, window.innerWidth - bounds.width - 8))}px`;
@@ -41,11 +81,10 @@ export function TreeContextMenu({
       ?.focus({ preventScroll: true });
   }, [position]);
   useEffect(() => {
-    if (!position) return;
     const outside = (event: Event) => {
-      if (!menu.current?.contains(event.target as Node)) setPosition(null);
+      if (!menu.current?.contains(event.target as Node)) onClose();
     };
-    const dismiss = () => setPosition(null);
+    const dismiss = () => onClose();
     document.addEventListener('pointerdown', outside);
     document.addEventListener('contextmenu', outside);
     window.addEventListener('resize', dismiss);
@@ -80,65 +119,44 @@ export function TreeContextMenu({
     });
   }
   return (
-    <div
-      {...props}
-      onContextMenu={(event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        trigger.current = event.currentTarget.querySelector<HTMLElement>(
-          'button.tree-label, a.tree-label, button:not(.tree-toggle):not(:disabled), a[href]',
-        );
-        setPosition({ x: event.clientX, y: event.clientY });
-      }}
-      onKeyDown={(event) => {
-        if (event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10')) return;
-        event.preventDefault();
-        event.stopPropagation();
-        trigger.current = event.target as HTMLElement;
-        const bounds = event.currentTarget.getBoundingClientRect();
-        setPosition({ x: bounds.left + 20, y: bounds.bottom });
-      }}
-    >
-      {children}
-      {position &&
-        createPortal(
-          <div
-            ref={menu}
-            className="tree-context-menu"
-            role="menu"
-            aria-label="Действия элемента"
-            style={{ left: position.x, top: position.y }}
-            onContextMenu={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-            }}
-            onKeyDown={(event) => {
-              event.stopPropagation();
-              if (event.key === 'Escape' || event.key === 'Tab') {
-                event.preventDefault();
-                close(true);
-                return;
-              }
-              if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
-              event.preventDefault();
-              const options = Array.from(
-                menu.current!.querySelectorAll<HTMLElement>('[role="menuitem"]:not(:disabled)'),
-              );
-              const current = options.indexOf(document.activeElement as HTMLElement);
-              const next =
-                event.key === 'Home'
-                  ? 0
-                  : event.key === 'End'
-                    ? options.length - 1
-                    : (current + (event.key === 'ArrowDown' ? 1 : -1) + options.length) %
-                      options.length;
-              options[next]?.focus();
-            }}
-          >
-            {items(actions)}
-          </div>,
-          document.body,
-        )}
-    </div>
+    position &&
+    createPortal(
+      <div
+        ref={menu}
+        className="tree-context-menu"
+        role="menu"
+        aria-label="Действия элемента"
+        style={{ left: position.x, top: position.y }}
+        onContextMenu={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+        }}
+        onKeyDown={(event) => {
+          event.stopPropagation();
+          if (event.key === 'Escape' || event.key === 'Tab') {
+            event.preventDefault();
+            close(true);
+            return;
+          }
+          if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+          event.preventDefault();
+          const options = Array.from(
+            menu.current!.querySelectorAll<HTMLElement>('[role="menuitem"]:not(:disabled)'),
+          );
+          const current = options.indexOf(document.activeElement as HTMLElement);
+          const next =
+            event.key === 'Home'
+              ? 0
+              : event.key === 'End'
+                ? options.length - 1
+                : (current + (event.key === 'ArrowDown' ? 1 : -1) + options.length) %
+                  options.length;
+          options[next]?.focus();
+        }}
+      >
+        {items(actions)}
+      </div>,
+      document.body,
+    )
   );
 }

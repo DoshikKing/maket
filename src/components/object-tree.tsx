@@ -1,6 +1,6 @@
 'use client';
 import { TreeContextMenu } from './tree-context-menu';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Plus,
   ChevronRight,
@@ -360,6 +360,7 @@ export function ObjectTree({
   counts,
   selectedId,
   focusId,
+  focusRequest,
   onPlace,
   onLocate,
   onSaved,
@@ -393,6 +394,7 @@ export function ObjectTree({
   counts: Map<string, number>;
   selectedId?: string;
   focusId?: string | null;
+  focusRequest?: { id: string; token: number } | null;
   onPlace: (id: string) => void;
   onLocate: (id: string) => void;
   onSaved: (o: ModelObject) => void;
@@ -405,7 +407,10 @@ export function ObjectTree({
     ),
     [error, setError] = useState('');
   const entities = [...objects, ...relations.map(relationEntity)];
-  const expansion = useTreeExpansion(entities, focusId);
+  const expansion = useTreeExpansion(entities, focusRequest?.id ?? focusId, focusRequest?.token);
+  useEffect(() => {
+    if (focusRequest) setQuery('');
+  }, [focusRequest]);
   const relationIds = new Set(relations.map((r) => r.id));
   const editEntity = (o: ModelObject) => {
     const r = relations.find((r) => r.id === o.id);

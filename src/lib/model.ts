@@ -252,16 +252,23 @@ export function connectionTypeForSource(
   );
   return qualify(bindingId, applicable?.edgeType ?? binding.document.edgeTypes[0].id);
 }
+export function effectiveAttributes(
+  local: ModelObject['attributes'] | undefined,
+  object?: Pick<ModelObject, 'attributes'>,
+) {
+  return { ...object?.attributes, ...local };
+}
 export function effectiveNode(
   n: DiagramDocument['nodes'][number],
   t: NotationDocument['nodeTypes'][number],
   object?: ModelObject,
 ) {
   if (!object) return n;
+  const attributes = effectiveAttributes(n.attributes, object);
   const properties = { ...n.properties };
   for (const p of t.properties) {
     if (p.scope === 'object') {
-      const value = object.attributes[p.objectKey ?? p.key];
+      const value = attributes[p.objectKey ?? p.key];
       if (value === undefined) delete properties[p.key];
       else properties[p.key] = value;
     } else if (p.key === 'title' && p.type === 'string' && properties.title === undefined)
@@ -269,6 +276,7 @@ export function effectiveNode(
   }
   return {
     ...n,
+    attributes,
     properties,
     ...(!t.properties.some((p) => p.key === 'title') && n.label === undefined
       ? { label: object.name }
@@ -281,15 +289,16 @@ export function effectiveEdge(
   relation?: ModelRelation,
 ) {
   if (!relation) return e;
+  const attributes = effectiveAttributes(e.attributes, relation);
   const properties = { ...e.properties };
   for (const p of t.properties)
     if (p.scope === 'object') {
-      const value = relation.attributes[p.objectKey ?? p.key];
+      const value = attributes[p.objectKey ?? p.key];
       if (value !== undefined) properties[p.key] = value;
       else if (p.default !== undefined) properties[p.key] = p.default;
       else delete properties[p.key];
     }
-  return { ...e, properties };
+  return { ...e, attributes, properties };
 }
 export function displayedView(d: ViewDocument, objects: ModelObject[]): DiagramDocument {
   const lookup = new Map(objects.map((o) => [o.id, o]));
