@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { ChevronRight, Folder, Layers } from 'lucide-react';
 import { api } from '@/lib/client';
 import type { Representation } from '@/lib/structure';
+import { TreeContextMenu } from './tree-context-menu';
 import { useTreeDisclosure } from './use-tree-disclosure';
 export function RepresentationFolder({
   entityId,
@@ -81,24 +82,42 @@ export function RepresentationFolder({
             role={level ? 'treeitem' : undefined}
             aria-level={level ? level + 1 : undefined}
           >
-            <Link
-              className="tree-row tree-row-leaf"
-              href={`/solutions?diagram=${r.diagramId}&element=${encodeURIComponent(r.id)}`}
-              onClick={(e) => {
-                if (onLocate) {
-                  e.preventDefault();
-                  onLocate(r.id, r.diagramId);
-                }
-              }}
+            <TreeContextMenu
+              actions={
+                <Link
+                  href={`/solutions?diagram=${r.diagramId}&element=${encodeURIComponent(r.id)}`}
+                  title="Показать представление на диаграмме"
+                  aria-label={`Показать представление ${r.name}`}
+                  onClick={(e) => {
+                    if (onLocate) {
+                      e.preventDefault();
+                      onLocate(r.id, r.diagramId);
+                    }
+                  }}
+                >
+                  <Layers size={14} />
+                </Link>
+              }
             >
-              <Layers className="tree-icon" size={16} />
-              <span className="tree-label">
-                {r.name}
-                <small>
-                  {r.diagramName} · {r.notation} · {r.type}
-                </small>
-              </span>
-            </Link>
+              <Link
+                className="tree-row tree-row-leaf"
+                href={`/solutions?diagram=${r.diagramId}&element=${encodeURIComponent(r.id)}`}
+                onClick={(e) => {
+                  if (onLocate) {
+                    e.preventDefault();
+                    onLocate(r.id, r.diagramId);
+                  }
+                }}
+              >
+                <Layers className="tree-icon" size={16} />
+                <span className="tree-label">
+                  {r.name}
+                  <small>
+                    {r.diagramName} · {r.notation} · {r.type}
+                  </small>
+                </span>
+              </Link>
+            </TreeContextMenu>
           </div>
         ))}
       </div>

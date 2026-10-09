@@ -2440,3 +2440,71 @@ test('relation types and editable participants survive history and diagram impor
   expect(copy.document.relations![0].relationType).toBe('Документирует');
   expect(copy.document.relations![0].id).not.toBe(r.id);
 });
+
+test('browser: Chromium context menus on solution objects, relation references and representations', async ({
+  page,
+  request,
+}) => {
+  await login(request, page);
+  const owner = await object(request, 'Владелец меню');
+  const child = await object(request, 'Дочерний элемент меню', owner.id);
+  const relationResponse = await request.post('/api/relations', {
+    data: {
+      name: 'Связь для меню',
+      sourceId: owner.id,
+      targetId: child.id,
+    },
+  });
+  expect(relationResponse.status()).toBe(201);
+  const relation = await relationResponse.json();
+  let diagram = await create(request, 'Диаграмма для меню');
+  diagram = await place(request, diagram, owner.id);
+  await page.goto(`/solutions?parent=${owner.id}`);
+  const ownerRow = page.locator(`[data-tree-entity="${owner.id}"] > .solution-tree-row`);
+  await expect(ownerRow).toBeVisible();
+  // Chromium's native context menu is suppressed even when the name is the target.
+  expect(
+    await ownerRow.locator('.tree-label').evaluate((element) => {
+      const event = new MouseEvent('contextmenu', {
+        bubbles: true,
+        cancelable: true,
+        clientX: 300,
+        clientY: 200,
+      });
+      element.dispatchEvent(event);
+      return event.defaultPrevented;
+    }),
+  ).toBe(true);
+  await page.getByRole('menuitem', { name: 'Свойства Владелец меню', exact: true }).click();
+  await expect(page.getByLabel('Имя объекта', { exact: true })).toHaveValue(owner.name);
+  await page.getByRole('button', { name: 'Закрыть', exact: true }).click();
+  const childRow = page.locator(`[data-tree-entity="${child.id}"] > .solution-tree-row`);
+  await treeAction(page, childRow, 'Создать внутри Дочерний элемент меню');
+  await expect(page.getByRole('dialog', { name: 'Создать: Объект', exact: true })).toBeVisible();
+  await expect(page.getByLabel('Родительский объект')).toHaveValue(child.id);
+  await page.getByRole('button', { name: 'Закрыть', exact: true }).click();
+  await page.goto(`/solutions?parent=${owner.id}`);
+  const folder = page.locator(
+    `.solutions-tree .system-relation-folder[data-parent-id="${owner.id}"]`,
+  );
+  if ((await folder.getAttribute('aria-expanded')) === 'false')
+    await folder.locator(':scope > button').click();
+  const reference = folder.locator('.tree-row').filter({ hasText: relation.name }).first();
+  await treeAction(page, reference, 'Свойства Связь для меню');
+  await expect(page.getByLabel('Имя связи', { exact: true })).toHaveValue(relation.name);
+  await page.getByRole('button', { name: 'Закрыть', exact: true }).click();
+  await page.goto(`/solutions?parent=${owner.id}`);
+  const representations = page.locator(
+    `.solutions-tree .representation-folder[data-parent-id="${owner.id}"]`,
+  );
+  if ((await representations.getAttribute('open')) === null)
+    await representations.locator('summary').click();
+  await representations.locator('.representation-entry a').click({ button: 'right' });
+  await page
+    .getByRole('menuitem', { name: `Показать представление ${owner.name}`, exact: true })
+    .click();
+  await expect(page).toHaveURL(
+    new RegExp(`diagram=${diagram.id}&element=${diagram.document.nodes[0].id}`),
+  );
+  await expect(page.locator('.react-flow__node-notation.selected')).toHaveCount(1);
+});

@@ -85,7 +85,9 @@ export function TreeContextMenu({
       onContextMenu={(event) => {
         event.preventDefault();
         event.stopPropagation();
-        trigger.current = event.currentTarget.querySelector<HTMLElement>('.tree-label');
+        trigger.current = event.currentTarget.querySelector<HTMLElement>(
+          'button.tree-label, a.tree-label, button:not(.tree-toggle):not(:disabled), a[href]',
+        );
         setPosition({ x: event.clientX, y: event.clientY });
       }}
       onKeyDown={(event) => {

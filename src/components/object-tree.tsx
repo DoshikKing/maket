@@ -458,17 +458,43 @@ export function ObjectTree({
       >
         {linked.map((r) => (
           <div key={r.id} role="treeitem" aria-level={level + 1}>
-            <button
-              className="solution-tree-select tree-row tree-row-leaf"
-              onClick={() => onRelationLocate?.(r.id)}
-              onDoubleClick={() => onRelationEdit?.(r)}
+            <TreeContextMenu
+              actions={
+                <>
+                  <button
+                    aria-label={`Разместить связь ${r.name}`}
+                    disabled={r.archived}
+                    onClick={() => onRelationPlace?.(r)}
+                  >
+                    <Plus size={12} />
+                  </button>
+                  <button
+                    aria-label={`Найти связь ${r.name}`}
+                    onClick={() => onRelationLocate?.(r.id)}
+                  >
+                    <LocateFixed size={12} />
+                  </button>
+                  <button
+                    aria-label={`Изменить связь ${r.name}`}
+                    onClick={() => onRelationEdit?.(r)}
+                  >
+                    <Pencil size={12} />
+                  </button>
+                </>
+              }
             >
-              <GitBranch className="tree-icon" size={16} />
-              <span className="tree-label">
-                {r.name}
-                <small>{r.parentId === id ? 'Дочерняя связь' : 'Ссылка'}</small>
-              </span>
-            </button>
+              <button
+                className="solution-tree-select tree-row tree-row-leaf"
+                onClick={() => onRelationLocate?.(r.id)}
+                onDoubleClick={() => onRelationEdit?.(r)}
+              >
+                <GitBranch className="tree-icon" size={16} />
+                <span className="tree-label">
+                  {r.name}
+                  <small>{r.parentId === id ? 'Дочерняя связь' : 'Ссылка'}</small>
+                </span>
+              </button>
+            </TreeContextMenu>
           </div>
         ))}
       </RelationFolder>

@@ -25,6 +25,7 @@ import { Modal } from './modal';
 import type { NotationItem } from './library';
 import { useTreeExpansion } from './use-tree-expansion';
 import { EntityRelations } from './entity-relations';
+import { TreeContextMenu } from './tree-context-menu';
 const icons = {
   solution: Network,
   project: Workflow,
@@ -113,31 +114,77 @@ export function SolutionsPage() {
       setError((err as Error).message);
     }
   }
-  async function remove() {
+  async function remove(target = selected) {
     if (
-      !selected ||
+      !target ||
       !confirm(
-        `Удалить «${selected.name}»? Элементы с дочерними элементами или представлениями удалить нельзя.`,
+        `Удалить «${target.name}»? Элементы с дочерними элементами или представлениями удалить нельзя.`,
       )
     )
       return;
     setBusy(true);
     try {
-      const d = space?.diagrams.find((d) => d.entityId === selected.id);
+      const d = space?.diagrams.find((d) => d.entityId === target.id);
       await api(
         d
           ? `diagrams/${d.id}`
-          : `${relationIds.has(selected.id) ? 'relations' : 'objects'}/${selected.id}`,
+          : `${relationIds.has(target.id) ? 'relations' : 'objects'}/${target.id}`,
         'DELETE',
-        d ? undefined : { revision: selected.revision, incarnation: selected.incarnation },
+        d ? undefined : { revision: target.revision, incarnation: target.incarnation },
       );
-      select(selected.parentId);
+      select(target.parentId);
       await load();
     } catch (err) {
       setError((err as Error).message);
     } finally {
       setBusy(false);
     }
+  }
+  function actions(o: ModelObject) {
+    const diagram = space?.diagrams.find((d) => d.entityId === o.id);
+    return (
+      <>
+        <button
+          title="Свойства"
+          aria-label={`Свойства ${o.name}`}
+          onClick={() => {
+            select(o.id);
+            setEditing(true);
+          }}
+        >
+          <Pencil size={14} />
+        </button>
+        {diagram && (
+          <Link
+            href={`/solutions?diagram=${diagram.id}`}
+            title="Открыть диаграмму"
+            aria-label={`Открыть диаграмму ${o.name}`}
+          >
+            <FileText size={14} />
+          </Link>
+        )}
+        <button
+          title="Создать внутри"
+          aria-label={`Создать внутри ${o.name}`}
+          disabled={o.archived}
+          onClick={() => {
+            select(o.id);
+            setError('');
+            setCreating(true);
+          }}
+        >
+          <Plus size={14} />
+        </button>
+        <button
+          title="Удалить"
+          aria-label={`Удалить ${o.name}`}
+          disabled={busy}
+          onClick={() => void remove(o)}
+        >
+          <Trash2 size={14} />
+        </button>
+      </>
+    );
   }
   function linkedRelations(id: string, ancestors = new Set<string>()) {
     return (space?.relations ?? []).filter(
@@ -163,16 +210,18 @@ export function SolutionsPage() {
             role={level ? 'treeitem' : undefined}
             aria-level={level ? level + 1 : undefined}
           >
-            <button
-              className="solution-tree-select tree-row tree-row-leaf"
-              onClick={() => select(r.id)}
-            >
-              <GitBranch className="tree-icon" size={16} />
-              <span className="tree-label">
-                {r.name}
-                <small>{r.parentId === id ? 'Дочерняя связь' : 'Ссылка'}</small>
-              </span>
-            </button>
+            <TreeContextMenu actions={actions(relationEntity(r))}>
+              <button
+                className="solution-tree-select tree-row tree-row-leaf"
+                onClick={() => select(r.id)}
+              >
+                <GitBranch className="tree-icon" size={16} />
+                <span className="tree-label">
+                  {r.name}
+                  <small>{r.parentId === id ? 'Дочерняя связь' : 'Ссылка'}</small>
+                </span>
+              </button>
+            </TreeContextMenu>
           </div>
         ))}
       </RelationFolder>
@@ -208,7 +257,8 @@ export function SolutionsPage() {
             aria-selected={selected?.id === o.id}
             aria-expanded={hasChildren ? !collapsed : undefined}
           >
-            <div
+            <TreeContextMenu
+              actions={actions(o)}
               className={`solution-tree-row tree-row ${selected?.id === o.id ? 'selected' : ''}`}
               title={`${entityLabels[entityKind(o)]} · Родитель: ${entities.find((p) => p.id === o.parentId)?.name ?? 'Корень пространства'}`}
               draggable={!o.archived}
@@ -254,7 +304,7 @@ export function SolutionsPage() {
                   {o.archived && <small>Архив</small>}
                 </span>
               </button>
-            </div>
+            </TreeContextMenu>
             {hasChildren && !collapsed && (
               <div role="group" className="hierarchy-children">
                 {!['folder', 'diagram'].includes(o.kind ?? 'object') && (
@@ -295,7 +345,7 @@ export function SolutionsPage() {
                           }
                         }}
                       >
-                        <div className="tree-row">
+                        <TreeContextMenu actions={actions(relationEntity(r))} className="tree-row">
                           <button
                             className="tree-toggle"
                             aria-label={`${expansion.isExpanded(r.id) ? 'Свернуть' : 'Развернуть'} связь ${r.name}`}
@@ -318,7 +368,7 @@ export function SolutionsPage() {
                               <small>{r.parentId === o.id ? 'Дочерняя связь' : 'Ссылка'}</small>
                             </span>
                           </button>
-                        </div>
+                        </TreeContextMenu>
                         {expansion.isExpanded(r.id) && (
                           <div className="hierarchy-children" role="group">
                             <RepresentationFolder
