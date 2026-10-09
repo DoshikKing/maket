@@ -1,4 +1,5 @@
 'use client';
+import { TreeContextMenu } from './tree-context-menu';
 import { useEffect, useId, useState } from 'react';
 import {
   FolderPlus,
@@ -445,7 +446,106 @@ export function RelationBrowser({
         )
         .map((r) => (
           <div key={r.id}>
-            <div
+            <TreeContextMenu
+              actions={
+                <>
+                  <button
+                    aria-label={`Создать дочерний объект связи ${r.name}`}
+                    title="Создать дочерний объект"
+                    disabled={r.archived}
+                    onClick={() => onCreateChild?.(r.id)}
+                  >
+                    <FolderPlus size={13} />
+                  </button>
+                  <button
+                    title="Разместить стрелку этой связи"
+                    aria-label={`Разместить связь ${r.name}`}
+                    disabled={r.archived}
+                    onClick={() => onPlace(r)}
+                  >
+                    <Plus size={13} />
+                  </button>
+                  <button
+                    title="Показать стрелку"
+                    aria-label={`Найти связь ${r.name}`}
+                    onClick={() => onLocate(r.id)}
+                  >
+                    <LocateFixed size={12} />
+                  </button>
+                  <button
+                    title="Изменить общие свойства"
+                    aria-label={`Изменить связь ${r.name}`}
+                    onClick={() => onEdit(r)}
+                  >
+                    <Pencil size={12} />
+                  </button>
+                  <button
+                    title="Создать независимую копию связи"
+                    aria-label={`Копировать связь ${r.name}`}
+                    onClick={async () => {
+                      try {
+                        await onBeforeWrite();
+                        onSaved(
+                          await api('relations', 'POST', {
+                            name: `${r.name.slice(0, 90)} — копия`,
+                            description: r.description,
+                            sourceId: r.sourceId,
+                            targetId: r.targetId,
+                            attributes: r.attributes,
+                            copyOf: r.id,
+                          }),
+                        );
+                        setError('');
+                      } catch (err) {
+                        setError((err as Error).message);
+                      }
+                    }}
+                  >
+                    <Copy size={12} />
+                  </button>
+                  <button
+                    title={r.archived ? 'Вернуть из архива' : 'Архивировать связь'}
+                    aria-label={`${r.archived ? 'Восстановить' : 'Архивировать'} связь ${r.name}`}
+                    onClick={async () => {
+                      try {
+                        await onBeforeWrite();
+                        onSaved(
+                          await api(`relations/${r.id}`, 'PATCH', {
+                            revision: r.revision,
+                            incarnation: r.incarnation,
+                            archived: !r.archived,
+                          }),
+                        );
+                        setError('');
+                      } catch (err) {
+                        setError((err as Error).message);
+                      }
+                    }}
+                  >
+                    <Archive size={12} />
+                  </button>
+                  <button
+                    title="Удалить связь без представлений"
+                    aria-label={`Удалить связь модели ${r.name}`}
+                    onClick={async () => {
+                      if (
+                        !confirm(
+                          `Удалить связь «${r.name}» и историю её общих свойств? Снимки диаграмм сохранятся.`,
+                        )
+                      )
+                        return;
+                      try {
+                        await onRemove(r);
+                        setError('');
+                      } catch (err) {
+                        setError((err as Error).message);
+                      }
+                    }}
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                </>
+              }
               className={`object-tree-row tree-row ${onToggle ? '' : 'tree-row-leaf'} ${r.archived ? 'archived' : ''}`}
               data-model-relation-id={r.id}
               draggable={!r.archived}
@@ -502,104 +602,7 @@ export function RelationBrowser({
                 </small>
               </button>
               <span className="badge tree-count">{counts.get(r.id) ?? 0}</span>
-              <div className="object-tree-actions">
-                <button
-                  aria-label={`Создать дочерний объект связи ${r.name}`}
-                  title="Создать дочерний объект"
-                  disabled={r.archived}
-                  onClick={() => onCreateChild?.(r.id)}
-                >
-                  <FolderPlus size={13} />
-                </button>
-                <button
-                  title="Разместить стрелку этой связи"
-                  aria-label={`Разместить связь ${r.name}`}
-                  disabled={r.archived}
-                  onClick={() => onPlace(r)}
-                >
-                  <Plus size={13} />
-                </button>
-                <button
-                  title="Показать стрелку"
-                  aria-label={`Найти связь ${r.name}`}
-                  onClick={() => onLocate(r.id)}
-                >
-                  <LocateFixed size={12} />
-                </button>
-                <button
-                  title="Изменить общие свойства"
-                  aria-label={`Изменить связь ${r.name}`}
-                  onClick={() => onEdit(r)}
-                >
-                  <Pencil size={12} />
-                </button>
-                <button
-                  title="Создать независимую копию связи"
-                  aria-label={`Копировать связь ${r.name}`}
-                  onClick={async () => {
-                    try {
-                      await onBeforeWrite();
-                      onSaved(
-                        await api('relations', 'POST', {
-                          name: `${r.name.slice(0, 90)} — копия`,
-                          description: r.description,
-                          sourceId: r.sourceId,
-                          targetId: r.targetId,
-                          attributes: r.attributes,
-                          copyOf: r.id,
-                        }),
-                      );
-                      setError('');
-                    } catch (err) {
-                      setError((err as Error).message);
-                    }
-                  }}
-                >
-                  <Copy size={12} />
-                </button>
-                <button
-                  title={r.archived ? 'Вернуть из архива' : 'Архивировать связь'}
-                  aria-label={`${r.archived ? 'Восстановить' : 'Архивировать'} связь ${r.name}`}
-                  onClick={async () => {
-                    try {
-                      await onBeforeWrite();
-                      onSaved(
-                        await api(`relations/${r.id}`, 'PATCH', {
-                          revision: r.revision,
-                          incarnation: r.incarnation,
-                          archived: !r.archived,
-                        }),
-                      );
-                      setError('');
-                    } catch (err) {
-                      setError((err as Error).message);
-                    }
-                  }}
-                >
-                  <Archive size={12} />
-                </button>
-                <button
-                  title="Удалить связь без представлений"
-                  aria-label={`Удалить связь модели ${r.name}`}
-                  onClick={async () => {
-                    if (
-                      !confirm(
-                        `Удалить связь «${r.name}» и историю её общих свойств? Снимки диаграмм сохранятся.`,
-                      )
-                    )
-                      return;
-                    try {
-                      await onRemove(r);
-                      setError('');
-                    } catch (err) {
-                      setError((err as Error).message);
-                    }
-                  }}
-                >
-                  <Trash2 size={12} />
-                </button>
-              </div>
-            </div>
+            </TreeContextMenu>
             {renderChildren?.(r.id)}
           </div>
         ))}

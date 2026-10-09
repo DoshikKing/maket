@@ -1,4 +1,5 @@
 'use client';
+import { TreeContextMenu } from './tree-context-menu';
 import { useState } from 'react';
 import {
   Plus,
@@ -517,7 +518,129 @@ export function ObjectTree({
             data-tree-entity={o.id}
             aria-current={focusId === o.id ? 'page' : undefined}
           >
-            <div
+            <TreeContextMenu
+              actions={
+                <>
+                  <Link
+                    href={`/solutions?parent=${o.id}`}
+                    aria-label={`Декомпозиция ${o.name}`}
+                    title="Дочерние элементы и диаграммы"
+                  >
+                    <GitBranch size={12} />
+                  </Link>
+                  <button
+                    aria-label={`Разместить ${o.name}`}
+                    title="Ещё одно представление"
+                    disabled={o.archived || !representable}
+                    onClick={() => {
+                      const r = relations.find((r) => r.id === o.id);
+                      if (r) onRelationPlace?.(r);
+                      else onPlace(o.id);
+                    }}
+                  >
+                    <Plus size={13} />
+                  </button>
+                  <button
+                    aria-label={`Найти объект ${o.name}`}
+                    title="Показать представление на диаграмме"
+                    onClick={() =>
+                      relationIds.has(o.id) ? onRelationLocate?.(o.id) : onLocate(o.id)
+                    }
+                  >
+                    <LocateFixed size={12} />
+                  </button>
+                  <button aria-label={`Изменить объект ${o.name}`} onClick={() => editEntity(o)}>
+                    <Pencil size={12} />
+                  </button>
+                  <button
+                    aria-label={`Создать дочерний объект ${o.name}`}
+                    title="Создать дочерний объект"
+                    disabled={o.archived}
+                    onClick={() => {
+                      if (!expansion.isExpanded(o.id)) expansion.toggle(o.id);
+                      setEditing({ parentId: o.id });
+                    }}
+                  >
+                    <FolderPlus size={12} />
+                  </button>
+                  {!relationIds.has(o.id) && (
+                    <>
+                      <button
+                        hidden={o.kind === 'diagram'}
+                        aria-label={`Копировать объект ${o.name}`}
+                        disabled={o.archived}
+                        onClick={async () => {
+                          try {
+                            onSaved(
+                              await api<ModelObject>('objects', 'POST', {
+                                name: `${o.name.slice(0, 90)} — копия`,
+                                copyOf: o.id,
+                                description: o.description,
+                                attributes: o.attributes,
+                                parentId: o.parentId,
+                                kind: o.kind,
+                              }),
+                            );
+                          } catch (err) {
+                            setError((err as Error).message);
+                          }
+                        }}
+                      >
+                        <Copy size={12} />
+                      </button>
+                      <button
+                        aria-label={`${o.archived ? 'Вернуть из архива' : 'Архивировать'} ${o.name}`}
+                        onClick={async () => {
+                          try {
+                            if (!o.archived) {
+                              const usages = await api<
+                                { count: number; diagram: { name: string } }[]
+                              >(`objects/${o.id}/usages`);
+                              if (
+                                !confirm(
+                                  `Архивировать «${o.name}»? Использований: ${usages.reduce((sum, u) => sum + u.count, 0)}. Представления и дочерние объекты сохранятся.`,
+                                )
+                              )
+                                return;
+                            }
+                            onSaved(
+                              await api<ModelObject>(`objects/${o.id}`, 'PATCH', {
+                                revision: o.revision,
+                                incarnation: o.incarnation,
+                                archived: !o.archived,
+                              }),
+                            );
+                          } catch (err) {
+                            setError((err as Error).message);
+                          }
+                        }}
+                      >
+                        <Archive size={12} />
+                      </button>
+                      <button
+                        aria-label={`Удалить объект ${o.name}`}
+                        title="Удалить неиспользуемый объект"
+                        onClick={async () => {
+                          if (
+                            !confirm(
+                              `Удалить объект «${o.name}» и историю его общих свойств? Исторические снимки диаграмм сохранятся. Объекты с представлениями или детьми удалить нельзя.`,
+                            )
+                          )
+                            return;
+                          try {
+                            await onRemove(o);
+                            setError('');
+                          } catch (err) {
+                            setError((err as Error).message);
+                          }
+                        }}
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    </>
+                  )}
+                </>
+              }
               className={`object-tree-row tree-row ${(selectedId ?? focusId) === o.id ? 'selected' : ''} ${o.archived ? 'archived' : ''}`}
               title={`${entityLabels[kind]} · Родитель: ${entities.find((p) => p.id === o.parentId)?.name ?? 'Корень пространства'}`}
               draggable={!o.archived}
@@ -585,127 +708,7 @@ export function ObjectTree({
                 {o.archived && <small>Архив</small>}
               </button>
               <span className="badge tree-count">{counts.get(o.id) ?? 0}</span>
-              <div className="object-tree-actions">
-                <Link
-                  href={`/solutions?parent=${o.id}`}
-                  aria-label={`Декомпозиция ${o.name}`}
-                  title="Дочерние элементы и диаграммы"
-                >
-                  <GitBranch size={12} />
-                </Link>
-                <button
-                  aria-label={`Разместить ${o.name}`}
-                  title="Ещё одно представление"
-                  disabled={o.archived || !representable}
-                  onClick={() => {
-                    const r = relations.find((r) => r.id === o.id);
-                    if (r) onRelationPlace?.(r);
-                    else onPlace(o.id);
-                  }}
-                >
-                  <Plus size={13} />
-                </button>
-                <button
-                  aria-label={`Найти объект ${o.name}`}
-                  title="Показать представление на диаграмме"
-                  onClick={() =>
-                    relationIds.has(o.id) ? onRelationLocate?.(o.id) : onLocate(o.id)
-                  }
-                >
-                  <LocateFixed size={12} />
-                </button>
-                <button aria-label={`Изменить объект ${o.name}`} onClick={() => editEntity(o)}>
-                  <Pencil size={12} />
-                </button>
-                <button
-                  aria-label={`Создать дочерний объект ${o.name}`}
-                  title="Создать дочерний объект"
-                  disabled={o.archived}
-                  onClick={() => {
-                    if (!expansion.isExpanded(o.id)) expansion.toggle(o.id);
-                    setEditing({ parentId: o.id });
-                  }}
-                >
-                  <FolderPlus size={12} />
-                </button>
-                {!relationIds.has(o.id) && (
-                  <>
-                    <button
-                      hidden={o.kind === 'diagram'}
-                      aria-label={`Копировать объект ${o.name}`}
-                      disabled={o.archived}
-                      onClick={async () => {
-                        try {
-                          onSaved(
-                            await api<ModelObject>('objects', 'POST', {
-                              name: `${o.name.slice(0, 90)} — копия`,
-                              copyOf: o.id,
-                              description: o.description,
-                              attributes: o.attributes,
-                              parentId: o.parentId,
-                              kind: o.kind,
-                            }),
-                          );
-                        } catch (err) {
-                          setError((err as Error).message);
-                        }
-                      }}
-                    >
-                      <Copy size={12} />
-                    </button>
-                    <button
-                      aria-label={`${o.archived ? 'Вернуть из архива' : 'Архивировать'} ${o.name}`}
-                      onClick={async () => {
-                        try {
-                          if (!o.archived) {
-                            const usages = await api<
-                              { count: number; diagram: { name: string } }[]
-                            >(`objects/${o.id}/usages`);
-                            if (
-                              !confirm(
-                                `Архивировать «${o.name}»? Использований: ${usages.reduce((sum, u) => sum + u.count, 0)}. Представления и дочерние объекты сохранятся.`,
-                              )
-                            )
-                              return;
-                          }
-                          onSaved(
-                            await api<ModelObject>(`objects/${o.id}`, 'PATCH', {
-                              revision: o.revision,
-                              incarnation: o.incarnation,
-                              archived: !o.archived,
-                            }),
-                          );
-                        } catch (err) {
-                          setError((err as Error).message);
-                        }
-                      }}
-                    >
-                      <Archive size={12} />
-                    </button>
-                    <button
-                      aria-label={`Удалить объект ${o.name}`}
-                      title="Удалить неиспользуемый объект"
-                      onClick={async () => {
-                        if (
-                          !confirm(
-                            `Удалить объект «${o.name}» и историю его общих свойств? Исторические снимки диаграмм сохранятся. Объекты с представлениями или детьми удалить нельзя.`,
-                          )
-                        )
-                          return;
-                        try {
-                          await onRemove(o);
-                          setError('');
-                        } catch (err) {
-                          setError((err as Error).message);
-                        }
-                      }}
-                    >
-                      <Trash2 size={12} />
-                    </button>
-                  </>
-                )}
-              </div>
-            </div>
+            </TreeContextMenu>
             {children && !closed && (
               <div role="group" className="hierarchy-children">
                 {representable && (
@@ -727,7 +730,33 @@ export function ObjectTree({
                   >
                     {linked.map((r) => (
                       <div key={r.id}>
-                        <div
+                        <TreeContextMenu
+                          actions={
+                            <>
+                              <button
+                                aria-label={`Вернуть представление связи ${r.name}`}
+                                title="Разместить стрелку на диаграмме"
+                                disabled={r.archived}
+                                onClick={() => onRelationPlace?.(r)}
+                              >
+                                <Plus size={12} />
+                              </button>
+                              <button
+                                aria-label={`Создать дочерний объект связи ${r.name}`}
+                                title="Создать дочерний объект"
+                                disabled={r.archived}
+                                onClick={() => setEditing({ parentId: r.id })}
+                              >
+                                <FolderPlus size={12} />
+                              </button>
+                              <button
+                                aria-label={`Свойства вложенной связи ${r.name}`}
+                                onClick={() => onRelationEdit?.(r)}
+                              >
+                                <Pencil size={12} />
+                              </button>
+                            </>
+                          }
                           role="treeitem"
                           aria-expanded={expansion.isExpanded(r.id)}
                           aria-level={depth + 3}
@@ -792,31 +821,7 @@ export function ObjectTree({
                               {r.parentId === o.id ? ' · Дочерняя связь' : ' · Ссылка'}
                             </small>
                           </button>
-                          <div className="object-tree-actions">
-                            <button
-                              aria-label={`Вернуть представление связи ${r.name}`}
-                              title="Разместить стрелку на диаграмме"
-                              disabled={r.archived}
-                              onClick={() => onRelationPlace?.(r)}
-                            >
-                              <Plus size={12} />
-                            </button>
-                            <button
-                              aria-label={`Создать дочерний объект связи ${r.name}`}
-                              title="Создать дочерний объект"
-                              disabled={r.archived}
-                              onClick={() => setEditing({ parentId: r.id })}
-                            >
-                              <FolderPlus size={12} />
-                            </button>
-                            <button
-                              aria-label={`Свойства вложенной связи ${r.name}`}
-                              onClick={() => onRelationEdit?.(r)}
-                            >
-                              <Pencil size={12} />
-                            </button>
-                          </div>
-                        </div>
+                        </TreeContextMenu>
                         {expansion.isExpanded(r.id) && (
                           <div className="hierarchy-children">
                             <RepresentationFolder
