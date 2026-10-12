@@ -1,4 +1,5 @@
 import { db } from './db';
+import { workspaceScope } from './workspace-scope';
 import { getDiagram } from './model-service';
 import { modelDiagramSchema } from './model';
 // Capability links disclose only this diagram's model closure, never the owner's model catalog.
@@ -6,10 +7,12 @@ export async function publicDiagram(token: string) {
   if (!/^[A-Za-z0-9_-]{43}$/.test(token)) return null;
   const row = await db.diagram.findUnique({
     where: { shareToken: token, shareEnabled: true },
-    select: { id: true, ownerId: true },
+    select: { id: true, ownerId: true, modelSpaceId: true },
   });
   if (!row) return null;
-  const diagram = await getDiagram(row.ownerId, row.id);
+  const diagram = await workspaceScope.run(row.modelSpaceId ?? undefined, () =>
+    getDiagram(row.ownerId, row.id),
+  );
   const document = modelDiagramSchema.parse(diagram.document);
   // Check again after loading, so a concurrently revoked link cannot return a document.
   if (!(await db.diagram.count({ where: { id: row.id, shareToken: token, shareEnabled: true } })))

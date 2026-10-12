@@ -4,6 +4,8 @@ import { publicDiagram } from '@/lib/sharing';
 import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { db } from '@/lib/db';
+import { workspaceScope } from '@/lib/workspace-scope';
+import { listWorkspaces } from '@/lib/workspace-service';
 import {
   checkPassword,
   createSession,
@@ -203,6 +205,54 @@ async function handle(req: NextRequest, context: { params: Promise<{ path: strin
     }
     const user = await currentUser();
     if (!user) fail(401, 'Войдите в аккаунт');
+    if (resource === 'workspaces') {
+      if (!id && method === 'GET') return json(await listWorkspaces(user.id));
+      if (!id && method === 'POST') {
+        const { name } = z.object({ name: nameSchema }).parse(await body(req));
+        await listWorkspaces(user.id);
+        return json(
+          await db.modelSpace.create({
+            data: { ownerId: user.id, name },
+            select: { id: true, name: true, revision: true },
+          }),
+          201,
+        );
+      }
+      if (!id) fail(405, 'Укажите рабочую область');
+      const area = await db.modelSpace.findFirst({ where: { id, ownerId: user.id } });
+      if (!area) fail(404, 'Рабочая область не найдена');
+      if (action === 'open' && method === 'GET') {
+        const response = new NextResponse(null, {
+          status: 303,
+          headers: { Location: '/solutions' },
+        });
+        response.cookies.set('maket_workspace', area.id, {
+          httpOnly: true,
+          sameSite: 'lax',
+          secure: process.env.APP_URL?.startsWith('https://') ?? false,
+          path: '/',
+          maxAge: 365 * 86400,
+        });
+        return response;
+      }
+      if (!action && method === 'PATCH') {
+        const input = z
+          .object({ name: nameSchema, revision: z.number().int().positive() })
+          .parse(await body(req));
+        const result = await db.modelSpace.updateMany({
+          where: { id, ownerId: user.id, revision: input.revision },
+          data: { name: input.name, revision: { increment: 1 } },
+        });
+        if (!result.count) fail(409, 'Рабочая область изменена. Обновите список');
+        return json(
+          await db.modelSpace.findUniqueOrThrow({
+            where: { id },
+            select: { id: true, name: true, revision: true },
+          }),
+        );
+      }
+      fail(405, 'Метод не поддерживается');
+    }
     if (resource === 'viewpoints') {
       if (method === 'GET' && !id) {
         const space = await ensureModel(user.id);
@@ -542,7 +592,10 @@ async function handle(req: NextRequest, context: { params: Promise<{ path: strin
         );
       }
       if (!id) fail(405, 'Укажите идентификатор диаграммы');
-      const d = await db.diagram.findFirst({ where: { id, ownerId: user.id } });
+      const area = await ensureModel(user.id);
+      const d = await db.diagram.findFirst({
+        where: { id, ownerId: user.id, modelSpaceId: area.id },
+      });
       if (!d) fail(404, 'Диаграмма не найдена');
       if (action === 'viewpoint' && method === 'PATCH') {
         const input = z
@@ -694,4 +747,15 @@ async function handle(req: NextRequest, context: { params: Promise<{ path: strin
     );
   }
 }
-export { handle as GET, handle as POST, handle as PUT, handle as PATCH, handle as DELETE };
+async function scopedHandle(req: NextRequest, context: { params: Promise<{ path: string[] }> }) {
+  return workspaceScope.run(req.headers.get('x-maket-workspace') || undefined, () =>
+    handle(req, context),
+  );
+}
+export {
+  scopedHandle as GET,
+  scopedHandle as POST,
+  scopedHandle as PUT,
+  scopedHandle as PATCH,
+  scopedHandle as DELETE,
+};

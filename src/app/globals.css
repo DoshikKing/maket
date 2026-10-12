@@ -3561,3 +3561,99 @@ body {
   color: var(--muted);
   font-weight: 400;
 }
+
+.workspace-switcher {
+  position: relative;
+  margin: 22px 20px 18px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--panel);
+}
+.workspace-switcher summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  list-style: none;
+  color: var(--accent);
+}
+.workspace-switcher summary::-webkit-details-marker {
+  display: none;
+}
+.workspace-switcher summary > svg {
+  flex-shrink: 0;
+}
+.workspace-switcher summary > span {
+  flex: 1;
+  min-width: 0;
+}
+.workspace-switcher small {
+  display: block;
+  color: var(--muted);
+  font-size: 8px;
+  letter-spacing: 0.6px;
+  margin-bottom: 5px;
+}
+.workspace-switcher strong {
+  display: block;
+  color: var(--text);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.workspace-switcher-list {
+  max-height: 220px;
+  overflow: auto;
+  margin: 12px 0;
+}
+.workspace-switcher-list a {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  color: var(--text);
+  text-decoration: none;
+  padding: 9px 6px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  border-radius: 5px;
+}
+.workspace-switcher-list a:hover,
+.workspace-switcher-list a[aria-current='true'] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.workspace-switcher-list svg {
+  flex-shrink: 0;
+}
+@media (max-width: 700px) {
+  .workspace-switcher {
+    margin: 8px;
+  }
+}
+.workspace-switcher-menu {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 6px);
+  z-index: 100;
+  width: 260px;
+  max-width: calc(100vw - 30px);
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--panel);
+  box-shadow: 0 8px 28px #0003;
+}
+.workspace-switcher-menu > button {
+  width: 100%;
+}
+@media (max-width: 650px) {
+  .workspace-switcher {
+    margin: 18px 0;
+    padding: 8px;
+  }
+  .workspace-switcher summary > span,
+  .workspace-switcher summary > svg:last-child {
+    display: none;
+  }
+}

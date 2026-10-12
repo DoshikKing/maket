@@ -3853,3 +3853,355 @@ test('browser: object context menus navigate existing decompositions and viewpoi
   await expect(menu.getByRole('status')).toHaveCount(0);
   await expect(menu.getByRole('group')).toHaveCount(0);
 });
+
+test('workspaces: isolated models, ID guards, import copies, public links and concurrent request scopes', async ({
+  request,
+  playwright,
+}) => {
+  const owner = await login(request);
+  const initialResponses = await Promise.all(
+    Array.from({ length: 3 }, () => request.get('/api/workspaces')),
+  );
+  const initial = await initialResponses[0].json();
+  expect(initial).toHaveLength(1);
+  for (const response of initialResponses) expect(await response.json()).toEqual(initial);
+  const a = initial[0],
+    ah = { 'X-Maket-Workspace': a.id };
+  const existing = await object(request, 'Существующий объект');
+  let original = await place(
+    request,
+    await create(request, 'Диаграмма первой области'),
+    existing.id,
+  );
+  const createResponse = await request.post('/api/workspaces', {
+    data: { name: 'Вторая область' },
+  });
+  expect(createResponse.status()).toBe(201);
+  const b = await createResponse.json(),
+    bh = { 'X-Maket-Workspace': b.id };
+  const emptyModel = await (await request.get('/api/model', { headers: bh })).json();
+  expect(emptyModel).toMatchObject({
+    id: b.id,
+    objects: [],
+    relations: [],
+    diagrams: [],
+    viewpoints: [],
+  });
+  expect(
+    (await (await request.get('/api/model', { headers: ah })).json()).objects.map(
+      (o: ModelObject) => o.id,
+    ),
+  ).toContain(existing.id);
+  const legacy = await db.diagram.create({
+    data: {
+      ownerId: owner.id,
+      name: 'Legacy before workspaces',
+      document: {
+        schemaVersion: 1,
+        notation: builtinNotation,
+        nodes: [
+          {
+            id: 'legacy',
+            typeId: 'process',
+            position: { x: 0, y: 0 },
+            properties: { title: 'Legacy object' },
+          },
+        ],
+        edges: [],
+      },
+      revisions: {
+        create: {
+          number: 1,
+          document: {
+            schemaVersion: 1,
+            notation: builtinNotation,
+            nodes: [
+              {
+                id: 'legacy',
+                typeId: 'process',
+                position: { x: 0, y: 0 },
+                properties: { title: 'Legacy object' },
+              },
+            ],
+            edges: [],
+          },
+        },
+      },
+    },
+  });
+  expect((await request.get(`/api/diagrams/${legacy.id}`, { headers: bh })).status()).toBe(404);
+  expect(
+    (await db.diagram.findUniqueOrThrow({ where: { id: legacy.id } })).modelSpaceId,
+  ).toBeNull();
+  const migrated = await Promise.all(
+    Array.from({ length: 3 }, () => request.get(`/api/diagrams/${legacy.id}`, { headers: ah })),
+  );
+  for (const response of migrated) {
+    expect(response.status()).toBe(200);
+    expect((await response.json()).revision).toBe(2);
+  }
+  expect((await db.diagram.findUniqueOrThrow({ where: { id: legacy.id } })).modelSpaceId).toBe(
+    a.id,
+  );
+  const otherResponse = await request.post('/api/objects', {
+    headers: bh,
+    data: { name: 'Существующий объект' },
+  });
+  expect(otherResponse.status()).toBe(201);
+  const other = await otherResponse.json();
+  expect(other.id).not.toBe(existing.id);
+  const secondDiagramResponse = await request.post('/api/diagrams', {
+    headers: bh,
+    data: { name: 'Диаграмма второй области' },
+  });
+  expect(secondDiagramResponse.status()).toBe(201);
+  const second = await secondDiagramResponse.json();
+  expect(second.document.modelSpaceId).toBe(b.id);
+  const vpResponse = await request.post('/api/viewpoints', {
+    headers: bh,
+    data: { name: 'Ракурс второй области' },
+  });
+  expect(vpResponse.status()).toBe(201);
+  const vp = await vpResponse.json();
+  const linkResponse = await request.post('/api/relations', {
+    headers: bh,
+    data: { name: 'Связь второй области', sourceId: other.id, targetId: second.entityId },
+  });
+  expect(linkResponse.status()).toBe(201);
+  const link = await linkResponse.json();
+  for (const url of [
+    `objects/${existing.id}`,
+    `objects/${existing.id}/history`,
+    `objects/${existing.id}/representations`,
+    `diagrams/${original.id}`,
+    `diagrams/${original.id}/share`,
+    `diagrams/${original.id}/revisions`,
+    `diagrams/${original.id}/history?number=1`,
+  ])
+    expect((await request.get(`/api/${url}`, { headers: bh })).status(), url).toBe(404);
+  expect(
+    (
+      await request.patch(`/api/diagrams/${original.id}`, {
+        headers: bh,
+        data: { name: 'Чужое имя' },
+      })
+    ).status(),
+  ).toBe(404);
+  expect(
+    (
+      await request.put(`/api/diagrams/${original.id}`, {
+        headers: bh,
+        data: { revision: original.revision, document: original.document },
+      })
+    ).status(),
+  ).toBe(404);
+  expect((await request.delete(`/api/diagrams/${original.id}`, { headers: bh })).status()).toBe(
+    404,
+  );
+  expect(
+    (
+      await request.post(`/api/diagrams/${original.id}/duplicate`, { headers: bh, data: {} })
+    ).status(),
+  ).toBe(404);
+  expect(
+    (
+      await request.post(`/api/diagrams/${original.id}/notations`, {
+        headers: bh,
+        data: { revision: original.revision, notationId: 'builtin' },
+      })
+    ).status(),
+  ).toBe(404);
+  expect(
+    (
+      await request.post(`/api/diagrams/${original.id}/representations`, {
+        headers: bh,
+        data: {
+          revision: original.revision,
+          objectId: other.id,
+          bindingId: original.document.bindings[0].id,
+          typeId: 'process',
+          position: { x: 0, y: 0 },
+        },
+      })
+    ).status(),
+  ).toBe(404);
+  expect(
+    (
+      await request.patch(`/api/objects/${existing.id}`, {
+        headers: bh,
+        data: { revision: existing.revision, name: 'Чужое имя' },
+      })
+    ).status(),
+  ).toBe(404);
+  expect((await request.get(`/api/relations/${link.id}`, { headers: ah })).status()).toBe(404);
+  expect(
+    (
+      await request.post('/api/objects', {
+        headers: bh,
+        data: { name: 'Чужой родитель', parentId: existing.id },
+      })
+    ).status(),
+  ).toBe(400);
+  expect(
+    (
+      await request.post('/api/objects', {
+        headers: bh,
+        data: { name: 'Чужая копия', copyOf: existing.id },
+      })
+    ).status(),
+  ).toBe(404);
+  expect(
+    (
+      await request.post('/api/relations', {
+        headers: bh,
+        data: { name: 'Чужой участник', sourceId: existing.id, targetId: other.id },
+      })
+    ).status(),
+  ).toBe(404);
+  expect(
+    (
+      await request.post('/api/context-links', {
+        headers: bh,
+        data: { entityId: other.id, kind: 'viewpoint', targetDiagramId: original.id },
+      })
+    ).status(),
+  ).toBe(404);
+  expect(
+    (
+      await request.patch(`/api/diagrams/${original.id}/viewpoint`, {
+        headers: ah,
+        data: { revision: original.revision, viewpointId: vp.id },
+      })
+    ).status(),
+  ).toBe(404);
+  const importedResponse = await request.post('/api/diagrams', {
+    headers: bh,
+    data: { name: 'Импорт в другую область', document: original.document },
+  });
+  expect(importedResponse.status(), await importedResponse.text()).toBe(201);
+  const imported = await importedResponse.json();
+  expect(imported.document.modelSpaceId).toBe(b.id);
+  expect(imported.document.nodes[0].objectId).not.toBe(existing.id);
+  const contextResponse = await request.post('/api/context-links', {
+    headers: bh,
+    data: {
+      entityId: other.id,
+      kind: 'decomposition',
+      newDiagram: { name: 'Детали второй области' },
+    },
+  });
+  expect(contextResponse.status()).toBe(201);
+  expect(await (await request.get('/api/context-links', { headers: ah })).json()).toEqual([]);
+  expect(
+    (await (await request.get('/api/model/structure', { headers: ah })).json()).viewpoints,
+  ).toEqual([]);
+  const snapshotA = await (await request.get('/api/model', { headers: ah })).json(),
+    snapshotB = await (await request.get('/api/model', { headers: bh })).json();
+  const parallel = await Promise.all(
+    Array.from({ length: 10 }, (_, i) => request.get('/api/model', { headers: i % 2 ? bh : ah })),
+  );
+  for (let i = 0; i < parallel.length; i++)
+    expect(await parallel[i].json()).toEqual(i % 2 ? snapshotB : snapshotA);
+  const shareResponse = await request.post(`/api/diagrams/${second.id}/share`, {
+    headers: bh,
+    data: { enabled: true },
+  });
+  expect(shareResponse.status()).toBe(200);
+  const token = (await shareResponse.json()).path.split('/').pop();
+  const anonymous = await playwright.request.newContext({ baseURL: 'http://localhost:3000' });
+  expect((await anonymous.get(`/api/public/${token}`)).status()).toBe(200);
+  expect((await (await anonymous.get(`/api/public/${token}`)).json()).document.objects).toEqual([]);
+  expect((await anonymous.get('/api/workspaces')).status()).toBe(401);
+  await anonymous.dispose();
+  const foreign = await playwright.request.newContext({ baseURL: 'http://localhost:3000' });
+  await login(foreign);
+  expect((await foreign.get('/api/model', { headers: bh })).status()).toBe(404);
+  expect((await foreign.get(`/api/workspaces/${b.id}/open`, { maxRedirects: 0 })).status()).toBe(
+    404,
+  );
+  await foreign.dispose();
+  expect((await (await request.get('/api/model')).json()).id).toBe(a.id);
+  original = await (await request.get(`/api/diagrams/${original.id}`, { headers: ah })).json();
+  expect(original.name).toBe('Диаграмма первой области');
+});
+
+test('browser: create and switch workspaces without sharing objects or changing another tab', async ({
+  page,
+  request,
+}) => {
+  test.setTimeout(120000);
+  await login(request, page);
+  expect(
+    (
+      await request.patch('/api/settings', {
+        data: { name: 'Модель', theme: 'dark', snapToGrid: false, autosave: false },
+      })
+    ).status(),
+  ).toBe(200);
+  const first = (await (await request.get('/api/workspaces')).json())[0];
+  const entity = await object(request, 'Объект первой области');
+  const diagram = await place(request, await create(request, 'Первая диаграмма'), entity.id);
+  await page.goto(`/solutions?diagram=${diagram.id}`);
+  await expect(page.locator('.react-flow__node-notation')).toHaveCount(1);
+  await page.getByLabel('Выбрать рабочую область', { exact: true }).click();
+  await page.getByRole('button', { name: 'Новая рабочая область', exact: true }).click();
+  const modal = page.getByRole('dialog', { name: 'Новая рабочая область', exact: true });
+  await modal.getByLabel('Название рабочей области').fill('Независимая область');
+  await modal.getByRole('button', { name: 'Создать рабочую область', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'Рабочая область создана' })).toBeVisible();
+  await page
+    .getByRole('dialog', { name: 'Рабочая область создана' })
+    .getByRole('button', { name: 'Закрыть', exact: true })
+    .click();
+  const second = (await (await request.get('/api/workspaces')).json()).find(
+    (w: { name: string }) => w.name === 'Независимая область',
+  );
+  const otherTab = await page.context().newPage();
+  await otherTab.goto('/solutions');
+  await expect(otherTab.locator(`.solutions-tree [data-tree-entity="${entity.id}"]`)).toBeVisible();
+  // Native unsaved-data confirmation runs before the area cookie can change.
+  await page.getByLabel('Выбрать рабочую область', { exact: true }).click();
+  await page.locator('.react-flow__node-notation').click();
+  await page.getByLabel('Уровень слоя', { exact: true }).fill('8');
+  await page.getByLabel('Уровень слоя', { exact: true }).press('Tab');
+  await expect(page.getByText('Есть изменения', { exact: true })).toBeVisible();
+  await page.getByLabel('Выбрать рабочую область', { exact: true }).click();
+  const open = page.getByRole('link', { name: 'Независимая область', exact: true });
+  let prompt = page.waitForEvent('dialog');
+  const switching = open.click({ noWaitAfter: true });
+  const dismissed = await prompt;
+  expect(dismissed.type()).toBe('beforeunload');
+  await dismissed.dismiss();
+  await switching;
+  await expect(page.locator('.flow-container')).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.dataset.workspace)).toBe(first.id);
+  prompt = page.waitForEvent('dialog');
+  const retry = open.click({ noWaitAfter: true });
+  await (await prompt).accept();
+  await retry;
+  await expect(page).toHaveURL(/\/solutions$/);
+  await expect(page.locator('.solutions-tree')).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.dataset.workspace)).toBe(second.id);
+  await expect(page.locator('.solutions-tree [data-tree-entity]')).toHaveCount(0);
+  const response = await request.post('/api/objects', {
+    headers: { 'X-Maket-Workspace': second.id },
+    data: { name: 'Объект второй области' },
+  });
+  expect(response.status()).toBe(201);
+  const other = await response.json();
+  await page.getByRole('button', { name: 'Обновить', exact: true }).click();
+  await expect(page.locator(`.solutions-tree [data-tree-entity="${other.id}"]`)).toBeVisible();
+  await otherTab.getByRole('button', { name: 'Обновить', exact: true }).click();
+  await expect(otherTab.locator(`.solutions-tree [data-tree-entity="${entity.id}"]`)).toBeVisible();
+  await expect(otherTab.locator(`.solutions-tree [data-tree-entity="${other.id}"]`)).toHaveCount(0);
+  expect(await otherTab.evaluate(() => document.documentElement.dataset.workspace)).toBe(first.id);
+  await page.getByRole('link', { name: 'Библиотека', exact: true }).click();
+  await expect(page.locator('.diagram-card')).toHaveCount(0);
+  await page.reload();
+  expect(await page.evaluate(() => document.documentElement.dataset.workspace)).toBe(second.id);
+  await page.getByLabel('Выбрать рабочую область', { exact: true }).click();
+  await page.getByRole('link', { name: first.name, exact: true }).click();
+  await expect(page.locator(`.solutions-tree [data-tree-entity="${entity.id}"]`)).toBeVisible();
+  await expect(page.locator(`.solutions-tree [data-tree-entity="${other.id}"]`)).toHaveCount(0);
+  await otherTab.close();
+});

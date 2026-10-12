@@ -42,6 +42,7 @@ export async function logout() {
   const token = jar.get('maket_session')?.value;
   if (token) await db.session.deleteMany({ where: { id: tokenHash(token) } });
   jar.delete('maket_session');
+  jar.delete('maket_workspace');
 }
 export async function sendAuthEmail(userId: string, email: string, kind: 'verify' | 'reset') {
   const raw = randomBytes(32).toString('hex');

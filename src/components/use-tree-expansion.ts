@@ -9,13 +9,15 @@ export function useTreeExpansion(
   focusToken?: number | string,
   revealIds?: string[],
 ) {
-  const { user } = useUser();
-  const key = `maket:tree:${user.id}`;
+  const { user, workspaceId } = useUser();
+  const key = `maket:tree:${user.id}:${workspaceId}`;
   const [expanded, setExpanded] = useState<Set<string> | null>(null);
   const focused = useRef('');
   useEffect(() => {
     try {
-      const saved: unknown = JSON.parse(localStorage.getItem(key) ?? '[]');
+      const saved: unknown = JSON.parse(
+        localStorage.getItem(key) ?? localStorage.getItem(`maket:tree:${user.id}`) ?? '[]',
+      );
       setExpanded(
         new Set(Array.isArray(saved) ? saved.filter((id) => typeof id === 'string') : []),
       );

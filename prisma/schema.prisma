@@ -18,7 +18,7 @@ model User {
   tokens AuthToken[]
   diagrams Diagram[]
   notations Notation[]
-  modelSpace ModelSpace?
+  modelSpaces ModelSpace[]
 }
 model Session {
   id String @id
@@ -82,6 +82,7 @@ model Diagram {
   updatedAt DateTime @updatedAt
   revisions DiagramRevision[]
   @@index([ownerId, updatedAt])
+  @@index([modelSpaceId, updatedAt])
 }
 model DiagramRevision {
   id String @id @default(cuid())
@@ -103,8 +104,10 @@ model ModelSpace {
   viewpoints DiagramViewpoint[]
   contextLinks DiagramContextLink[]
   id String @id @default(cuid())
-  ownerId String @unique
+  ownerId String
+  createdAt DateTime @default(now())
   owner User @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  @@index([ownerId, createdAt])
   name String @default("Личная модель")
   revision Int @default(1)
   objects ModelObject[]

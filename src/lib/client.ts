@@ -1,7 +1,12 @@
 export async function api<T = unknown>(path: string, method = 'GET', body?: unknown): Promise<T> {
+  const headers: Record<string, string> = {};
+  if (body !== undefined) headers['Content-Type'] = 'application/json';
+  const workspace =
+    typeof document === 'undefined' ? undefined : document.documentElement.dataset.workspace;
+  if (workspace) headers['X-Maket-Workspace'] = workspace;
   const response = await fetch(`/api/${path}`, {
     method,
-    headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
+    headers,
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const data = await response.json();

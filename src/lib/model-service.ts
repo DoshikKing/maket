@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import { db } from './db';
+import { workspaceInTransaction } from './workspace-service';
 import {
   builtinNotation,
   diagramSchema,
@@ -204,12 +205,21 @@ async function legacy(
 export async function ensureModel(ownerId: string) {
   return db.$transaction(
     async (tx) => {
-      const space = await tx.modelSpace.upsert({
+      const space = await workspaceInTransaction(tx, ownerId);
+      await tx.modelSpace.update({ where: { id: space.id }, data: { revision: { increment: 0 } } });
+      const oldest = await tx.modelSpace.findFirst({
         where: { ownerId },
-        create: { ownerId },
-        update: { revision: { increment: 0 } },
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
       });
-      const allDiagrams = await tx.diagram.findMany({ where: { ownerId } });
+      const allDiagrams = await tx.diagram.findMany({
+        where: {
+          ownerId,
+          OR: [
+            { modelSpaceId: space.id },
+            ...(oldest?.id === space.id ? [{ modelSpaceId: null }] : []),
+          ],
+        },
+      });
       const diagrams = allDiagrams.filter(
         (d) =>
           !d.modelSpaceId ||
@@ -230,7 +240,9 @@ export async function ensureModel(ownerId: string) {
         await tx.diagram.update({ where: { id: diagram.id }, data: { modelSpaceId: space.id } });
         await commit(tx, diagram, document, diagram.revision, 'migration');
       }
-      const unlinked = await tx.diagram.findMany({ where: { ownerId, entityId: null } });
+      const unlinked = await tx.diagram.findMany({
+        where: { ownerId, modelSpaceId: space.id, entityId: null },
+      });
       for (const diagram of unlinked) {
         const entity = await createObject(tx, space.id, { kind: 'diagram', name: diagram.name });
         await tx.diagram.update({ where: { id: diagram.id }, data: { entityId: entity.id } });
@@ -247,7 +259,7 @@ export async function ensureModel(ownerId: string) {
           orderBy: [{ order: 'asc' }, { name: 'asc' }],
         }),
         diagrams: await tx.diagram.findMany({
-          where: { ownerId },
+          where: { ownerId, modelSpaceId: space.id },
           select: { id: true, entityId: true, name: true, viewpointId: true, revision: true },
         }),
         relations: (
@@ -268,9 +280,11 @@ export async function ensureModel(ownerId: string) {
   );
 }
 export async function getDiagram(ownerId: string, diagramId: string, historicalNumber?: number) {
-  await ensureModel(ownerId);
+  const space = await ensureModel(ownerId);
   return db.$transaction(async (tx) => {
-    const d = await tx.diagram.findFirst({ where: { id: diagramId, ownerId } });
+    const d = await tx.diagram.findFirst({
+      where: { id: diagramId, ownerId, modelSpaceId: space.id },
+    });
     if (!d) reject(404, 'Диаграмма не найдена');
     if (historicalNumber !== undefined) {
       const revision = await tx.diagramRevision.findUnique({
@@ -283,8 +297,11 @@ export async function getDiagram(ownerId: string, diagramId: string, historicalN
   });
 }
 export async function listDiagrams(ownerId: string) {
-  await ensureModel(ownerId);
-  const ds = await db.diagram.findMany({ where: { ownerId }, orderBy: { updatedAt: 'desc' } });
+  const space = await ensureModel(ownerId);
+  const ds = await db.diagram.findMany({
+    where: { ownerId, modelSpaceId: space.id },
+    orderBy: { updatedAt: 'desc' },
+  });
   return Promise.all(
     ds.map((d) =>
       db.$transaction(async (tx) => ({
@@ -504,10 +521,12 @@ export async function saveModelDiagram(
   raw?: unknown,
   restoreNumber?: number,
 ) {
-  await ensureModel(ownerId);
+  const space = await ensureModel(ownerId);
   return db.$transaction(
     async (tx) => {
-      const d = await tx.diagram.findFirst({ where: { id: diagramId, ownerId } });
+      const d = await tx.diagram.findFirst({
+        where: { id: diagramId, ownerId, modelSpaceId: space.id },
+      });
       if (!d) reject(404, 'Диаграмма не найдена');
       const current = modelDiagramSchema.parse(d.document);
       await tx.modelSpace.update({
@@ -640,9 +659,11 @@ export async function attachNotation(
   notationId?: string,
   removeBindingId?: string,
 ) {
-  await ensureModel(ownerId);
+  const space = await ensureModel(ownerId);
   return db.$transaction(async (tx) => {
-    const d = await tx.diagram.findFirst({ where: { id: diagramId, ownerId } });
+    const d = await tx.diagram.findFirst({
+      where: { id: diagramId, ownerId, modelSpaceId: space.id },
+    });
     if (!d) reject(404, 'Диаграмма не найдена');
     let document = await liveDocument(tx, modelDiagramSchema.parse(d.document));
     if (removeBindingId) {
@@ -686,7 +707,9 @@ export async function duplicateModelDiagram(ownerId: string, diagramId: string) 
   const space = await ensureModel(ownerId);
   return db.$transaction(async (tx) => {
     await tx.modelSpace.update({ where: { id: space.id }, data: { revision: { increment: 0 } } });
-    const original = await tx.diagram.findFirst({ where: { id: diagramId, ownerId } });
+    const original = await tx.diagram.findFirst({
+      where: { id: diagramId, ownerId, modelSpaceId: space.id },
+    });
     if (!original) reject(404, 'Диаграмма не найдена');
     const document = await liveDocument(tx, modelDiagramSchema.parse(original.document));
     valid(document);
@@ -888,7 +911,10 @@ export async function addRepresentationInTransaction(
   expected: number,
   input: Parameters<typeof addRepresentation>[3],
 ) {
-  const d = await tx.diagram.findFirst({ where: { id: diagramId, ownerId } });
+  const space = await workspaceInTransaction(tx, ownerId);
+  const d = await tx.diagram.findFirst({
+    where: { id: diagramId, ownerId, modelSpaceId: space.id },
+  });
   if (!d) reject(404, 'Диаграмма не найдена');
   const stored = modelDiagramSchema.parse(d.document);
   await tx.modelSpace.update({

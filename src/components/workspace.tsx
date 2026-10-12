@@ -4,21 +4,30 @@ import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { Workflow, Library, Shapes, Settings, LogOut, ChevronRight, Sparkles } from 'lucide-react';
 import { api } from '@/lib/client';
+import { WorkspaceSwitcher, type WorkspaceItem } from './workspace-switcher';
 export type User = {
   id: string;
   email: string;
   name: string;
   settings: { theme: 'light' | 'dark'; snapToGrid: boolean; autosave: boolean };
 };
-const UserContext = createContext<{ user: User; setUser: (u: User) => void } | null>(null);
+const UserContext = createContext<{
+  user: User;
+  setUser: (u: User) => void;
+  workspaceId: string;
+} | null>(null);
 export function useUser() {
   return useContext(UserContext)!;
 }
 export function Workspace({
   initialUser,
+  initialWorkspaces,
+  workspaceId,
   children,
 }: {
   initialUser: User;
+  initialWorkspaces: WorkspaceItem[];
+  workspaceId: string;
   children: React.ReactNode;
 }) {
   const [user, setUser] = useState(initialUser);
@@ -32,6 +41,12 @@ export function Workspace({
       delete document.documentElement.dataset.theme;
     };
   }, [user.settings.theme]);
+  useLayoutEffect(() => {
+    document.documentElement.dataset.workspace = workspaceId;
+    return () => {
+      delete document.documentElement.dataset.workspace;
+    };
+  }, [workspaceId]);
   const editor = pathname.startsWith('/diagrams/') || !!searchParams.get('diagram');
   const links = [
     { href: '/solutions', label: 'Рабочая область', icon: Workflow },
@@ -40,7 +55,7 @@ export function Workspace({
     { href: '/settings', label: 'Настройки', icon: Settings },
   ];
   return (
-    <UserContext.Provider value={{ user, setUser }}>
+    <UserContext.Provider value={{ user, setUser, workspaceId }}>
       <div className={`workspace ${user.settings.theme === 'dark' ? 'dark' : ''}`}>
         <aside className="sidebar">
           <Link href="/library" className="brand">
@@ -49,7 +64,7 @@ export function Workspace({
             </span>
             maket<span className="brand-dot">.</span>
           </Link>
-          <div className="workspace-label">ЛИЧНОЕ ПРОСТРАНСТВО</div>
+          <WorkspaceSwitcher initialItems={initialWorkspaces} currentId={workspaceId} />
           <nav>
             {links.map(({ href, label, icon: Icon }) => (
               <Link
@@ -102,7 +117,7 @@ export function Workspace({
             </span>
             <span className="topbar-right">
               <span className="status-dot" />
-              Личное пространство
+              {initialWorkspaces.find((w) => w.id === workspaceId)?.name}
             </span>
           </header>
           {children}

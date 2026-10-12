@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import { db } from './db';
+import { workspaceInTransaction } from './workspace-service';
 import { reject } from './model-errors';
 import {
   relationSnapshotSchema,
@@ -211,7 +212,7 @@ export async function materializeRelations(
   return { ...d, edges: d.edges.map((e) => edges.find((x) => x.id === e.id)!), relations };
 }
 async function ownSpace(tx: Tx, ownerId: string) {
-  const space = await tx.modelSpace.findUnique({ where: { ownerId } });
+  const space = await workspaceInTransaction(tx, ownerId);
   if (!space) reject(404, 'Модель не найдена');
   await tx.modelSpace.update({ where: { id: space.id }, data: { revision: { increment: 1 } } });
   return space;
