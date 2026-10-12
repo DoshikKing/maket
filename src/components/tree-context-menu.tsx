@@ -14,15 +14,25 @@ import {
   type MouseEvent,
 } from 'react';
 import { createPortal } from 'react-dom';
+import { useRouter } from 'next/navigation';
+import { GitBranch } from 'lucide-react';
+import { api } from '@/lib/client';
+import type { Structure } from '@/lib/structure';
+import { contextLinkUrl } from './diagram-links';
+
+type DiagramNavigation = { entityId?: string; beforeNavigate?: () => Promise<boolean> };
 
 /** Keeps the row's existing actions and permissions in a keyboard-accessible menu. */
 export function TreeContextMenu({
   actions,
   children,
+  entityId,
+  beforeNavigate,
   ...props
-}: HTMLAttributes<HTMLDivElement> & {
-  actions: ReactNode;
-}) {
+}: HTMLAttributes<HTMLDivElement> &
+  DiagramNavigation & {
+    actions: ReactNode;
+  }) {
   const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
   const trigger = useRef<HTMLElement | null>(null);
   function close(restoreFocus = false) {
@@ -50,7 +60,15 @@ export function TreeContextMenu({
       }}
     >
       {children}
-      {position && <ContextMenu position={position} actions={actions} onClose={close} />}
+      {position && (
+        <ContextMenu
+          position={position}
+          actions={actions}
+          onClose={close}
+          entityId={entityId}
+          beforeNavigate={beforeNavigate}
+        />
+      )}
     </div>
   );
 }
@@ -59,11 +77,35 @@ export function ContextMenu({
   position,
   actions,
   onClose,
-}: {
+  entityId,
+  beforeNavigate,
+}: DiagramNavigation & {
   position: { x: number; y: number };
   actions: ReactNode;
   onClose: (restoreFocus?: boolean) => void;
 }) {
+  const router = useRouter();
+  const [space, setSpace] = useState<Structure | null>(null),
+    [loadError, setLoadError] = useState('');
+  useEffect(() => {
+    if (!entityId) return;
+    let cancelled = false;
+    setSpace(null);
+    setLoadError('');
+    void api<Structure>(
+      `context-links?entityId=${encodeURIComponent(entityId)}&include=structure`,
+    ).then(
+      (result) => {
+        if (!cancelled) setSpace(result);
+      },
+      () => {
+        if (!cancelled) setLoadError('Не удалось загрузить переходы к диаграммам.');
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [entityId]);
   const menu = useRef<HTMLDivElement>(null);
   const trigger = useRef(document.activeElement as HTMLElement | null);
   function close(restoreFocus = false) {
@@ -76,8 +118,10 @@ export function ContextMenu({
     const bounds = element.getBoundingClientRect();
     element.style.left = `${Math.max(8, Math.min(position.x, window.innerWidth - bounds.width - 8))}px`;
     element.style.top = `${Math.max(8, Math.min(position.y, window.innerHeight - bounds.height - 8))}px`;
-    element
-      .querySelector<HTMLElement>('[role="menuitem"]:not(:disabled)')
+  }, [position, space, loadError]);
+  useLayoutEffect(() => {
+    menu.current
+      ?.querySelector<HTMLElement>('[role="menuitem"]:not(:disabled)')
       ?.focus({ preventScroll: true });
   }, [position]);
   useEffect(() => {
@@ -155,6 +199,66 @@ export function ContextMenu({
         }}
       >
         {items(actions)}
+        {entityId && !space && (
+          <p className="context-menu-note" role="status">
+            {loadError || 'Загружаем переходы…'}
+          </p>
+        )}
+        {space &&
+          (['decomposition', 'viewpoint'] as const).map((kind) => {
+            const links = space.contextLinks.filter(
+              (l) =>
+                l.entityId === entityId &&
+                l.kind === kind &&
+                space.diagrams.some((d) => d.id === l.targetDiagramId),
+            );
+            if (!links.length) return null;
+            return (
+              <div
+                role="group"
+                aria-label={
+                  kind === 'decomposition' ? 'Переходы к декомпозициям' : 'Переходы по ракурсам'
+                }
+                key={kind}
+                className="context-menu-diagrams"
+              >
+                <p className="context-menu-note">
+                  {kind === 'decomposition' ? 'Декомпозиции' : 'Другие ракурсы'}
+                </p>
+                {links.map((link) => {
+                  const diagram = space.diagrams.find((d) => d.id === link.targetDiagramId)!;
+                  const viewpoint =
+                    space.viewpoints.find((v) => v.id === diagram.viewpointId)?.name ??
+                    'Без ракурса';
+                  return (
+                    <button
+                      key={link.id}
+                      type="button"
+                      role="menuitem"
+                      tabIndex={-1}
+                      aria-label={`${kind === 'decomposition' ? 'Открыть декомпозицию' : 'Перейти к ракурсу'}: ${diagram.name}`}
+                      title={link.meaning || diagram.name}
+                      onClick={async (event) => {
+                        event.stopPropagation();
+                        if (beforeNavigate && !(await beforeNavigate())) return;
+                        close();
+                        router.push(contextLinkUrl(link, space));
+                      }}
+                    >
+                      <GitBranch size={14} />
+                      <span>
+                        {diagram.name}
+                        <small>
+                          {viewpoint}
+                          {link.meaning ? ` · ${link.meaning}` : ''}
+                        </small>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            );
+          })}
       </div>,
       document.body,
     )

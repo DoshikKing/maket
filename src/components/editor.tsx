@@ -1452,6 +1452,7 @@ function Editor({ initial }: { initial: Diagram }) {
           }
         />
         <ObjectTree
+          beforeNavigate={flush}
           onHide={() => setPanels((p) => ({ ...p, tree: false }))}
           focusId={initial.entityId}
           focusRequest={treeFocus}
@@ -2453,6 +2454,8 @@ function Editor({ initial }: { initial: Diagram }) {
       {canvasMenu && (
         <ContextMenu
           position={canvasMenu}
+          entityId={baseEntity?.id}
+          beforeNavigate={flush}
           onClose={() => setCanvasMenu(null)}
           actions={
             canvasMenu.target ? (

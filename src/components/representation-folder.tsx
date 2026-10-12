@@ -13,6 +13,7 @@ export function RepresentationFolder({
   localItems,
   currentDiagramId,
   onLocate,
+  beforeNavigate,
   level,
 }: {
   entityId: string;
@@ -21,6 +22,7 @@ export function RepresentationFolder({
   localItems?: Representation[];
   currentDiagramId?: string;
   onLocate?: (id: string, diagramId: string) => void;
+  beforeNavigate?: () => Promise<boolean>;
   level?: number;
 }) {
   const [loaded, setLoaded] = useState<Representation[] | null>(null),
@@ -83,6 +85,8 @@ export function RepresentationFolder({
             aria-level={level ? level + 1 : undefined}
           >
             <TreeContextMenu
+              entityId={entityId}
+              beforeNavigate={beforeNavigate}
               actions={
                 <Link
                   href={`/solutions?diagram=${r.diagramId}&element=${encodeURIComponent(r.id)}`}

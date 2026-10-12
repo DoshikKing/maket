@@ -237,7 +237,7 @@ export function SolutionsPage() {
             role={level ? 'treeitem' : undefined}
             aria-level={level ? level + 1 : undefined}
           >
-            <TreeContextMenu actions={actions(relationEntity(r))}>
+            <TreeContextMenu entityId={r.id} actions={actions(relationEntity(r))}>
               <button
                 className={`solution-tree-select tree-row tree-row-leaf ${selectedId === r.id ? 'selected' : ''}`}
                 onClick={() => select(r.id)}
@@ -285,6 +285,7 @@ export function SolutionsPage() {
             aria-expanded={hasChildren ? !collapsed : undefined}
           >
             <TreeContextMenu
+              entityId={o.id}
               actions={actions(o)}
               className={`solution-tree-row tree-row ${selected?.id === o.id ? 'selected' : ''}`}
               title={`${entityLabels[entityKind(o)]} · Родитель: ${entities.find((p) => p.id === o.parentId)?.name ?? 'Корень пространства'}`}
@@ -379,6 +380,7 @@ export function SolutionsPage() {
                         }}
                       >
                         <TreeContextMenu
+                          entityId={r.id}
                           actions={actions(relationEntity(r))}
                           className={`tree-row ${selectedId === r.id ? 'selected' : ''}`}
                         >

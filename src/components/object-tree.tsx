@@ -374,6 +374,7 @@ export function ObjectTree({
   onRemove,
   relations = [],
   onDiagramLinks,
+  beforeNavigate,
   footer,
   onHide,
   onRelationLocate,
@@ -390,6 +391,7 @@ export function ObjectTree({
   onRepresentationLocate?: (id: string, diagramId: string) => void;
   objects: ModelObject[];
   relations?: ModelRelation[];
+  beforeNavigate?: () => Promise<boolean>;
   onDiagramLinks?: (entityId: string, kind: 'decomposition' | 'viewpoint') => void;
   onRelationLocate?: (id: string) => void;
   onRelationEdit?: (r: ModelRelation) => void;
@@ -481,6 +483,8 @@ export function ObjectTree({
           <div key={r.id} role="treeitem" aria-level={level + 1}>
             <TreeContextMenu
               data-relation-reference={r.id}
+              entityId={r.id}
+              beforeNavigate={beforeNavigate}
               actions={
                 <>
                   {onDiagramLinks && (
@@ -583,6 +587,8 @@ export function ObjectTree({
             aria-current={focusId === o.id ? 'page' : undefined}
           >
             <TreeContextMenu
+              entityId={o.id}
+              beforeNavigate={beforeNavigate}
               actions={
                 <>
                   {onDiagramLinks ? (
@@ -800,6 +806,7 @@ export function ObjectTree({
               <div role="group" className="hierarchy-children">
                 {representable && (
                   <RepresentationFolder
+                    beforeNavigate={beforeNavigate}
                     resource={relationIds.has(o.id) ? 'relations' : 'objects'}
                     entityId={o.id}
                     level={depth + 2}
@@ -824,6 +831,8 @@ export function ObjectTree({
                     {linked.map((r) => (
                       <div key={r.id}>
                         <TreeContextMenu
+                          entityId={r.id}
+                          beforeNavigate={beforeNavigate}
                           actions={
                             <>
                               {onDiagramLinks && (
@@ -944,6 +953,7 @@ export function ObjectTree({
                         {(expansion.isExpanded(r.id) || !!query) && (
                           <div className="hierarchy-children">
                             <RepresentationFolder
+                              beforeNavigate={beforeNavigate}
                               resource="relations"
                               entityId={r.id}
                               level={depth + 4}

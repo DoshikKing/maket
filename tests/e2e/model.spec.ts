@@ -3730,3 +3730,126 @@ test('browser: interactive solution graph includes model-only and context links 
     'Решение не найдено или недоступно.',
   );
 });
+
+test('browser: object context menus navigate existing decompositions and viewpoints by shared identity', async ({
+  page,
+  request,
+}) => {
+  await login(request, page);
+  expect(
+    (
+      await request.patch('/api/settings', {
+        data: { name: 'Модель', theme: 'dark', snapToGrid: false, autosave: false },
+      })
+    ).status(),
+  ).toBe(200);
+  const entity = await object(request, 'Объект переходов'),
+    empty = await object(request, 'Без переходов');
+  let source = await place(request, await create(request, 'Исходный ракурс'), entity.id);
+  const viewpoint = await (
+    await request.post('/api/viewpoints', { data: { name: 'Код приложения', order: 3 } })
+  ).json();
+  let target = await (
+    await request.post('/api/diagrams', {
+      data: { name: 'Реализация объекта', viewpointId: viewpoint.id },
+    })
+  ).json();
+  target = await place(request, target, entity.id);
+  target = await place(request, target, entity.id);
+  async function transition(kind: string, name: string) {
+    const result = await request.post('/api/context-links', {
+      data: {
+        entityId: entity.id,
+        sourceDiagramId: source.id,
+        kind,
+        meaning: 'Проверка перехода',
+        ...(kind === 'viewpoint' ? { targetDiagramId: target.id } : { newDiagram: { name } }),
+      },
+    });
+    expect(result.status(), await result.text()).toBe(201);
+    return result.json();
+  }
+  const decomposition = await transition('decomposition', 'Внутреннее устройство'),
+    second = await transition('decomposition', 'Другая декомпозиция');
+  const viewpointLink = await transition('viewpoint', '');
+  const relation = await (
+    await request.post('/api/relations', {
+      data: { name: 'Связь переходов', sourceId: entity.id, targetId: empty.id },
+    })
+  ).json();
+  const relationLinkResponse = await request.post('/api/context-links', {
+    data: {
+      entityId: relation.id,
+      kind: 'decomposition',
+      newDiagram: { name: 'Декомпозиция связи' },
+    },
+  });
+  expect(relationLinkResponse.status()).toBe(201);
+  const relationLink = await relationLinkResponse.json();
+  await page.goto(`/solutions?parent=${entity.id}`);
+  const row = page.locator(`.solutions-tree [data-tree-entity="${entity.id}"] > .tree-row`);
+  await row.click({ button: 'right' });
+  const menu = page.getByRole('menu', { name: 'Действия элемента' });
+  await expect(
+    menu.getByRole('group', { name: 'Переходы к декомпозициям' }).getByRole('menuitem'),
+  ).toHaveCount(2);
+  await expect(menu.getByRole('group', { name: 'Переходы по ракурсам' })).toContainText(
+    'Код приложения',
+  );
+  await menu
+    .getByRole('menuitem', { name: 'Открыть декомпозицию: Внутреннее устройство', exact: true })
+    .click();
+  await expect(page).toHaveURL(new RegExp(`diagram=${decomposition.targetDiagramId}$`));
+  await expect(page.locator('.flow-container')).toBeVisible();
+  await expect(page.locator('.react-flow__node-notation')).toHaveCount(0);
+  await page.goto(`/solutions?diagram=${source.id}`);
+  const node = page.locator('.react-flow__node-notation');
+  await node.click();
+  await page.getByLabel('Уровень слоя', { exact: true }).fill('7');
+  await page.getByLabel('Уровень слоя', { exact: true }).press('Tab');
+  await expect(page.getByText('Есть изменения', { exact: true })).toBeVisible();
+  await node.click({ button: 'right' });
+  await menu
+    .getByRole('menuitem', { name: 'Перейти к ракурсу: Реализация объекта', exact: true })
+    .click();
+  await expect(page).toHaveURL(
+    new RegExp(`diagram=${target.id}&element=${target.document.nodes[0].id}$`),
+  );
+  await expect(page.locator('.react-flow__node-notation.selected')).toHaveCount(1);
+  source = await (await request.get(`/api/diagrams/${source.id}`)).json();
+  expect(source.document.nodes[0].layer).toBe(7);
+  expect(
+    (await (await request.get(`/api/diagrams/${target.id}`)).json()).document.nodes,
+  ).toHaveLength(2);
+  await page
+    .locator(`.object-panel [data-tree-entity="${entity.id}"] > .tree-row`)
+    .click({ button: 'right' });
+  await menu
+    .getByRole('menuitem', { name: 'Открыть декомпозицию: Другая декомпозиция', exact: true })
+    .click();
+  await expect(page).toHaveURL(new RegExp(`diagram=${second.targetDiagramId}$`));
+  await page.goto(`/solutions?parent=${relation.id}`);
+  await page
+    .locator(`.solutions-tree [data-relation-reference="${relation.id}"] > .tree-row`)
+    .first()
+    .click({ button: 'right' });
+  await expect(menu.getByRole('group', { name: 'Переходы по ракурсам' })).toHaveCount(0);
+  await menu
+    .getByRole('menuitem', { name: 'Открыть декомпозицию: Декомпозиция связи', exact: true })
+    .click();
+  await expect(page).toHaveURL(new RegExp(`diagram=${relationLink.targetDiagramId}$`));
+  await request.delete(`/api/context-links/${viewpointLink.id}`, {
+    data: { revision: viewpointLink.revision },
+  });
+  await page.goto(`/solutions?parent=${entity.id}`);
+  await row.click({ button: 'right' });
+  await expect(menu.getByRole('group', { name: 'Переходы к декомпозициям' })).toBeVisible();
+  await expect(menu.getByRole('group', { name: 'Переходы по ракурсам' })).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  await page.goto(`/solutions?parent=${empty.id}`);
+  await page
+    .locator(`.solutions-tree [data-tree-entity="${empty.id}"] > .tree-row`)
+    .click({ button: 'right' });
+  await expect(menu.getByRole('status')).toHaveCount(0);
+  await expect(menu.getByRole('group')).toHaveCount(0);
+});
