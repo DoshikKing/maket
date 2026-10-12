@@ -38,6 +38,15 @@ import {
   deleteRelation,
   relationSnapshot,
 } from '@/lib/relation-service';
+import {
+  viewpointInput,
+  contextLinkInput,
+  saveViewpoint,
+  deleteViewpoint,
+  assignViewpoint,
+  createContextLink,
+  updateContextLink,
+} from '@/lib/diagram-context-service';
 export const runtime = 'nodejs';
 const nameSchema = z.string().trim().min(1).max(100);
 const credentials = z.object({
@@ -194,6 +203,63 @@ async function handle(req: NextRequest, context: { params: Promise<{ path: strin
     }
     const user = await currentUser();
     if (!user) fail(401, 'Войдите в аккаунт');
+    if (resource === 'viewpoints') {
+      if (method === 'GET' && !id) {
+        const space = await ensureModel(user.id);
+        return json(
+          req.nextUrl.searchParams.get('include') === 'diagrams'
+            ? { viewpoints: space.viewpoints, diagrams: space.diagrams }
+            : space.viewpoints,
+        );
+      }
+      if (method === 'POST' && !id)
+        return json(await saveViewpoint(user.id, viewpointInput.parse(await body(req))), 201);
+      if (!id) fail(405, 'Укажите ракурс');
+      if (method === 'PATCH') {
+        const input = viewpointInput
+          .extend({ revision: z.number().int().positive() })
+          .parse(await body(req));
+        return json(await saveViewpoint(user.id, viewpointInput.parse(input), id, input.revision));
+      }
+      if (method === 'DELETE')
+        return json(
+          await deleteViewpoint(
+            user.id,
+            id,
+            z.object({ revision: z.number().int().positive() }).parse(await body(req)).revision,
+          ),
+        );
+      fail(405, 'Метод не поддерживается');
+    }
+    if (resource === 'context-links') {
+      if (method === 'GET' && !id) {
+        const entityId = req.nextUrl.searchParams.get('entityId');
+        if (entityId && req.nextUrl.searchParams.get('include') === 'structure')
+          return json(
+            await getStructure(user.id, z.string().min(1).max(100).parse(entityId), true),
+          );
+        return json(
+          await db.diagramContextLink.findMany({
+            where: { spaceId: (await ensureModel(user.id)).id },
+          }),
+        );
+      }
+      if (method === 'POST' && !id)
+        return json(await createContextLink(user.id, contextLinkInput.parse(await body(req))), 201);
+      if (!id) fail(405, 'Укажите переход');
+      const input = z
+        .object({
+          revision: z.number().int().positive(),
+          meaning: z.string().trim().max(2000).optional(),
+        })
+        .parse(await body(req));
+      if (method === 'PATCH') {
+        if (input.meaning === undefined) fail(400, 'Укажите смысл перехода');
+        return json(await updateContextLink(user.id, id, input.revision, input.meaning));
+      }
+      if (method === 'DELETE') return json(await updateContextLink(user.id, id, input.revision));
+      fail(405, 'Метод не поддерживается');
+    }
     if (resource === 'settings' && method === 'PATCH') {
       const input = z
         .object({
@@ -460,6 +526,7 @@ async function handle(req: NextRequest, context: { params: Promise<{ path: strin
         const input = z
           .object({
             parentId: z.string().nullable().optional(),
+            viewpointId: z.string().nullable().optional(),
             name: nameSchema,
             notationId: z.string().optional(),
             notationIds: z.array(z.string()).min(1).max(12).optional(),
@@ -477,6 +544,15 @@ async function handle(req: NextRequest, context: { params: Promise<{ path: strin
       if (!id) fail(405, 'Укажите идентификатор диаграммы');
       const d = await db.diagram.findFirst({ where: { id, ownerId: user.id } });
       if (!d) fail(404, 'Диаграмма не найдена');
+      if (action === 'viewpoint' && method === 'PATCH') {
+        const input = z
+          .object({
+            viewpointId: z.string().min(1).max(100).nullable(),
+            revision: z.number().int().positive(),
+          })
+          .parse(await body(req));
+        return json(await assignViewpoint(user.id, id, input.viewpointId, input.revision));
+      }
       if (action === 'share') {
         if (method === 'GET')
           return json({

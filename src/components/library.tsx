@@ -23,6 +23,8 @@ import {
   displayedView,
   type ModelDocument,
 } from '@/lib/model';
+import { ViewpointBrowser } from './viewpoint-browser';
+import type { Viewpoint } from '@/lib/structure';
 import { Modal } from './modal';
 import { edgeGeometry } from '@/lib/diagram-geometry';
 import { NodeShape } from './node-shape';
@@ -37,6 +39,7 @@ type Item = {
   id: string;
   name: string;
   updatedAt: string;
+  viewpointId?: string | null;
   revision: number;
   document: DiagramDocument;
 };
@@ -50,6 +53,9 @@ export type NotationItem = {
 };
 export function LibraryPage() {
   const [items, setItems] = useState<Item[]>([]),
+    [viewpoints, setViewpoints] = useState<Viewpoint[]>([]),
+    [viewpointsOpen, setViewpointsOpen] = useState(false),
+    [viewpointId, setViewpointId] = useState(''),
     [notations, setNotations] = useState<NotationItem[]>([]),
     [loading, setLoading] = useState(true),
     [error, setError] = useState(''),
@@ -62,9 +68,10 @@ export function LibraryPage() {
     file = useRef<HTMLInputElement>(null);
   async function load() {
     try {
-      const [d, n] = await Promise.all([
+      const [d, n, v] = await Promise.all([
         api<ServerItem[]>('diagrams'),
         api<NotationItem[]>('notations'),
+        api<Viewpoint[]>('viewpoints'),
       ]);
       setItems(
         d.map((item) => ({
@@ -73,6 +80,7 @@ export function LibraryPage() {
         })),
       );
       setNotations(n);
+      setViewpoints(v);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -213,6 +221,9 @@ export function LibraryPage() {
       <section>
         <div className="list-toolbar">
           <h2>Все диаграммы</h2>
+          <button className="secondary small" onClick={() => setViewpointsOpen(true)}>
+            Ракурсы
+          </button>
           <div className="button-row">
             <div className="search">
               <Search size={17} />
@@ -244,6 +255,9 @@ export function LibraryPage() {
                     {d.name}
                   </Link>
                   <small>Изменена {date(d.updatedAt)}</small>
+                  <small>
+                    Ракурс: {viewpoints.find((v) => v.id === d.viewpointId)?.name ?? 'Без ракурса'}
+                  </small>
                   <div className="card-bottom">
                     <span>
                       {d.document.nodes.length} элементов · v{d.revision}
@@ -293,6 +307,9 @@ export function LibraryPage() {
           </div>
         )}
       </section>
+      {viewpointsOpen && (
+        <ViewpointBrowser onClose={() => setViewpointsOpen(false)} onChanged={() => void load()} />
+      )}
       {create && (
         <Modal title="Новая диаграмма" onClose={() => setCreate(false)}>
           <form
@@ -303,7 +320,11 @@ export function LibraryPage() {
               setError('');
               try {
                 const name = new FormData(e.currentTarget).get('name');
-                const d = await api<Item>('diagrams', 'POST', { name, notationIds });
+                const d = await api<Item>('diagrams', 'POST', {
+                  name,
+                  notationIds,
+                  viewpointId: viewpointId || null,
+                });
                 router.push(`/diagrams/${d.id}`);
               } catch (e) {
                 setError((e as Error).message);
@@ -321,6 +342,21 @@ export function LibraryPage() {
                 placeholder="Например, процесс оформления заказа"
                 autoFocus
               />
+            </label>
+            <label>
+              Ракурс диаграммы
+              <select
+                aria-label="Ракурс диаграммы"
+                value={viewpointId}
+                onChange={(e) => setViewpointId(e.target.value)}
+              >
+                <option value="">Без ракурса</option>
+                {viewpoints.map((v) => (
+                  <option key={v.id} value={v.id}>
+                    {v.name}
+                  </option>
+                ))}
+              </select>
             </label>
             <label>Выберите нотации — можно несколько</label>
             <div className="notation-options">

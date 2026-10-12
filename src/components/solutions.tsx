@@ -25,6 +25,8 @@ import { Modal } from './modal';
 import type { NotationItem } from './library';
 import { useTreeExpansion } from './use-tree-expansion';
 import { EntityRelations } from './entity-relations';
+import { DiagramLinks } from './diagram-links';
+import { ViewpointBrowser } from './viewpoint-browser';
 import { TreeContextMenu } from './tree-context-menu';
 const icons = {
   solution: Network,
@@ -44,9 +46,15 @@ export function SolutionsPage() {
     [kind, setKind] = useState<Kind>('solution'),
     [creating, setCreating] = useState(false),
     [editing, setEditing] = useState(false),
+    [viewpointsOpen, setViewpointsOpen] = useState(false),
+    [diagramLinks, setDiagramLinks] = useState<{
+      entityId: string;
+      kind: 'decomposition' | 'viewpoint';
+    } | null>(null),
     [linksOpen, setLinksOpen] = useState(false),
     [busy, setBusy] = useState(false),
     [diagramName, setDiagramName] = useState('Новая диаграмма'),
+    [newViewpointId, setNewViewpointId] = useState(''),
     [notationIds, setNotationIds] = useState<string[]>(['builtin']);
   async function load() {
     try {
@@ -144,6 +152,18 @@ export function SolutionsPage() {
     const diagram = space?.diagrams.find((d) => d.entityId === o.id);
     return (
       <>
+        <button
+          aria-label={`Декомпозиция ${o.name}`}
+          onClick={() => setDiagramLinks({ entityId: o.id, kind: 'decomposition' })}
+        >
+          <GitBranch size={14} />
+        </button>
+        <button
+          aria-label={`Углубление ${o.name}`}
+          onClick={() => setDiagramLinks({ entityId: o.id, kind: 'viewpoint' })}
+        >
+          <GitBranch size={14} />
+        </button>
         <button
           title="Свойства"
           aria-label={`Свойства ${o.name}`}
@@ -394,6 +414,9 @@ export function SolutionsPage() {
   return (
     <main className="page solutions-page">
       <div className="page-heading">
+        <button className="secondary" onClick={() => setViewpointsOpen(true)}>
+          Ракурсы
+        </button>
         <button className="secondary" onClick={() => setLinksOpen(true)}>
           <GitBranch size={16} />
           Менеджер связей
@@ -401,7 +424,7 @@ export function SolutionsPage() {
         <div>
           <div className="eyebrow">ОТ РЕШЕНИЯ К ДЕТАЛЯМ</div>
           <h1>Решения</h1>
-          <p className="muted">Единая модель, проекты и диаграммы на каждом уровне декомпозиции.</p>
+          <p className="muted">Единая модель, проекты, диаграммы и ракурсы.</p>
         </div>
         <button className="secondary" onClick={() => void load()}>
           <RefreshCw size={16} /> Обновить
@@ -510,8 +533,9 @@ export function SolutionsPage() {
               </button>
             </div>
             <p className="muted small-text">
-              Дочерние элементы образуют декомпозицию. Одна сущность может иметь несколько
-              представлений на разных диаграммах.
+              Дочерние элементы организуют хранение. Декомпозиции и переходы к ракурсам
+              настраиваются в контекстном меню. Одна сущность может иметь несколько представлений на
+              разных диаграммах.
             </p>
             {selected && !['folder', 'diagram'].includes(selected.kind ?? '') && (
               <>
@@ -568,6 +592,17 @@ export function SolutionsPage() {
           }}
         />
       )}
+      {diagramLinks && (
+        <DiagramLinks
+          entityId={diagramLinks.entityId}
+          initialKind={diagramLinks.kind}
+          onClose={() => setDiagramLinks(null)}
+          onChanged={() => void load()}
+        />
+      )}
+      {viewpointsOpen && (
+        <ViewpointBrowser onClose={() => setViewpointsOpen(false)} onChanged={() => void load()} />
+      )}
       {linksOpen && (
         <Modal title="Менеджер связей" onClose={() => setLinksOpen(false)} className="object-modal">
           <EntityRelations onChanged={() => void load()} />
@@ -604,7 +639,7 @@ export function SolutionsPage() {
         </RelationEditor>
       )}
       {creating && kind === 'diagram' && (
-        <Modal title="Создать диаграмму декомпозиции" onClose={() => setCreating(false)}>
+        <Modal title="Создать диаграмму" onClose={() => setCreating(false)}>
           <form
             className="form-stack"
             onSubmit={async (e) => {
@@ -613,6 +648,7 @@ export function SolutionsPage() {
               try {
                 const d = await api<ModelDiagram>('diagrams', 'POST', {
                   name: diagramName,
+                  viewpointId: newViewpointId || null,
                   parentId: selected?.id ?? null,
                   notationIds,
                 });
@@ -644,6 +680,21 @@ export function SolutionsPage() {
               Расположение: {selected?.name ?? 'Корень пространства'}. Можно подключить несколько
               нотаций.
             </p>
+            <label>
+              Ракурс диаграммы
+              <select
+                aria-label="Ракурс диаграммы"
+                value={newViewpointId}
+                onChange={(e) => setNewViewpointId(e.target.value)}
+              >
+                <option value="">Без ракурса</option>
+                {space?.viewpoints.map((v) => (
+                  <option key={v.id} value={v.id}>
+                    {v.name}
+                  </option>
+                ))}
+              </select>
+            </label>
             {notations.map((n) => (
               <label className="checkbox-row" key={n.id}>
                 <input

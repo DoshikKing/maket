@@ -36,7 +36,7 @@ import {
   X,
   Share2,
 } from 'lucide-react';
-import type { Structure } from '@/lib/structure';
+import type { Structure, Viewpoint } from '@/lib/structure';
 import { api, date, download, readJson } from '@/lib/client';
 import { type DiagramDocument as LegacyDocument, defaults } from '@/lib/notation';
 import { useUser } from './workspace';
@@ -44,6 +44,8 @@ import { Modal } from './modal';
 import { ContextMenu } from './tree-context-menu';
 import { RepresentationAttributes } from './representation-attributes';
 import { useUnsavedNavigation } from './use-unsaved-navigation';
+import { DiagramLinks } from './diagram-links';
+import { ViewpointBrowser } from './viewpoint-browser';
 import { EntityRelations } from './entity-relations';
 import { ShareDialog } from './share-dialog';
 import { ExportDialog } from './export-dialog';
@@ -114,6 +116,8 @@ type Diagram = {
   relations: ModelRelation[];
   entityId?: string | null;
   diagrams: Structure['diagrams'];
+  viewpointId?: string | null;
+  viewpoints?: Viewpoint[];
 };
 
 export function EditorPage({ id }: { id: string }) {
@@ -129,6 +133,7 @@ export function EditorPage({ id }: { id: string }) {
         setDiagram({
           ...d,
           diagrams: space.diagrams ?? [],
+          viewpoints: space.viewpoints ?? [],
           document: projectDocument(d.document),
           objects: mergeModelObjects(space.objects, d.document.objects),
           relations: mergeModelObjects(space.relations ?? [], d.document.relations ?? []),
@@ -186,6 +191,12 @@ function Editor({ initial }: { initial: Diagram }) {
     [relationEditing, setRelationEditing] = useState<ModelRelation | 'new' | null>(null),
     [relationPlacement, setRelationPlacement] = useState<ModelRelation | null>(null),
     [objectEditing, setObjectEditing] = useState<ModelObject | null>(null),
+    [viewpoints, setViewpoints] = useState(initial.viewpoints ?? []),
+    [viewpointsOpen, setViewpointsOpen] = useState(false),
+    [diagramLinks, setDiagramLinks] = useState<{
+      entityId: string;
+      kind: 'decomposition' | 'viewpoint';
+    } | null>(null),
     [linksOpen, setLinksOpen] = useState(false),
     [commandBusy, setCommandBusy] = useState(false),
     [objectSaving, setObjectSaving] = useState(false),
@@ -254,6 +265,7 @@ function Editor({ initial }: { initial: Diagram }) {
       const space = await api<Space>('model');
       if (generation === objectGeneration.current && sequence === refreshSequence.current) {
         if (space.diagrams) setDiagrams(space.diagrams);
+        if (space.viewpoints) setViewpoints(space.viewpoints);
         mergeObjects(space.objects, true);
         mergeRelations(space.relations ?? [], true);
       }
@@ -1013,6 +1025,10 @@ function Editor({ initial }: { initial: Diagram }) {
     : selectedRelation
       ? relationEntity(selectedRelation)
       : undefined;
+  const diagramMetadata = diagrams.find((d) => d.id === initial.id);
+  const currentViewpoint = viewpoints.find(
+    (v) => v.id === (diagramMetadata ? diagramMetadata.viewpointId : initial.viewpointId),
+  );
   function showInTree() {
     if (!baseEntity) return;
     setPanels((p) => ({ ...p, tree: true }));
@@ -1289,6 +1305,15 @@ function Editor({ initial }: { initial: Diagram }) {
           >
             <GitBranch size={14} /> Связи модели
           </button>
+          <button
+            className="secondary small"
+            aria-label="Ракурсы"
+            onClick={async () => {
+              if (await flush()) setViewpointsOpen(true);
+            }}
+          >
+            Ракурс: {currentViewpoint?.name ?? 'Без ракурса'}
+          </button>
           <details className="panel-controls">
             <summary className="secondary small">Панели</summary>
             <div className="panel-options">
@@ -1470,6 +1495,7 @@ function Editor({ initial }: { initial: Diagram }) {
           objects={objects}
           relations={allRelations}
           onRelationLocate={locateRelation}
+          onDiagramLinks={(entityId, kind) => setDiagramLinks({ entityId, kind })}
           onRelationEdit={(r) => void editRelation(r)}
           onRelationPlace={setRelationPlacement}
           onRelationSaved={(r) => mergeRelations([r])}
@@ -2279,7 +2305,9 @@ function Editor({ initial }: { initial: Diagram }) {
                         ? 'Создание'
                         : r.reason === 'duplicate'
                           ? 'Копирование'
-                          : 'Сохранение'}
+                          : r.reason === 'viewpoint'
+                            ? 'Смена ракурса'
+                            : 'Сохранение'}
                   </small>
                 </div>
                 <button
@@ -2394,6 +2422,25 @@ function Editor({ initial }: { initial: Diagram }) {
                   <MousePointer2 size={14} />
                 </button>
                 <button
+                  aria-label="Декомпозиция объекта"
+                  disabled={!baseEntity}
+                  onClick={() => {
+                    if (baseEntity)
+                      setDiagramLinks({ entityId: baseEntity.id, kind: 'decomposition' });
+                  }}
+                >
+                  <GitBranch size={14} />
+                </button>
+                <button
+                  aria-label="Углубление / смена ракурса"
+                  disabled={!baseEntity}
+                  onClick={() => {
+                    if (baseEntity) setDiagramLinks({ entityId: baseEntity.id, kind: 'viewpoint' });
+                  }}
+                >
+                  <GitBranch size={14} />
+                </button>
+                <button
                   aria-label="Свойства представления"
                   onClick={() => setPanels((p) => ({ ...p, properties: true }))}
                 >
@@ -2477,6 +2524,28 @@ function Editor({ initial }: { initial: Diagram }) {
               </>
             )
           }
+        />
+      )}
+      {diagramLinks && (
+        <DiagramLinks
+          entityId={diagramLinks.entityId}
+          sourceDiagramId={initial.id}
+          initialKind={diagramLinks.kind}
+          onClose={() => setDiagramLinks(null)}
+          onChanged={() => void refreshObjects()}
+        />
+      )}
+      {viewpointsOpen && (
+        <ViewpointBrowser
+          currentDiagramId={initial.id}
+          onClose={() => setViewpointsOpen(false)}
+          onChanged={(diagram) => {
+            if (diagram?.id === initial.id) {
+              revisionRef.current = diagram.revision;
+              setRevision(diagram.revision);
+            }
+            void refreshObjects();
+          }}
         />
       )}
       {objectEditing && (

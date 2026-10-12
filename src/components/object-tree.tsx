@@ -367,6 +367,7 @@ export function ObjectTree({
   onRefresh,
   onRemove,
   relations = [],
+  onDiagramLinks,
   onRelationLocate,
   onRelationEdit,
   onRelationPlace,
@@ -379,6 +380,7 @@ export function ObjectTree({
   onRepresentationLocate?: (id: string, diagramId: string) => void;
   objects: ModelObject[];
   relations?: ModelRelation[];
+  onDiagramLinks?: (entityId: string, kind: 'decomposition' | 'viewpoint') => void;
   onRelationLocate?: (id: string) => void;
   onRelationEdit?: (r: ModelRelation) => void;
   onRelationPlace?: (r: ModelRelation) => void;
@@ -491,6 +493,22 @@ export function ObjectTree({
               data-relation-reference={r.id}
               actions={
                 <>
+                  {onDiagramLinks && (
+                    <>
+                      <button
+                        aria-label={`Декомпозиция ${r.name}`}
+                        onClick={() => onDiagramLinks(r.id, 'decomposition')}
+                      >
+                        <GitBranch size={12} />
+                      </button>
+                      <button
+                        aria-label={`Углубление ${r.name}`}
+                        onClick={() => onDiagramLinks(r.id, 'viewpoint')}
+                      >
+                        <GitBranch size={12} />
+                      </button>
+                    </>
+                  )}
                   <button
                     aria-label={`Разместить связь ${r.name}`}
                     disabled={r.archived}
@@ -577,13 +595,36 @@ export function ObjectTree({
             <TreeContextMenu
               actions={
                 <>
-                  <Link
-                    href={`/solutions?parent=${o.id}`}
-                    aria-label={`Декомпозиция ${o.name}`}
-                    title="Дочерние элементы и диаграммы"
-                  >
-                    <GitBranch size={12} />
-                  </Link>
+                  {onDiagramLinks ? (
+                    <>
+                      <button
+                        aria-label={`Декомпозиция ${o.name}`}
+                        onClick={() => onDiagramLinks(o.id, 'decomposition')}
+                      >
+                        <GitBranch size={12} />
+                      </button>
+                      <button
+                        aria-label={`Углубление ${o.name}`}
+                        onClick={() => onDiagramLinks(o.id, 'viewpoint')}
+                      >
+                        <GitBranch size={12} />
+                      </button>
+                      <Link
+                        href={`/solutions?parent=${o.id}`}
+                        aria-label={`Дочерние элементы ${o.name}`}
+                      >
+                        <Folder size={12} />
+                      </Link>
+                    </>
+                  ) : (
+                    <Link
+                      href={`/solutions?parent=${o.id}`}
+                      aria-label={`Декомпозиция ${o.name}`}
+                      title="Дочерние элементы и диаграммы"
+                    >
+                      <GitBranch size={12} />
+                    </Link>
+                  )}
                   <button
                     aria-label={`Разместить ${o.name}`}
                     title="Ещё одно представление"
@@ -790,6 +831,22 @@ export function ObjectTree({
                         <TreeContextMenu
                           actions={
                             <>
+                              {onDiagramLinks && (
+                                <>
+                                  <button
+                                    aria-label={`Декомпозиция ${r.name}`}
+                                    onClick={() => onDiagramLinks(r.id, 'decomposition')}
+                                  >
+                                    <GitBranch size={12} />
+                                  </button>
+                                  <button
+                                    aria-label={`Углубление ${r.name}`}
+                                    onClick={() => onDiagramLinks(r.id, 'viewpoint')}
+                                  >
+                                    <GitBranch size={12} />
+                                  </button>
+                                </>
+                              )}
                               <button
                                 aria-label={`Вернуть представление связи ${r.name}`}
                                 title="Разместить стрелку на диаграмме"

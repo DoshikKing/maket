@@ -128,6 +128,17 @@ async function commit(
   reason = 'save',
 ) {
   valid(document);
+  const requiredLinks = await tx.diagramContextLink.findMany({
+    where: { targetDiagramId: diagram.id, kind: 'viewpoint' },
+  });
+  if (requiredLinks.length) {
+    const represented = new Set([
+      ...document.nodes.map((n) => n.objectId),
+      ...document.edges.flatMap((e) => (e.relationId ? [e.relationId] : [])),
+    ]);
+    if (requiredLinks.some((link) => !represented.has(link.entityId)))
+      reject(409, 'Представление используется переходом к ракурсу. Сначала удалите переход');
+  }
   const changed = await tx.diagram.updateMany({
     where: { id: diagram.id, revision: expected },
     data: {
@@ -242,9 +253,13 @@ export async function ensureModel(ownerId: string) {
         });
       return {
         ...(await tx.modelSpace.findUniqueOrThrow({ where: { id: space.id } })),
+        viewpoints: await tx.diagramViewpoint.findMany({
+          where: { spaceId: space.id },
+          orderBy: [{ order: 'asc' }, { name: 'asc' }],
+        }),
         diagrams: await tx.diagram.findMany({
           where: { ownerId },
-          select: { id: true, entityId: true, name: true },
+          select: { id: true, entityId: true, name: true, viewpointId: true, revision: true },
         }),
         relations: (
           await tx.modelRelation.findMany({
@@ -309,135 +324,152 @@ async function notationBinding(
 }
 export async function newDiagram(
   ownerId: string,
-  input: { name: string; parentId?: string | null; notationIds?: string[]; document?: unknown },
+  input: {
+    name: string;
+    parentId?: string | null;
+    viewpointId?: string | null;
+    notationIds?: string[];
+    document?: unknown;
+  },
 ) {
   const space = await ensureModel(ownerId);
-  return db.$transaction(
-    async (tx) => {
-      await tx.modelSpace.update({ where: { id: space.id }, data: { revision: { increment: 0 } } });
-      if (
-        input.parentId &&
-        !(await modelEntities(tx, space.id)).some((o) => o.id === input.parentId && !o.archived)
-      )
-        reject(400, 'Активный родитель диаграммы не найден');
-      let document: ModelDocument;
-      if (input.document) {
-        if ((input.document as { schemaVersion?: number }).schemaVersion === 1)
-          document = await legacy(tx, diagramSchema.parse(input.document), space.id);
-        else {
-          const imported = modelDiagramSchema.parse(input.document);
-          valid(imported);
-          const relationIds = new Map((imported.relations ?? []).map((r) => [r.id, uuid()]));
-          const ids = new Map([
-            ...imported.objects.map((o) => [o.id, uuid()] as const),
-            ...relationIds,
-          ]);
-          const bindings = new Map(imported.bindings.map((b) => [b.id, uuid()]));
-          const objects: ModelObject[] = [];
-          for (const o of imported.objects) {
-            objects.push(
-              await createObject(tx, space.id, {
-                id: ids.get(o.id),
-                kind: o.kind === 'diagram' ? 'folder' : o.kind,
-                parentId: o.parentId ? ids.get(o.parentId) : null,
-                name: o.name,
-                description: o.description,
-                attributes: o.attributes,
-                archived: o.archived,
-                copiedFrom: { id: o.id, name: o.name },
-              }),
-            );
-          }
-          const pending = [...(imported.relations ?? [])];
-          const relations = [];
-          const present = new Set(imported.objects.map((o) => o.id));
-          while (pending.length) {
-            const i = pending.findIndex((r) => present.has(r.sourceId) && present.has(r.targetId));
-            if (i < 0) reject(400, 'Цикл между участниками импортируемых связей');
-            const [r] = pending.splice(i, 1);
-            relations.push(
-              await createRelation(
-                tx,
-                space.id,
-                {
-                  ...r,
-                  id: ids.get(r.id)!,
-                  sourceId: ids.get(r.sourceId)!,
-                  targetId: ids.get(r.targetId)!,
-                  parentId: r.parentId ? ids.get(r.parentId) : null,
-                  copiedFrom: { id: r.id, name: r.name },
-                },
-                true,
-              ),
-            );
-            present.add(r.id);
-          }
-          document = {
-            ...imported,
-            relations,
-            modelSpaceId: space.id,
-            objects,
-            bindings: imported.bindings.map((b) => ({
-              ...b,
-              id: bindings.get(b.id)!,
-              versionId: null,
-            })),
-            nodes: imported.nodes.map((n) => ({
-              ...n,
-              objectId: ids.get(n.objectId)!,
-              bindingId: bindings.get(n.bindingId)!,
-              profiles: n.profiles
-                ? Object.fromEntries(
-                    Object.entries(n.profiles).map(([key, values]) => {
-                      const [bindingId, typeId] = splitType(key);
-                      return [qualify(bindings.get(bindingId)!, typeId), values];
-                    }),
-                  )
-                : undefined,
-            })),
-            edges: imported.edges.map((e) => ({
-              ...e,
-              relationId: e.relationId ? relationIds.get(e.relationId) : undefined,
-              bindingId: e.bindingId ? bindings.get(e.bindingId)! : null,
-            })),
-          };
-        }
-      } else
-        document = {
-          schemaVersion: 2,
-          modelSpaceId: space.id,
-          bindings: await Promise.all(
-            (input.notationIds ?? ['builtin']).map((id) => notationBinding(tx, ownerId, id)),
+  return db.$transaction((tx) => newDiagramInTransaction(tx, ownerId, space, input), {
+    timeout: 60000,
+  });
+}
+export async function newDiagramInTransaction(
+  tx: Tx,
+  ownerId: string,
+  space: { id: string },
+  input: Parameters<typeof newDiagram>[1],
+) {
+  await tx.modelSpace.update({ where: { id: space.id }, data: { revision: { increment: 0 } } });
+  if (
+    input.parentId &&
+    !(await modelEntities(tx, space.id)).some((o) => o.id === input.parentId && !o.archived)
+  )
+    reject(400, 'Активный родитель диаграммы не найден');
+  if (
+    input.viewpointId &&
+    !(await tx.diagramViewpoint.findFirst({ where: { id: input.viewpointId, spaceId: space.id } }))
+  )
+    reject(404, 'Ракурс не найден');
+  let document: ModelDocument;
+  if (input.document) {
+    if ((input.document as { schemaVersion?: number }).schemaVersion === 1)
+      document = await legacy(tx, diagramSchema.parse(input.document), space.id);
+    else {
+      const imported = modelDiagramSchema.parse(input.document);
+      valid(imported);
+      const relationIds = new Map((imported.relations ?? []).map((r) => [r.id, uuid()]));
+      const ids = new Map([
+        ...imported.objects.map((o) => [o.id, uuid()] as const),
+        ...relationIds,
+      ]);
+      const bindings = new Map(imported.bindings.map((b) => [b.id, uuid()]));
+      const objects: ModelObject[] = [];
+      for (const o of imported.objects) {
+        objects.push(
+          await createObject(tx, space.id, {
+            id: ids.get(o.id),
+            kind: o.kind === 'diagram' ? 'folder' : o.kind,
+            parentId: o.parentId ? ids.get(o.parentId) : null,
+            name: o.name,
+            description: o.description,
+            attributes: o.attributes,
+            archived: o.archived,
+            copiedFrom: { id: o.id, name: o.name },
+          }),
+        );
+      }
+      const pending = [...(imported.relations ?? [])];
+      const relations = [];
+      const present = new Set(imported.objects.map((o) => o.id));
+      while (pending.length) {
+        const i = pending.findIndex((r) => present.has(r.sourceId) && present.has(r.targetId));
+        if (i < 0) reject(400, 'Цикл между участниками импортируемых связей');
+        const [r] = pending.splice(i, 1);
+        relations.push(
+          await createRelation(
+            tx,
+            space.id,
+            {
+              ...r,
+              id: ids.get(r.id)!,
+              sourceId: ids.get(r.sourceId)!,
+              targetId: ids.get(r.targetId)!,
+              parentId: r.parentId ? ids.get(r.parentId) : null,
+              copiedFrom: { id: r.id, name: r.name },
+            },
+            true,
           ),
-          objects: [],
-          nodes: [],
-          edges: [],
-        };
-      document = await materializeRelations(tx, document, undefined, undefined, !!input.document);
-      document = await liveDocument(tx, document);
-      valid(document);
-      const entity = await createObject(tx, space.id, {
-        kind: 'diagram',
-        name: input.name,
-        parentId: input.parentId,
-      });
-      const d = await tx.diagram.create({
-        data: {
-          entityId: entity.id,
-          ownerId,
-          modelSpaceId: space.id,
-          name: input.name,
-          notationVersionId: document.bindings[0].versionId,
-          document: json(document),
-          revisions: { create: { number: 1, document: json(document), reason: 'create' } },
-        },
-      });
-      await indexes(tx, d.id, document);
-      await tx.modelSpace.update({ where: { id: space.id }, data: { revision: { increment: 1 } } });
-      return { ...d, document };
+        );
+        present.add(r.id);
+      }
+      document = {
+        ...imported,
+        relations,
+        modelSpaceId: space.id,
+        objects,
+        bindings: imported.bindings.map((b) => ({
+          ...b,
+          id: bindings.get(b.id)!,
+          versionId: null,
+        })),
+        nodes: imported.nodes.map((n) => ({
+          ...n,
+          objectId: ids.get(n.objectId)!,
+          bindingId: bindings.get(n.bindingId)!,
+          profiles: n.profiles
+            ? Object.fromEntries(
+                Object.entries(n.profiles).map(([key, values]) => {
+                  const [bindingId, typeId] = splitType(key);
+                  return [qualify(bindings.get(bindingId)!, typeId), values];
+                }),
+              )
+            : undefined,
+        })),
+        edges: imported.edges.map((e) => ({
+          ...e,
+          relationId: e.relationId ? relationIds.get(e.relationId) : undefined,
+          bindingId: e.bindingId ? bindings.get(e.bindingId)! : null,
+        })),
+      };
+    }
+  } else
+    document = {
+      schemaVersion: 2,
+      modelSpaceId: space.id,
+      bindings: await Promise.all(
+        (input.notationIds ?? ['builtin']).map((id) => notationBinding(tx, ownerId, id)),
+      ),
+      objects: [],
+      nodes: [],
+      edges: [],
+    };
+  document = await materializeRelations(tx, document, undefined, undefined, !!input.document);
+  document = await liveDocument(tx, document);
+  valid(document);
+  const entity = await createObject(tx, space.id, {
+    kind: 'diagram',
+    name: input.name,
+    parentId: input.parentId,
+  });
+  const d = await tx.diagram.create({
+    data: {
+      entityId: entity.id,
+      viewpointId: input.viewpointId ?? null,
+      ownerId,
+      modelSpaceId: space.id,
+      name: input.name,
+      notationVersionId: document.bindings[0].versionId,
+      document: json(document),
+      revisions: { create: { number: 1, document: json(document), reason: 'create' } },
     },
-    { timeout: 60000 },
-  );
+  });
+  await indexes(tx, d.id, document);
+  await tx.modelSpace.update({ where: { id: space.id }, data: { revision: { increment: 1 } } });
+  return { ...d, document };
 }
 async function checkBindings(
   tx: Tx,
@@ -682,6 +714,7 @@ export async function duplicateModelDiagram(ownerId: string, diagramId: string) 
         entityId: entity.id,
         ownerId,
         modelSpaceId: document.modelSpaceId,
+        viewpointId: original.viewpointId,
         name: `${original.name.slice(0, 90)} — копия`,
         notationVersionId: document.bindings[0].versionId,
         document: json(document),
@@ -769,6 +802,8 @@ export async function deleteObject(
         409,
         `Объект используется в диаграммах: ${usages.map((u) => u.diagram.name).join(', ')}. Сначала удалите его представления и сохраните диаграммы`,
       );
+    if (await tx.diagramContextLink.count({ where: { entityId: objectId, spaceId: space.id } }))
+      reject(409, 'У объекта есть декомпозиции или переходы к ракурсам. Сначала удалите их');
     if (object.kind === 'diagram')
       reject(409, 'Удалите диаграмму через её карточку в обозревателе');
     await tx.modelObject.delete({ where: { id: objectId } });
@@ -853,106 +888,115 @@ export async function addRepresentation(
   },
 ) {
   await ensureModel(ownerId);
-  return db.$transaction(async (tx) => {
-    const d = await tx.diagram.findFirst({ where: { id: diagramId, ownerId } });
-    if (!d) reject(404, 'Диаграмма не найдена');
-    const stored = modelDiagramSchema.parse(d.document);
-    await tx.modelSpace.update({
-      where: { id: stored.modelSpaceId },
-      data: { revision: { increment: 0 } },
+  return db.$transaction((tx) =>
+    addRepresentationInTransaction(tx, ownerId, diagramId, expected, input),
+  );
+}
+export async function addRepresentationInTransaction(
+  tx: Tx,
+  ownerId: string,
+  diagramId: string,
+  expected: number,
+  input: Parameters<typeof addRepresentation>[3],
+) {
+  const d = await tx.diagram.findFirst({ where: { id: diagramId, ownerId } });
+  if (!d) reject(404, 'Диаграмма не найдена');
+  const stored = modelDiagramSchema.parse(d.document);
+  await tx.modelSpace.update({
+    where: { id: stored.modelSpaceId },
+    data: { revision: { increment: 0 } },
+  });
+  let document = await liveDocument(tx, stored);
+  const type = document.bindings
+    .find((b) => b.id === input.bindingId)
+    ?.document.nodeTypes.find((t) => t.id === input.typeId);
+  if (!type) reject(400, 'Неизвестное отображение объекта');
+  for (const [key, value] of Object.entries(input.properties ?? {})) {
+    const p = type.properties.find((p) => p.key === key);
+    if (!p || typeof value !== p.type) reject(400, 'Неверные свойства представления');
+  }
+  let object: ModelObject;
+  if (input.objectId) {
+    const existing = await tx.modelObject.findFirst({
+      where: { id: input.objectId, spaceId: document.modelSpaceId, archived: false },
     });
-    let document = await liveDocument(tx, stored);
-    const type = document.bindings
-      .find((b) => b.id === input.bindingId)
-      ?.document.nodeTypes.find((t) => t.id === input.typeId);
-    if (!type) reject(400, 'Неизвестное отображение объекта');
-    for (const [key, value] of Object.entries(input.properties ?? {})) {
-      const p = type.properties.find((p) => p.key === key);
-      if (!p || typeof value !== p.type) reject(400, 'Неверные свойства представления');
-    }
-    let object: ModelObject;
-    if (input.objectId) {
-      const existing = await tx.modelObject.findFirst({
-        where: { id: input.objectId, spaceId: document.modelSpaceId, archived: false },
-      });
-      if (!existing) reject(404, 'Активный объект не найден');
-      if (existing.kind === 'folder' || existing.kind === 'diagram')
-        reject(400, 'Папки и диаграммы организуют структуру и не размещаются на канвасе');
-      object = snapshot(existing);
-      for (const p of type.properties)
-        if (
-          p.scope === 'object' &&
-          input.properties?.[p.key] !== undefined &&
-          input.properties[p.key] !== object.attributes[p.objectKey ?? p.key]
-        )
-          reject(400, 'Общие свойства существующего объекта изменяются отдельно');
-    } else {
-      await tx.modelSpace.update({
-        where: { id: document.modelSpaceId },
-        data: { revision: { increment: 1 } },
-      });
-      const attributes: ModelObject['attributes'] = {};
-      for (const p of type.properties)
-        if (p.scope === 'object' && p.default !== undefined)
-          attributes[p.objectKey ?? p.key] = p.default;
-      for (const p of type.properties)
-        if (p.scope === 'object' && input.properties?.[p.key] !== undefined)
-          attributes[p.objectKey ?? p.key] = input.properties[p.key];
-      object = await createObject(tx, document.modelSpaceId, {
-        name:
-          String(
-            input.properties?.title ??
-              type.properties.find((p) => p.key === 'title')?.default ??
-              type.name,
-          )
-            .slice(0, 100)
-            .trim() ||
-          type.name.trim() ||
-          'Объект',
-        attributes,
-        parentId: d.entityId
-          ? (await tx.modelObject.findUnique({ where: { id: d.entityId } }))?.parentId
-          : null,
-      });
-    }
-    const properties: ModelObject['attributes'] = {};
+    if (!existing) reject(404, 'Активный объект не найден');
+    if (existing.kind === 'folder' || existing.kind === 'diagram')
+      reject(400, 'Папки и диаграммы организуют структуру и не размещаются на канвасе');
+    object = snapshot(existing);
     for (const p of type.properties)
       if (
-        (p.key !== 'title' ||
-          p.type !== 'string' ||
-          (typeof p.default === 'string' && p.default.length > 100)) &&
-        p.scope !== 'object' &&
-        p.default !== undefined
+        p.scope === 'object' &&
+        input.properties?.[p.key] !== undefined &&
+        input.properties[p.key] !== object.attributes[p.objectKey ?? p.key]
       )
-        properties[p.key] = p.default;
-    for (const p of type.properties)
-      if (p.scope !== 'object' && input.properties?.[p.key] !== undefined) {
-        const value = input.properties[p.key];
-        if (
-          !input.objectId &&
-          p.key === 'title' &&
-          p.type === 'string' &&
-          String(value).trim().length > 0 &&
-          String(value).length <= 100
-        )
-          continue;
-        properties[p.key] = value;
-      }
-    document = await liveDocument(tx, {
-      ...document,
-      nodes: [
-        ...document.nodes,
-        {
-          id: `node-${uuid()}`,
-          objectId: object.id,
-          bindingId: input.bindingId,
-          typeId: input.typeId,
-          position: input.position,
-          properties,
-        },
-      ],
+        reject(400, 'Общие свойства существующего объекта изменяются отдельно');
+  } else {
+    await tx.modelSpace.update({
+      where: { id: document.modelSpaceId },
+      data: { revision: { increment: 1 } },
     });
-    const result = await commit(tx, d, document, expected, 'representation');
-    return { ...result, document };
+    const attributes: ModelObject['attributes'] = {};
+    for (const p of type.properties)
+      if (p.scope === 'object' && p.default !== undefined)
+        attributes[p.objectKey ?? p.key] = p.default;
+    for (const p of type.properties)
+      if (p.scope === 'object' && input.properties?.[p.key] !== undefined)
+        attributes[p.objectKey ?? p.key] = input.properties[p.key];
+    object = await createObject(tx, document.modelSpaceId, {
+      name:
+        String(
+          input.properties?.title ??
+            type.properties.find((p) => p.key === 'title')?.default ??
+            type.name,
+        )
+          .slice(0, 100)
+          .trim() ||
+        type.name.trim() ||
+        'Объект',
+      attributes,
+      parentId: d.entityId
+        ? (await tx.modelObject.findUnique({ where: { id: d.entityId } }))?.parentId
+        : null,
+    });
+  }
+  const properties: ModelObject['attributes'] = {};
+  for (const p of type.properties)
+    if (
+      (p.key !== 'title' ||
+        p.type !== 'string' ||
+        (typeof p.default === 'string' && p.default.length > 100)) &&
+      p.scope !== 'object' &&
+      p.default !== undefined
+    )
+      properties[p.key] = p.default;
+  for (const p of type.properties)
+    if (p.scope !== 'object' && input.properties?.[p.key] !== undefined) {
+      const value = input.properties[p.key];
+      if (
+        !input.objectId &&
+        p.key === 'title' &&
+        p.type === 'string' &&
+        String(value).trim().length > 0 &&
+        String(value).length <= 100
+      )
+        continue;
+      properties[p.key] = value;
+    }
+  document = await liveDocument(tx, {
+    ...document,
+    nodes: [
+      ...document.nodes,
+      {
+        id: `node-${uuid()}`,
+        objectId: object.id,
+        bindingId: input.bindingId,
+        typeId: input.typeId,
+        position: input.position,
+        properties,
+      },
+    ],
   });
+  const result = await commit(tx, d, document, expected, 'representation');
+  return { ...result, document };
 }

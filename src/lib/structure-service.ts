@@ -4,8 +4,19 @@ import { reject } from './model-errors';
 import { modelDiagramSchema, effectiveNode, effectiveEdge } from './model';
 import { nodeLabel } from './appearance';
 import type { Structure, Representation } from './structure';
-export async function getStructure(ownerId: string, entityId?: string): Promise<Structure> {
+export async function getStructure(
+  ownerId: string,
+  entityId?: string,
+  allDiagramMetadata = false,
+): Promise<Structure> {
   const space = await ensureModel(ownerId);
+  if (
+    allDiagramMetadata &&
+    entityId &&
+    !space.objects.some((o) => o.id === entityId) &&
+    !space.relations.some((r) => r.id === entityId)
+  )
+    reject(404, 'Элемент не найден');
   const diagrams = await db.diagram.findMany({
     where: {
       ownerId,
@@ -18,7 +29,14 @@ export async function getStructure(ownerId: string, entityId?: string): Promise<
           }
         : {}),
     },
-    select: { id: true, entityId: true, name: true, document: true },
+    select: {
+      id: true,
+      entityId: true,
+      name: true,
+      document: true,
+      viewpointId: true,
+      revision: true,
+    },
     orderBy: { updatedAt: 'desc' },
   });
   const objects = new Map(space.objects.map((o) => [o.id, o]));
@@ -59,9 +77,21 @@ export async function getStructure(ownerId: string, entityId?: string): Promise<
   }
   return {
     id: space.id,
+    viewpoints: space.viewpoints,
+    contextLinks: (await db.diagramContextLink.findMany({
+      where: { spaceId: space.id, ...(entityId ? { entityId } : {}) },
+    })) as Structure['contextLinks'],
     objects: space.objects,
     relations: space.relations,
-    diagrams: diagrams.map(({ id, entityId, name }) => ({ id, entityId, name })),
+    diagrams: allDiagramMetadata
+      ? space.diagrams
+      : diagrams.map(({ id, entityId, name, viewpointId, revision }) => ({
+          id,
+          entityId,
+          name,
+          viewpointId,
+          revision,
+        })),
     representations,
   };
 }
@@ -80,10 +110,7 @@ export async function deleteDiagram(ownerId: string, id: string) {
         (await tx.modelObject.count({ where: { parentId: d.entityId } })) +
         (await tx.modelRelation.count({ where: { parentId: d.entityId } }));
       if (children)
-        reject(
-          409,
-          'У диаграммы есть декомпозиция. Сначала переместите или удалите дочерние элементы',
-        );
+        reject(409, 'У диаграммы есть дочерние элементы. Сначала переместите или удалите их');
       if (
         await tx.modelRelation.count({
           where: { OR: [{ sourceId: d.entityId }, { targetId: d.entityId }] },
@@ -93,6 +120,8 @@ export async function deleteDiagram(ownerId: string, id: string) {
       if (await tx.diagramObjectUsage.count({ where: { objectId: d.entityId } }))
         reject(409, 'Диаграмма используется в представлениях');
     }
+    if (d.entityId && (await tx.diagramContextLink.count({ where: { entityId: d.entityId } })))
+      reject(409, 'У диаграммы есть декомпозиции или переходы к ракурсам. Сначала удалите их');
     await tx.diagram.delete({ where: { id } });
     if (d.entityId) await tx.modelObject.delete({ where: { id: d.entityId } });
     return { ok: true };

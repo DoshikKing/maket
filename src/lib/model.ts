@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { Viewpoint } from './structure';
 import {
   diagramSchema,
   notationSchema,
@@ -133,6 +134,7 @@ export type ViewDocument = Omit<DiagramDocument, 'edges'> & {
   edges: (DiagramDocument['edges'][number] & { relationId?: string })[];
 };
 export type ModelDiagram = {
+  viewpointId?: string | null;
   entityId?: string | null;
   id: string;
   name: string;
@@ -140,7 +142,14 @@ export type ModelDiagram = {
   document: ModelDocument;
 };
 export type Space = {
-  diagrams?: { id: string; entityId: string | null; name: string }[];
+  viewpoints?: Viewpoint[];
+  diagrams?: {
+    id: string;
+    entityId: string | null;
+    name: string;
+    viewpointId: string | null;
+    revision: number;
+  }[];
   id: string;
   name: string;
   revision: number;

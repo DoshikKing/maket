@@ -57,6 +57,10 @@ model NotationVersion {
   @@unique([notationId, number])
 }
 model Diagram {
+  viewpointId String?
+  viewpoint DiagramViewpoint? @relation(fields: [viewpointId], references: [id], onDelete: Restrict)
+  outgoingContextLinks DiagramContextLink[] @relation("ContextSource")
+  incomingContextLinks DiagramContextLink[] @relation("ContextTarget")
   entityId String? @unique
   entity ModelObject? @relation(fields: [entityId], references: [id], onDelete: NoAction)
   shareToken String? @unique
@@ -96,6 +100,8 @@ model RateLimit {
 }
 
 model ModelSpace {
+  viewpoints DiagramViewpoint[]
+  contextLinks DiagramContextLink[]
   id String @id @default(cuid())
   ownerId String @unique
   owner User @relation(fields: [ownerId], references: [id], onDelete: Cascade)
@@ -192,4 +198,33 @@ model DiagramRelationUsage {
   count Int
   @@id([diagramId, relationId])
   @@index([relationId])
+}
+
+model DiagramViewpoint {
+  id String @id @default(cuid())
+  spaceId String
+  space ModelSpace @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  name String
+  description String @default("")
+  order Int @default(0)
+  revision Int @default(1)
+  diagrams Diagram[]
+  @@unique([spaceId, name])
+  @@index([spaceId, order])
+}
+model DiagramContextLink {
+  id String @id @default(cuid())
+  spaceId String
+  space ModelSpace @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  entityId String
+  sourceDiagramId String?
+  sourceDiagram Diagram? @relation("ContextSource", fields: [sourceDiagramId], references: [id], onDelete: Cascade)
+  targetDiagramId String
+  targetDiagram Diagram @relation("ContextTarget", fields: [targetDiagramId], references: [id], onDelete: Cascade)
+  kind String
+  meaning String @default("")
+  revision Int @default(1)
+  @@unique([entityId, sourceDiagramId, targetDiagramId, kind])
+  @@index([spaceId, entityId])
+  @@index([targetDiagramId, kind])
 }

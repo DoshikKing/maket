@@ -358,6 +358,8 @@ export async function deleteRelation(
         409,
         `Связь используется в диаграммах: ${usages.map((u) => u.diagram.name).join(', ')}. Сначала удалите её стрелки и сохраните диаграммы`,
       );
+    if (await tx.diagramContextLink.count({ where: { spaceId: space.id, entityId: id } }))
+      reject(409, 'У связи есть декомпозиции или переходы к ракурсам. Сначала удалите их');
     await tx.modelRelation.delete({ where: { id } });
     return { ok: true };
   });

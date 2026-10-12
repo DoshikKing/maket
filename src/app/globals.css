@@ -3136,3 +3136,52 @@ body {
   color: var(--muted);
   font-weight: normal;
 }
+.viewpoint-groups {
+  display: grid;
+  gap: 14px;
+  margin-top: 24px;
+}
+.viewpoint-groups details {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+}
+.viewpoint-groups summary {
+  cursor: pointer;
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+.viewpoint-diagram {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(130px, 200px);
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+}
+.viewpoint-diagram a {
+  color: var(--accent);
+  overflow-wrap: anywhere;
+}
+.context-link-list {
+  display: grid;
+  gap: 10px;
+  margin: 16px 0;
+}
+.context-link-list article {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.context-link-list article a {
+  color: var(--accent);
+}
+.context-link-list small {
+  color: var(--muted);
+}
+@media (max-width: 600px) {
+  .viewpoint-diagram {
+    grid-template-columns: 1fr;
+  }
+}
