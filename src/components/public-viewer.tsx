@@ -133,8 +133,9 @@ export function PublicViewer({ token }: { token: string }) {
       .filter((e) => e.parentId === parent && !seen.has(e.id))
       .map((e) => (
         <li key={e.id}>
-          <div className="viewer-tree-row">
+          <div className="viewer-tree-row tree-row">
             <button
+              className="tree-toggle"
               aria-label={`${closed.has(e.id) ? 'Развернуть' : 'Свернуть'} ${e.name}`}
               onClick={() =>
                 setClosed((prev) => {
@@ -146,7 +147,7 @@ export function PublicViewer({ token }: { token: string }) {
             >
               {closed.has(e.id) ? '▸' : '▾'}
             </button>
-            <button onClick={() => chooseEntity(e.id)}>
+            <button className="tree-label" onClick={() => chooseEntity(e.id)}>
               {e.name}{' '}
               <small>
                 (
@@ -167,7 +168,9 @@ export function PublicViewer({ token }: { token: string }) {
                       .filter((r) => r.sourceId === e.id || r.targetId === e.id)
                       .map((r) => (
                         <li key={r.id}>
-                          <button onClick={() => chooseEntity(r.id)}>{r.name}</button>
+                          <button className="text-button" onClick={() => chooseEntity(r.id)}>
+                            {r.name}
+                          </button>
                         </li>
                       ))}
                   </ul>
@@ -264,13 +267,15 @@ export function PublicViewer({ token }: { token: string }) {
             }}
           />
           <div className="viewer-controls">
-            <button aria-label="Приблизить" onClick={() => zoom(0.8)}>
+            <button className="icon-button" aria-label="Приблизить" onClick={() => zoom(0.8)}>
               +
             </button>
-            <button aria-label="Отдалить" onClick={() => zoom(1.25)}>
+            <button className="icon-button" aria-label="Отдалить" onClick={() => zoom(1.25)}>
               −
             </button>
-            <button onClick={() => setBox(null)}>Вся диаграмма</button>
+            <button className="secondary small" onClick={() => setBox(null)}>
+              Вся диаграмма
+            </button>
           </div>
         </section>
       </div>

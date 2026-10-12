@@ -25,7 +25,7 @@ export function ViewpointExplorer({
     <section className="viewpoint-explorer" aria-label="Обозреватель ракурсов">
       <div className="palette-title">
         <strong>Ракурсы</strong>
-        <button className="btn small" onClick={onManage} aria-label="Управление ракурсами">
+        <button className="secondary small" onClick={onManage} aria-label="Управление ракурсами">
           Настроить
         </button>
       </div>

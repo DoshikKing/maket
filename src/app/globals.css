@@ -38,6 +38,23 @@ textarea {
 }
 button {
   cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+/* A themed fallback also covers actions without a button variant. */
+:where(button) {
+  padding: 11px 17px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+}
+:where(button:hover:not(:disabled)) {
+  background: var(--hover);
+}
+:where(button, a.primary, a.secondary):focus-visible {
+  outline: 2px solid var(--accent);
 }
 button:disabled {
   opacity: 0.45;
@@ -153,6 +170,7 @@ small {
   font-size: 12px;
   font-weight: 700;
   white-space: nowrap;
+  line-height: 1.4;
 }
 .primary {
   background: var(--accent);
@@ -160,17 +178,17 @@ small {
   color: #fff;
   box-shadow: 0 3px 6px #7060da19;
 }
-.primary:hover {
-  background: #5c4cbf;
+.primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 85%, #000);
 }
 .secondary {
   border: 1px solid var(--border);
   background: var(--panel);
   color: var(--text);
 }
-.secondary:hover {
+.secondary:hover:not(:disabled) {
   background: var(--hover);
-  border-color: #d5d1eb;
+  border-color: var(--accent);
 }
 .small {
   font-size: 11px;
@@ -194,7 +212,7 @@ small {
   align-items: center;
   border-radius: 6px;
 }
-.icon-button:hover {
+.icon-button:hover:not(:disabled) {
   background: var(--hover);
   color: var(--accent);
 }
@@ -2070,6 +2088,9 @@ body {
   background: var(--panel);
   color: var(--text);
 }
+.react-flow__controls-button:hover:not(:disabled) {
+  background: var(--hover);
+}
 .react-flow__controls-button svg {
   fill: currentColor;
 }
@@ -2712,10 +2733,7 @@ body {
   padding: 8px;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: #fff;
-}
-.viewer-controls button {
-  padding: 5px;
+  background: var(--panel);
 }
 .viewer-notice {
   padding: 8px 20px;
@@ -2860,6 +2878,7 @@ body {
   color: inherit;
   cursor: pointer;
   width: 100%;
+  padding: 0;
 }
 .solution-card small {
   color: var(--muted);
@@ -3113,8 +3132,9 @@ body {
   text-align: left;
   text-decoration: none;
   font-size: 13px;
+  font-weight: 500;
 }
-.tree-context-menu [role='menuitem']:hover,
+.tree-context-menu [role='menuitem']:hover:not(:disabled),
 .tree-context-menu [role='menuitem']:focus-visible {
   background: var(--hover);
   outline: 2px solid var(--accent);
