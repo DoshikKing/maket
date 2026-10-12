@@ -176,6 +176,7 @@ model ModelRelation {
   updatedAt DateTime @updatedAt
   revisions ModelRelationRevision[]
   usages DiagramRelationUsage[]
+  contextLink DiagramContextLink?
   @@unique([spaceId, id])
   @@index([spaceId, sourceId])
   @@index([spaceId, targetId])
@@ -213,7 +214,8 @@ model DiagramViewpoint {
   @@index([spaceId, order])
 }
 model DiagramContextLink {
-  id String @id @default(cuid())
+  id String @id
+  relation ModelRelation @relation(fields: [id], references: [id], onDelete: Cascade)
   spaceId String
   space ModelSpace @relation(fields: [spaceId], references: [id], onDelete: Cascade)
   entityId String

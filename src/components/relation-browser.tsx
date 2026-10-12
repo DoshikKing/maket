@@ -11,6 +11,7 @@ import {
 import { defaults } from '@/lib/notation';
 import { Modal } from './modal';
 import { CopyOrigin } from './copy-origin';
+import type { DiagramContextLink } from '@/lib/structure';
 export function RelationEditor({
   relation,
   parentId,
@@ -33,6 +34,7 @@ export function RelationEditor({
     [source, setSource] = useState(relation?.sourceId ?? sourceId ?? ''),
     [relationType, setRelationType] = useState(relation?.relationType ?? 'Привязка'),
     [types, setTypes] = useState<string[]>([]),
+    [contextLink, setContextLink] = useState<DiagramContextLink | undefined>(),
     [target, setTarget] = useState(relation?.targetId ?? ''),
     [parent, setParent] = useState(relation?.parentId ?? parentId ?? ''),
     [attributes, setAttributes] = useState(
@@ -49,12 +51,16 @@ export function RelationEditor({
   const guard = { revision: relation?.revision, incarnation: relation?.incarnation };
   const typeListId = useId();
   useEffect(() => {
-    void api<{ relations: ModelRelation[] }>('model')
-      .then((s) =>
+    void Promise.all([
+      api<{ relations: ModelRelation[] }>('model'),
+      relation ? api<DiagramContextLink[]>('context-links') : Promise.resolve([]),
+    ])
+      .then(([s, links]) => {
         setTypes([
           ...new Set(s.relations.map((r) => r.relationType).filter((t): t is string => !!t)),
-        ]),
-      )
+        ]);
+        setContextLink(links.find((l) => l.id === relation?.id));
+      })
       .catch(() => {});
   }, []);
   return (
@@ -131,6 +137,7 @@ export function RelationEditor({
             list={typeListId}
             maxLength={100}
             value={relationType}
+            disabled={!!contextLink}
             onChange={(e) => setRelationType(e.target.value)}
             placeholder="Привязка или новый тип"
           />
@@ -174,6 +181,7 @@ export function RelationEditor({
               aria-label={label}
               value={value}
               required
+              disabled={!!contextLink}
               onChange={(e) => setValue(e.target.value)}
             >
               <option value="">Выберите объект</option>
@@ -189,8 +197,9 @@ export function RelationEditor({
         ))}
         {relation && (
           <small className="muted">
-            Источник — исходящий участник, назначение — входящий. Участников можно менять, если у
-            связи нет представлений на диаграммах.
+            {contextLink
+              ? 'Эта связь задаёт переход к диаграмме. Описание соответствует смыслу перехода. Для смены участников или назначения удалите переход и создайте новый.'
+              : 'Источник — исходящий участник, назначение — входящий. Участников можно менять, если у связи нет представлений на диаграммах.'}
           </small>
         )}
         <div className="section-title">

@@ -1,6 +1,7 @@
 import { db } from './db';
 import { ensureModel } from './model-service';
 import { reject } from './model-errors';
+import { deleteRelationInTransaction } from './relation-service';
 import { modelDiagramSchema, effectiveNode, effectiveEdge } from './model';
 import { nodeLabel } from './appearance';
 import type { Structure, Representation } from './structure';
@@ -104,6 +105,14 @@ export async function deleteDiagram(ownerId: string, id: string) {
       await tx.modelSpace.update({
         where: { id: d.modelSpaceId },
         data: { revision: { increment: 1 } },
+      });
+    const transitions = await tx.diagramContextLink.findMany({
+      where: { OR: [{ sourceDiagramId: id }, { targetDiagramId: id }] },
+      include: { relation: true },
+    });
+    for (const link of transitions)
+      await deleteRelationInTransaction(tx, link.spaceId, link.id, {
+        revision: link.relation.revision,
       });
     if (d.entityId) {
       const children =

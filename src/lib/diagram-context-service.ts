@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { db } from './db';
 import { ensureModel, newDiagramInTransaction } from './model-service';
 import { reject } from './model-errors';
+import { createRelation, deleteRelationInTransaction, recordRelation } from './relation-service';
 
 const id = z.string().min(1).max(100);
 export const viewpointInput = z.object({
@@ -15,7 +16,7 @@ export const contextLinkInput = z
     entityId: id,
     sourceDiagramId: id.nullable().default(null),
     kind: z.enum(['decomposition', 'viewpoint']),
-    meaning: z.string().trim().max(2000).default(''),
+    meaning: z.string().trim().max(4000).default(''),
     targetDiagramId: id.optional(),
     newDiagram: z
       .object({ name: z.string().trim().min(1).max(100), viewpointId: id.nullable().default(null) })
@@ -32,7 +33,7 @@ async function transaction<T>(
   const space = await ensureModel(ownerId);
   return db.$transaction(
     async (tx) => {
-      await tx.modelSpace.update({ where: { id: space.id }, data: { revision: { increment: 0 } } });
+      await tx.modelSpace.update({ where: { id: space.id }, data: { revision: { increment: 1 } } });
       return run(tx, space.id);
     },
     { timeout: 60000 },
@@ -177,8 +178,18 @@ export async function createContextLink(ownerId: string, input: z.infer<typeof c
         );
       }
     }
+    if (!target.entityId) reject(409, 'Диаграмма не связана с объектной моделью');
+    const type = input.kind === 'decomposition' ? 'Декомпозиция' : 'Углубление';
+    const binding = await createRelation(tx, spaceId, {
+      sourceId: entity.id,
+      targetId: target.entityId,
+      name: `${type}: ${target.name}`.slice(0, 100),
+      relationType: type,
+      description: input.meaning,
+    });
     return tx.diagramContextLink.create({
       data: {
+        id: binding.id,
         spaceId,
         entityId: entity.id,
         sourceDiagramId: source?.id ?? null,
@@ -196,10 +207,12 @@ export async function updateContextLink(
   meaning?: string,
 ) {
   return transaction(ownerId, async (tx, spaceId) => {
+    const link = await tx.diagramContextLink.findFirst({ where: { id, spaceId } });
+    if (!link || link.revision !== revision)
+      reject(409, 'Переход изменён или удалён. Обновите список');
     if (meaning === undefined) {
-      if (!(await tx.diagramContextLink.deleteMany({ where: { id, spaceId, revision } })).count)
-        reject(409, 'Переход изменён или удалён. Обновите список');
-      return { ok: true };
+      const relation = await tx.modelRelation.findUniqueOrThrow({ where: { id } });
+      return deleteRelationInTransaction(tx, spaceId, id, { revision: relation.revision });
     }
     if (
       !(
@@ -210,6 +223,11 @@ export async function updateContextLink(
       ).count
     )
       reject(409, 'Переход изменён или удалён. Обновите список');
+    const relation = await tx.modelRelation.update({
+      where: { id },
+      data: { description: meaning, revision: { increment: 1 } },
+    });
+    await recordRelation(tx, relation);
     return tx.diagramContextLink.findUniqueOrThrow({ where: { id } });
   });
 }

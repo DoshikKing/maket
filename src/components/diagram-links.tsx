@@ -186,7 +186,7 @@ export function DiagramLinks({
                 Смысл перехода
                 <input
                   aria-label="Изменить смысл перехода"
-                  maxLength={2000}
+                  maxLength={4000}
                   value={editingMeaning.value}
                   onChange={(e) => setEditingMeaning({ ...editingMeaning, value: e.target.value })}
                 />
@@ -324,7 +324,7 @@ export function DiagramLinks({
               Смысл перехода
               <input
                 aria-label="Смысл перехода"
-                maxLength={2000}
+                maxLength={4000}
                 value={meaning}
                 onChange={(e) => setMeaning(e.target.value)}
                 placeholder={

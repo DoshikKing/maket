@@ -27,7 +27,7 @@ export const relationSnapshot = (row: {
   copiedFrom?: unknown;
 }): ModelRelation =>
   relationSnapshotSchema.parse({ ...row, incarnation: row.createdAt?.toISOString() });
-async function recordRelation(tx: Tx, r: Parameters<typeof relationSnapshot>[0]) {
+export async function recordRelation(tx: Tx, r: Parameters<typeof relationSnapshot>[0]) {
   await tx.modelRelationRevision.create({
     data: { relationId: r.id, number: r.revision, snapshot: json(relationSnapshot(r)) },
   });
@@ -287,6 +287,18 @@ export async function updateRelation(
         targetId: s.targetId,
       };
     }
+    const contextLink = await tx.diagramContextLink.findUnique({ where: { id } });
+    if (
+      contextLink &&
+      ((data.sourceId !== undefined && data.sourceId !== r.sourceId) ||
+        (data.targetId !== undefined && data.targetId !== r.targetId) ||
+        (data.relationType !== undefined && data.relationType !== r.relationType) ||
+        data.archived === true)
+    )
+      reject(
+        409,
+        'Это переход к диаграмме. Чтобы изменить участников или назначение, удалите переход и создайте новый',
+      );
     if (
       (data.sourceId !== undefined && data.sourceId !== r.sourceId) ||
       (data.targetId !== undefined && data.targetId !== r.targetId)
@@ -324,6 +336,11 @@ export async function updateRelation(
       },
     });
     await recordRelation(tx, updated);
+    if (contextLink && data.description !== undefined && data.description !== r.description)
+      await tx.diagramContextLink.update({
+        where: { id },
+        data: { meaning: data.description, revision: { increment: 1 } },
+      });
     return relationSnapshot(updated);
   });
 }
@@ -333,34 +350,42 @@ export async function deleteRelation(
   input: { revision: number; incarnation?: string },
 ) {
   return db.$transaction(async (tx) => {
-    const space = await ownSpace(tx, ownerId),
-      r = await tx.modelRelation.findFirst({ where: { id, spaceId: space.id } });
-    if (!r) reject(404, 'Связь не найдена');
-    if (
-      r.revision !== input.revision ||
-      (input.incarnation && input.incarnation !== r.createdAt.toISOString())
-    )
-      reject(409, 'Связь изменена. Обновите модель');
-    if ((await modelEntities(tx, space.id)).some((o) => o.parentId === id))
-      reject(409, 'У связи есть дочерние объекты или связи. Сначала переместите или удалите их');
-    if (
-      await tx.modelRelation.count({
-        where: { spaceId: space.id, OR: [{ sourceId: id }, { targetId: id }] },
-      })
-    )
-      reject(409, 'Связь участвует в других связях модели. Сначала удалите их');
-    const usages = await tx.diagramRelationUsage.findMany({
-      where: { relationId: id },
-      include: { diagram: { select: { name: true } } },
-    });
-    if (usages.length)
-      reject(
-        409,
-        `Связь используется в диаграммах: ${usages.map((u) => u.diagram.name).join(', ')}. Сначала удалите её стрелки и сохраните диаграммы`,
-      );
-    if (await tx.diagramContextLink.count({ where: { spaceId: space.id, entityId: id } }))
-      reject(409, 'У связи есть декомпозиции или переходы к ракурсам. Сначала удалите их');
-    await tx.modelRelation.delete({ where: { id } });
-    return { ok: true };
+    const space = await ownSpace(tx, ownerId);
+    return deleteRelationInTransaction(tx, space.id, id, input);
   });
+}
+export async function deleteRelationInTransaction(
+  tx: Tx,
+  spaceId: string,
+  id: string,
+  input: { revision: number; incarnation?: string },
+) {
+  const r = await tx.modelRelation.findFirst({ where: { id, spaceId } });
+  if (!r) reject(404, 'Связь не найдена');
+  if (
+    r.revision !== input.revision ||
+    (input.incarnation && input.incarnation !== r.createdAt.toISOString())
+  )
+    reject(409, 'Связь изменена. Обновите модель');
+  if ((await modelEntities(tx, spaceId)).some((o) => o.parentId === id))
+    reject(409, 'У связи есть дочерние объекты или связи. Сначала переместите или удалите их');
+  if (
+    await tx.modelRelation.count({
+      where: { spaceId, OR: [{ sourceId: id }, { targetId: id }] },
+    })
+  )
+    reject(409, 'Связь участвует в других связях модели. Сначала удалите их');
+  const usages = await tx.diagramRelationUsage.findMany({
+    where: { relationId: id },
+    include: { diagram: { select: { name: true } } },
+  });
+  if (usages.length)
+    reject(
+      409,
+      `Связь используется в диаграммах: ${usages.map((u) => u.diagram.name).join(', ')}. Сначала удалите её стрелки и сохраните диаграммы`,
+    );
+  if (await tx.diagramContextLink.count({ where: { spaceId, entityId: id } }))
+    reject(409, 'У связи есть декомпозиции или переходы к ракурсам. Сначала удалите их');
+  await tx.modelRelation.delete({ where: { id } });
+  return { ok: true };
 }

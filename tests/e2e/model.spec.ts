@@ -2774,6 +2774,15 @@ test('viewpoints: decomposition invariants, arbitrary context transitions, atomi
   const detail = await (await request.get(`/api/diagrams/${decomposition.targetDiagramId}`)).json();
   expect(detail.viewpointId).toBe(business.id);
   expect(detail.document.nodes).toHaveLength(0);
+  const decompositionBinding = await (
+    await request.get(`/api/relations/${decomposition.id}`)
+  ).json();
+  expect(decompositionBinding).toMatchObject({
+    sourceId: entity.id,
+    targetId: detail.entityId,
+    relationType: 'Декомпозиция',
+    description: 'Внутреннее устройство',
+  });
   const transitionResponse = await request.post('/api/context-links', {
     data: {
       entityId: entity.id,
@@ -2791,6 +2800,20 @@ test('viewpoints: decomposition invariants, arbitrary context transitions, atomi
   expect(target.viewpointId).toBe(code.id);
   expect(target.document.nodes).toHaveLength(0);
   expect(target.document.edges).toHaveLength(0);
+  const modelBindings = (await (await request.get('/api/model/structure')).json()).relations;
+  expect(modelBindings.find((r: { id: string }) => r.id === transition.id)).toMatchObject({
+    sourceId: entity.id,
+    targetId: target.entityId,
+    relationType: 'Углубление',
+    description: 'Реализация процесса в коде',
+  });
+  expect(
+    (
+      await request.patch(`/api/relations/${transition.id}`, {
+        data: { revision: 1, targetId: source.entityId },
+      })
+    ).status(),
+  ).toBe(409);
   target = await place(request, target, entity.id, target.document.bindings[0].id);
   expect(
     (
@@ -2957,6 +2980,9 @@ test('viewpoints: decomposition invariants, arbitrary context transitions, atomi
   });
   expect(updated.status()).toBe(200);
   const updatedLink = await updated.json();
+  expect((await (await request.get(`/api/relations/${transition.id}`)).json()).description).toBe(
+    'Новая смысловая связь',
+  );
   expect(
     (
       await request.delete(`/api/context-links/${transition.id}`, {
@@ -2979,6 +3005,7 @@ test('viewpoints: decomposition invariants, arbitrary context transitions, atomi
     ).status(),
   ).toBe(200);
   expect((await request.get(`/api/diagrams/${target.id}`)).status()).toBe(200);
+  expect((await request.get(`/api/relations/${transition.id}`)).status()).toBe(404);
   expect(
     (
       await request.delete(`/api/viewpoints/${deployment.id}`, {
@@ -2993,6 +3020,7 @@ test('viewpoints: decomposition invariants, arbitrary context transitions, atomi
     ),
   ).toBe(false);
   expect((await request.get(`/api/diagrams/${detail.id}`)).status()).toBe(200);
+  expect((await request.get(`/api/relations/${decomposition.id}`)).status()).toBe(404);
 });
 
 test('browser: viewpoint explorer and object transitions preserve identity and context', async ({
@@ -3065,6 +3093,26 @@ test('browser: viewpoint explorer and object transitions preserve identity and c
   expect(
     updated.representations.filter((r) => r.diagramId === transition.targetDiagramId),
   ).toHaveLength(0);
+  await showObjectLinks(page, entity);
+  await expect(
+    page.locator(`.object-panel [data-relation-reference="${transition.id}"]`).first(),
+  ).toContainText('Углубление: Реализация процесса');
+  await page.getByRole('button', { name: 'Связи модели', exact: true }).click();
+  const manager = page.getByRole('dialog', { name: 'Менеджер связей', exact: true });
+  await expect(manager).toContainText('Декомпозиция: Внутреннее устройство');
+  await expect(manager).toContainText('Углубление: Реализация процесса');
+  await manager
+    .getByRole('button', {
+      name: 'Редактировать привязку Углубление: Реализация процесса',
+      exact: true,
+    })
+    .click();
+  const bindingEditor = page.getByRole('dialog', { name: 'Общие свойства связи', exact: true });
+  await expect(bindingEditor.getByLabel('Тип связи', { exact: true })).toBeDisabled();
+  await expect(bindingEditor.getByLabel('Источник связи', { exact: true })).toBeDisabled();
+  await expect(bindingEditor.getByLabel('Назначение связи', { exact: true })).toBeDisabled();
+  await bindingEditor.getByRole('button', { name: 'Закрыть', exact: true }).click();
+  await manager.getByRole('button', { name: 'Закрыть', exact: true }).click();
   const inlineExplorer = page.getByRole('region', { name: 'Обозреватель ракурсов', exact: true });
   await expect(inlineExplorer.locator(`[data-viewpoint-group="${code.id}"]`)).toContainText(
     'Реализация процесса',
@@ -3239,4 +3287,101 @@ test('viewpoints: relation transitions and representation indexes keep shared ar
   ).json();
   expect(emptyDiagram.document.nodes).toHaveLength(0);
   expect(emptyDiagram.document.edges).toHaveLength(0);
+});
+
+test('viewpoints: model bindings synchronize history and guarded deletion without orphan transitions', async ({
+  request,
+}) => {
+  await login(request);
+  const entity = await object(request, 'Объект переходов');
+  const created = await request.post('/api/context-links', {
+    data: {
+      entityId: entity.id,
+      kind: 'decomposition',
+      newDiagram: { name: 'Детали объекта' },
+    },
+  });
+  expect(created.status(), await created.text()).toBe(201);
+  let link = await created.json();
+  const diagram = await (await request.get(`/api/diagrams/${link.targetDiagramId}`)).json();
+  let relation = await (await request.get(`/api/relations/${link.id}`)).json();
+  expect(relation).toMatchObject({
+    sourceId: entity.id,
+    targetId: diagram.entityId,
+    relationType: 'Декомпозиция',
+  });
+  const renamed = await request.patch(`/api/relations/${relation.id}`, {
+    data: {
+      revision: relation.revision,
+      name: 'Устройство объекта',
+      description: 'Общие детали',
+      attributes: { owner: 'Команда' },
+    },
+  });
+  expect(renamed.status()).toBe(200);
+  relation = await renamed.json();
+  link = (await (await request.get('/api/context-links')).json()).find(
+    (l: { id: string }) => l.id === link.id,
+  );
+  expect(link.meaning).toBe('Общие детали');
+  expect(link.revision).toBe(2);
+  const restored = await request.post(`/api/relations/${relation.id}/restore`, {
+    data: { revision: relation.revision, number: 1 },
+  });
+  expect(restored.status(), await restored.text()).toBe(200);
+  relation = await restored.json();
+  link = (await (await request.get('/api/context-links')).json()).find(
+    (l: { id: string }) => l.id === link.id,
+  );
+  expect(link.meaning).toBe('');
+  expect(link.revision).toBe(3);
+  const edited = await request.patch(`/api/context-links/${link.id}`, {
+    data: { revision: link.revision, meaning: 'Итоговое описание' },
+  });
+  expect(edited.status()).toBe(200);
+  link = await edited.json();
+  relation = await (await request.get(`/api/relations/${link.id}`)).json();
+  expect(relation.description).toBe(link.meaning);
+  const child = await object(request, 'Дочерний элемент связи', relation.id);
+  expect(
+    (
+      await request.delete(`/api/context-links/${link.id}`, { data: { revision: link.revision } })
+    ).status(),
+  ).toBe(409);
+  expect((await request.get(`/api/relations/${link.id}`)).status()).toBe(200);
+  expect(
+    (await (await request.get('/api/context-links')).json()).some(
+      (l: { id: string }) => l.id === link.id,
+    ),
+  ).toBe(true);
+  expect(
+    (
+      await request.delete(`/api/objects/${child.id}`, { data: { revision: child.revision } })
+    ).status(),
+  ).toBe(200);
+  expect(
+    (
+      await request.delete(`/api/relations/${relation.id}`, {
+        data: { revision: relation.revision },
+      })
+    ).status(),
+  ).toBe(200);
+  expect(
+    (await (await request.get('/api/context-links')).json()).some(
+      (l: { id: string }) => l.id === link.id,
+    ),
+  ).toBe(false);
+  expect((await request.get(`/api/diagrams/${diagram.id}`)).status()).toBe(200);
+  const targetLink = await request.post('/api/context-links', {
+    data: { entityId: entity.id, kind: 'viewpoint', targetDiagramId: diagram.id },
+  });
+  expect(targetLink.status()).toBe(201);
+  const targetTransition = await targetLink.json();
+  expect((await request.delete(`/api/diagrams/${diagram.id}`)).status()).toBe(200);
+  expect((await request.get(`/api/relations/${targetTransition.id}`)).status()).toBe(404);
+  expect(
+    (await (await request.get('/api/context-links')).json()).some(
+      (l: { id: string }) => l.id === targetTransition.id,
+    ),
+  ).toBe(false);
 });

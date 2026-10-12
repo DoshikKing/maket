@@ -250,7 +250,7 @@ async function handle(req: NextRequest, context: { params: Promise<{ path: strin
       const input = z
         .object({
           revision: z.number().int().positive(),
-          meaning: z.string().trim().max(2000).optional(),
+          meaning: z.string().trim().max(4000).optional(),
         })
         .parse(await body(req));
       if (method === 'PATCH') {
