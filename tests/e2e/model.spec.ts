@@ -1590,19 +1590,17 @@ test('browser: distinct tree actions, collapsible panels, detach and rebind arro
   ).toBeVisible();
   await expect(page.getByRole('dialog', { name: 'Создать объект', exact: true })).toHaveCount(0);
   await page.getByRole('button', { name: 'Закрыть', exact: true }).click();
-  await page.getByText('Панели', { exact: true }).click();
   for (const [label, selector] of [
     ['Дерево объектов', '.object-panel'],
     ['Палитра объектов', '.palette'],
     ['Свойства', '.inspector'],
   ]) {
-    const toggle = page.getByRole('button', { name: label, exact: true });
-    await toggle.click();
+    await page.getByRole('button', { name: `Скрыть панель «${label}»`, exact: true }).click();
     await expect(page.locator(selector)).toBeHidden();
-    await toggle.click();
+    await page.locator(label === 'Свойства' ? '.panel-edge-right' : '.panel-edge-left').hover();
+    await page.getByRole('button', { name: `Показать панель «${label}»`, exact: true }).click();
     await expect(page.locator(selector)).toBeVisible();
   }
-  await page.getByText('Панели', { exact: true }).click();
   await page.locator('.react-flow__controls-fitview').click();
   await treeAction(page, catalog, `Найти связь ${original.name}`);
   await page.getByRole('button', { name: 'Отвязать конец', exact: true }).click();
@@ -3384,4 +3382,101 @@ test('viewpoints: model bindings synchronize history and guarded deletion withou
       (l: { id: string }) => l.id === targetTransition.id,
     ),
   ).toBe(false);
+});
+
+test('browser: resize model tree and restore independent panels from workspace edges', async ({
+  page,
+  request,
+  browser,
+}) => {
+  await login(request, page);
+  const d = await create(request, 'Размер дерева');
+  await page.goto(`/solutions?diagram=${d.id}`);
+  const tree = page.locator('.object-panel');
+  const separator = page.getByRole('separator', { name: 'Ширина дерева объектов', exact: true });
+  await expect(separator).toBeVisible();
+  await expect(page.getByText('Панели', { exact: true })).toHaveCount(0);
+  const before = (await tree.boundingBox())!.width;
+  const grip = (await separator.boundingBox())!;
+  await page.mouse.move(grip.x + grip.width / 2, grip.y + 100);
+  await page.mouse.down();
+  await page.mouse.move(grip.x + grip.width / 2 + 80, grip.y + 100, { steps: 8 });
+  await page.mouse.up();
+  await expect.poll(async () => (await tree.boundingBox())!.width).toBeGreaterThan(before + 50);
+  const dragged = Number(await separator.getAttribute('aria-valuenow'));
+  await separator.focus();
+  await separator.press('ArrowLeft');
+  await expect(separator).toHaveAttribute('aria-valuenow', String(dragged - 20));
+  const width = (await tree.boundingBox())!.width;
+  await page.reload();
+  await expect(separator).toHaveAttribute('aria-valuenow', String(dragged - 20));
+  await expect
+    .poll(async () => Math.round((await tree.boundingBox())!.width))
+    .toBe(Math.round(width));
+  for (const label of ['Дерево объектов', 'Палитра объектов', 'Свойства'])
+    await page.getByRole('button', { name: `Скрыть панель «${label}»`, exact: true }).click();
+  await expect(tree).toBeHidden();
+  await expect(page.locator('.palette')).toBeHidden();
+  await expect(page.locator('.inspector')).toBeHidden();
+  await expect(separator).toBeHidden();
+  await page.reload();
+  await expect(tree).toBeHidden();
+  await expect(page.locator('.palette')).toBeHidden();
+  await expect(page.locator('.inspector')).toBeHidden();
+  const left = page.locator('.panel-edge-left');
+  await left.focus();
+  await page
+    .getByRole('button', { name: 'Показать панель «Дерево объектов»', exact: true })
+    .click();
+  await expect(tree).toBeVisible();
+  await expect(page.locator('.palette')).toBeHidden();
+  await left.hover();
+  await page
+    .getByRole('button', { name: 'Показать панель «Палитра объектов»', exact: true })
+    .click();
+  await page.locator('.panel-edge-right').hover();
+  await page.getByRole('button', { name: 'Показать панель «Свойства»', exact: true }).click();
+  await expect(page.locator('.panel-edge')).toHaveCount(0);
+  await page.goto('/solutions');
+  const solutionsTree = page.locator('.solutions-tree');
+  await expect
+    .poll(async () => Math.round((await solutionsTree.boundingBox())!.width))
+    .toBe(Math.round(width));
+  await page.getByRole('button', { name: 'Скрыть панель «Дерево решений»', exact: true }).click();
+  await expect(solutionsTree).toBeHidden();
+  await page.locator('.panel-edge-left').hover();
+  await page.getByRole('button', { name: 'Показать панель «Дерево решений»', exact: true }).click();
+  await expect(solutionsTree).toBeVisible();
+  await page.setViewportSize({ width: 768, height: 900 });
+  await page.goto(`/solutions?diagram=${d.id}`);
+  await expect(tree).toBeVisible();
+  await expect(separator).toBeHidden();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  );
+  const touchContext = await browser.newContext({
+    storageState: await page.context().storageState(),
+    hasTouch: true,
+    isMobile: true,
+    viewport: { width: 375, height: 812 },
+  });
+  try {
+    const touchPage = await touchContext.newPage();
+    await touchPage.goto(`/solutions?diagram=${d.id}`);
+    await touchPage
+      .getByRole('button', { name: 'Скрыть панель «Дерево объектов»', exact: true })
+      .tap();
+    const touchEdge = touchPage.locator('.panel-edge-left');
+    const edgeBox = (await touchEdge.boundingBox())!;
+    await touchEdge.tap({ position: { x: 8, y: edgeBox.height * 0.35 + 20 } });
+    const restore = touchPage.getByRole('button', {
+      name: 'Показать панель «Дерево объектов»',
+      exact: true,
+    });
+    await expect(restore).toBeVisible();
+    await restore.tap();
+    await expect(touchPage.locator('.object-panel')).toBeVisible();
+  } finally {
+    await touchContext.close();
+  }
 });

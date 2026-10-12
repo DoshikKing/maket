@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type CSSProperties } from 'react';
 import Link from 'next/link';
 import {
   ChevronRight,
@@ -28,6 +28,7 @@ import { EntityRelations } from './entity-relations';
 import { DiagramLinks } from './diagram-links';
 import { ViewpointBrowser, ViewpointExplorer } from './viewpoint-browser';
 import { TreeContextMenu } from './tree-context-menu';
+import { useWorkspacePanels, HidePanel, PanelEdge, TreeResizeHandle } from './workspace-panels';
 const icons = {
   solution: Network,
   project: Workflow,
@@ -38,6 +39,7 @@ const icons = {
 };
 type Kind = keyof typeof icons;
 export function SolutionsPage() {
+  const { panels, setPanels } = useWorkspacePanels();
   const [space, setSpace] = useState<Structure | null>(null),
     [notations, setNotations] = useState<NotationItem[]>([]),
     [selectedId, setSelectedId] = useState<string | null>(null),
@@ -438,40 +440,71 @@ export function SolutionsPage() {
       {!space ? (
         <p className="muted">Загружаем модель…</p>
       ) : (
-        <div className="solutions-layout">
-          <aside className="solutions-tree">
-            <input
-              aria-label="Поиск в решениях"
-              placeholder="Поиск в модели…"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
+        <div
+          className={`solutions-layout ${panels.tree ? '' : 'hide-tree'}`}
+          style={{ '--tree-width': `${panels.treeWidth}px` } as CSSProperties}
+        >
+          <PanelEdge
+            side="left"
+            items={
+              !panels.tree
+                ? [
+                    {
+                      label: 'Дерево решений',
+                      onShow: () => setPanels((p) => ({ ...p, tree: true })),
+                    },
+                  ]
+                : []
+            }
+          />
+          <div className="solutions-tree-panel">
+            <aside className="solutions-tree">
+              <div className="palette-title">
+                <h3>Дерево решений</h3>
+                <HidePanel
+                  label="Дерево решений"
+                  onHide={() => setPanels((p) => ({ ...p, tree: false }))}
+                />
+              </div>
+              <input
+                aria-label="Поиск в решениях"
+                placeholder="Поиск в модели…"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+              />
+              <button
+                className="tree-root-drop"
+                onClick={() => select(null)}
+                onDragOver={(e) => {
+                  if (e.dataTransfer.types.includes('application/maket-entity')) e.preventDefault();
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  void move(e.dataTransfer.getData('application/maket-entity'), null);
+                }}
+              >
+                Корень пространства
+              </button>
+              <div role="tree" aria-label="Структура решений">
+                {tree(null)}
+              </div>
+              {entities.length === 0 && (
+                <p className="muted small-text">
+                  Создайте первое решение. Дерево изначально пустое.
+                </p>
+              )}
+              <ViewpointExplorer
+                viewpoints={space.viewpoints}
+                diagrams={space.diagrams}
+                currentDiagramId={space.diagrams.find((d) => d.entityId === selectedId)?.id}
+                onManage={() => setViewpointsOpen(true)}
+              />
+            </aside>
+            <TreeResizeHandle
+              width={panels.treeWidth}
+              onResize={(treeWidth) => setPanels((p) => ({ ...p, treeWidth }))}
             />
-            <button
-              className="tree-root-drop"
-              onClick={() => select(null)}
-              onDragOver={(e) => {
-                if (e.dataTransfer.types.includes('application/maket-entity')) e.preventDefault();
-              }}
-              onDrop={(e) => {
-                e.preventDefault();
-                void move(e.dataTransfer.getData('application/maket-entity'), null);
-              }}
-            >
-              Корень пространства
-            </button>
-            <div role="tree" aria-label="Структура решений">
-              {tree(null)}
-            </div>
-            {entities.length === 0 && (
-              <p className="muted small-text">Создайте первое решение. Дерево изначально пустое.</p>
-            )}
-            <ViewpointExplorer
-              viewpoints={space.viewpoints}
-              diagrams={space.diagrams}
-              currentDiagramId={space.diagrams.find((d) => d.entityId === selectedId)?.id}
-              onManage={() => setViewpointsOpen(true)}
-            />
-          </aside>
+          </div>
           <section className="solution-content">
             <nav className="solution-breadcrumb" aria-label="Путь в модели">
               <button onClick={() => select(null)}>Пространство</button>

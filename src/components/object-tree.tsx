@@ -1,5 +1,6 @@
 'use client';
 import { TreeContextMenu } from './tree-context-menu';
+import { HidePanel } from './workspace-panels';
 import { useEffect, useState, type ReactNode } from 'react';
 import {
   Plus,
@@ -369,12 +370,14 @@ export function ObjectTree({
   relations = [],
   onDiagramLinks,
   footer,
+  onHide,
   onRelationLocate,
   onRelationEdit,
   onRelationPlace,
   onRelationSaved,
 }: {
   footer?: ReactNode;
+  onHide?: () => void;
   defaultParentId?: string | null;
   diagramId?: string;
   diagrams?: Structure['diagrams'];
@@ -975,6 +978,7 @@ export function ObjectTree({
       <div className="palette-title">
         <h3>Объекты модели</h3>
         <div className="button-row">
+          {onHide && <HidePanel label="Дерево объектов" onHide={onHide} />}
           <button className="icon-button" aria-label="Обновить модель" onClick={onRefresh}>
             <RefreshCw size={14} />
           </button>

@@ -1,5 +1,5 @@
 'use client';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import {
@@ -47,6 +47,7 @@ import { useUnsavedNavigation } from './use-unsaved-navigation';
 import { DiagramLinks } from './diagram-links';
 import { ViewpointBrowser, ViewpointExplorer } from './viewpoint-browser';
 import { EntityRelations } from './entity-relations';
+import { useWorkspacePanels, HidePanel, PanelEdge, TreeResizeHandle } from './workspace-panels';
 import { ShareDialog } from './share-dialog';
 import { ExportDialog } from './export-dialog';
 import {
@@ -155,6 +156,7 @@ export function EditorPage({ id }: { id: string }) {
   );
 }
 function Editor({ initial }: { initial: Diagram }) {
+  const { panels, setPanels } = useWorkspacePanels();
   const { user } = useUser(),
     flow = useReactFlow();
   const focusedElement = useSearchParams().get('element');
@@ -171,7 +173,6 @@ function Editor({ initial }: { initial: Diagram }) {
       target: { kind: 'node' | 'edge'; id: string } | null;
     } | null>(null),
     [treeFocus, setTreeFocus] = useState<{ id: string; token: number } | null>(null),
-    [panels, setPanels] = useState({ tree: true, palette: true, properties: true }),
     [connectionNotice, setConnectionNotice] = useState<{ message: string } | null>(null),
     [saving, setSaving] = useState(false),
     [historyOpen, setHistoryOpen] = useState(false),
@@ -1314,29 +1315,6 @@ function Editor({ initial }: { initial: Diagram }) {
           >
             Ракурс: {currentViewpoint?.name ?? 'Без ракурса'}
           </button>
-          <details className="panel-controls">
-            <summary className="secondary small">Панели</summary>
-            <div className="panel-options">
-              {(
-                [
-                  ['tree', 'Дерево объектов'],
-                  ['palette', 'Палитра объектов'],
-                  ['properties', 'Свойства'],
-                ] as const
-              ).map(([key, label]) => (
-                <button
-                  key={key}
-                  className="secondary small"
-                  aria-label={label}
-                  aria-pressed={panels[key]}
-                  title={`${panels[key] ? 'Скрыть' : 'Показать'}: ${label}`}
-                  onClick={() => setPanels((p) => ({ ...p, [key]: !p[key] }))}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-          </details>
           <button
             className="icon-button"
             title="Отменить"
@@ -1423,9 +1401,45 @@ function Editor({ initial }: { initial: Diagram }) {
         </div>
       )}
       <div
+        style={{ '--tree-width': `${panels.treeWidth}px` } as CSSProperties}
         className={`editor-body model-editor-body ${panels.tree ? '' : 'hide-tree'} ${panels.palette ? '' : 'hide-palette'} ${panels.properties ? '' : 'hide-properties'}`}
       >
+        <PanelEdge
+          side="left"
+          items={[
+            ...(!panels.tree
+              ? [
+                  {
+                    label: 'Дерево объектов',
+                    onShow: () => setPanels((p) => ({ ...p, tree: true })),
+                  },
+                ]
+              : []),
+            ...(!panels.palette
+              ? [
+                  {
+                    label: 'Палитра объектов',
+                    onShow: () => setPanels((p) => ({ ...p, palette: true })),
+                  },
+                ]
+              : []),
+          ]}
+        />
+        <PanelEdge
+          side="right"
+          items={
+            !panels.properties
+              ? [
+                  {
+                    label: 'Свойства',
+                    onShow: () => setPanels((p) => ({ ...p, properties: true })),
+                  },
+                ]
+              : []
+          }
+        />
         <ObjectTree
+          onHide={() => setPanels((p) => ({ ...p, tree: false }))}
           focusId={initial.entityId}
           focusRequest={treeFocus}
           diagramId={initial.id}
@@ -1559,10 +1573,20 @@ function Editor({ initial }: { initial: Diagram }) {
           }}
         />
 
+        <TreeResizeHandle
+          width={panels.treeWidth}
+          onResize={(treeWidth) => setPanels((p) => ({ ...p, treeWidth }))}
+        />
         <aside className="palette">
           <div className="palette-title">
             <h3>Инструменты</h3>
-            <span className="badge">{document.notation.nodeTypes.length}</span>
+            <div className="button-row">
+              <span className="badge">{document.notation.nodeTypes.length}</span>
+              <HidePanel
+                label="Палитра объектов"
+                onHide={() => setPanels((p) => ({ ...p, palette: false }))}
+              />
+            </div>
           </div>
           <p className="muted small-text">Нажмите, чтобы добавить элемент</p>
           <button
@@ -1917,7 +1941,14 @@ function Editor({ initial }: { initial: Diagram }) {
           </div>
         </div>
         <aside className="inspector">
-          <h3>Свойства</h3>
+          <div className="palette-title">
+            <h3>Свойства</h3>
+            <HidePanel
+              label="Свойства"
+              side="right"
+              onHide={() => setPanels((p) => ({ ...p, properties: false }))}
+            />
+          </div>
           {selectedObject && definition ? (
             <>
               <div className="inspector-type">
@@ -2527,7 +2558,9 @@ function Editor({ initial }: { initial: Diagram }) {
                 </button>
                 <button
                   aria-label="Показать все панели"
-                  onClick={() => setPanels({ tree: true, palette: true, properties: true })}
+                  onClick={() =>
+                    setPanels((p) => ({ ...p, tree: true, palette: true, properties: true }))
+                  }
                 >
                   <MousePointer2 size={14} />
                 </button>
