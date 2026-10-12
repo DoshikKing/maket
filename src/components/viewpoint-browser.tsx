@@ -6,6 +6,55 @@ import type { Structure, Viewpoint } from '@/lib/structure';
 import type { ModelDiagram } from '@/lib/model';
 import { Modal } from './modal';
 
+export function ViewpointExplorer({
+  viewpoints,
+  diagrams,
+  currentDiagramId,
+  onManage,
+}: {
+  viewpoints: Viewpoint[];
+  diagrams: Structure['diagrams'];
+  currentDiagramId?: string;
+  onManage: () => void;
+}) {
+  const groups = [
+    { id: '', name: 'Без ракурса', description: '' },
+    ...[...viewpoints].sort((a, b) => a.order - b.order || a.name.localeCompare(b.name)),
+  ];
+  return (
+    <section className="viewpoint-explorer" aria-label="Обозреватель ракурсов">
+      <div className="palette-title">
+        <strong>Ракурсы</strong>
+        <button className="btn small" onClick={onManage} aria-label="Управление ракурсами">
+          Настроить
+        </button>
+      </div>
+      {groups.map((group) => {
+        const items = diagrams.filter((d) => (d.viewpointId ?? '') === group.id);
+        return (
+          <details key={group.id} open data-viewpoint-group={group.id || 'unassigned'}>
+            <summary title={group.description}>
+              <span>{group.name}</span>
+              <span className="tree-count">{items.length}</span>
+            </summary>
+            {items.map((diagram) => (
+              <Link
+                key={diagram.id}
+                href={`/solutions?diagram=${encodeURIComponent(diagram.id)}`}
+                className="viewpoint-explorer-diagram"
+                aria-current={diagram.id === currentDiagramId ? 'page' : undefined}
+              >
+                {diagram.name}
+              </Link>
+            ))}
+            {!items.length && <p className="muted small-text">Нет диаграмм</p>}
+          </details>
+        );
+      })}
+    </section>
+  );
+}
+
 export function ViewpointBrowser({
   currentDiagramId,
   onClose,

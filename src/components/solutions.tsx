@@ -26,7 +26,7 @@ import type { NotationItem } from './library';
 import { useTreeExpansion } from './use-tree-expansion';
 import { EntityRelations } from './entity-relations';
 import { DiagramLinks } from './diagram-links';
-import { ViewpointBrowser } from './viewpoint-browser';
+import { ViewpointBrowser, ViewpointExplorer } from './viewpoint-browser';
 import { TreeContextMenu } from './tree-context-menu';
 const icons = {
   solution: Network,
@@ -465,6 +465,12 @@ export function SolutionsPage() {
             {entities.length === 0 && (
               <p className="muted small-text">Создайте первое решение. Дерево изначально пустое.</p>
             )}
+            <ViewpointExplorer
+              viewpoints={space.viewpoints}
+              diagrams={space.diagrams}
+              currentDiagramId={space.diagrams.find((d) => d.entityId === selectedId)?.id}
+              onManage={() => setViewpointsOpen(true)}
+            />
           </aside>
           <section className="solution-content">
             <nav className="solution-breadcrumb" aria-label="Путь в модели">

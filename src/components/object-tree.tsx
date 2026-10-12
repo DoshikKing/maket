@@ -1,6 +1,6 @@
 'use client';
 import { TreeContextMenu } from './tree-context-menu';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import {
   Plus,
   ChevronRight,
@@ -368,11 +368,13 @@ export function ObjectTree({
   onRemove,
   relations = [],
   onDiagramLinks,
+  footer,
   onRelationLocate,
   onRelationEdit,
   onRelationPlace,
   onRelationSaved,
 }: {
+  footer?: ReactNode;
   defaultParentId?: string | null;
   diagramId?: string;
   diagrams?: Structure['diagrams'];
@@ -1028,6 +1030,7 @@ export function ObjectTree({
           {error}
         </div>
       )}
+      {footer}
       {editing && (
         <ObjectEditor
           onRelationsChanged={onRefresh}

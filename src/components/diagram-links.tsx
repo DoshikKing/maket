@@ -62,22 +62,16 @@ export function DiagramLinks({
     space?.objects.find((o) => o.id === entityId) ??
     space?.relations.find((r) => r.id === entityId);
   const source = space?.diagrams.find((d) => d.id === sourceId);
-  const newViewAllowed = !!space?.objects.some(
-    (o) => o.id === entityId && !['folder', 'diagram'].includes(o.kind ?? 'object'),
-  );
   const targets =
     space?.diagrams.filter(
       (d) =>
         d.id !== sourceId &&
-        (kind === 'decomposition'
-          ? !source || d.viewpointId === source.viewpointId
-          : space.representations.some((r) => r.diagramId === d.id && r.entityId === entityId)),
+        (kind !== 'decomposition' || !source || d.viewpointId === source.viewpointId),
     ) ?? [];
   useEffect(() => {
     setTargetId('');
     if (kind === 'decomposition' && source) setViewpointId(source.viewpointId ?? '');
-    if (kind === 'viewpoint' && !newViewAllowed) setMode('existing');
-  }, [kind, sourceId, source?.viewpointId, newViewAllowed]);
+  }, [kind, sourceId, source?.viewpointId]);
   const groupName = (id: string | null) =>
     space?.viewpoints.find((v) => v.id === id)?.name ?? 'Без ракурса';
   const links =
@@ -98,9 +92,8 @@ export function DiagramLinks({
       className="object-modal"
     >
       <p className="muted">
-        Декомпозиция раскрывает внутреннее устройство в том же ракурсе. Углубление ведёт к
-        представлению того же объекта в другом контексте. Расположение в дереве не создаёт этих
-        переходов.
+        Декомпозиция раскрывает внутреннее устройство в том же ракурсе. Углубление ведёт к связанной
+        диаграмме в другом контексте. Расположение в дереве не создаёт этих переходов.
       </p>
       {error && (
         <p className="error" role="alert">
@@ -271,9 +264,7 @@ export function DiagramLinks({
                 onChange={(e) => setMode(e.target.value)}
               >
                 <option value="existing">Выбрать существующую</option>
-                <option value="new" disabled={kind === 'viewpoint' && !newViewAllowed}>
-                  Создать новую
-                </option>
+                <option value="new">Создать новую</option>
               </select>
             </label>
             {mode === 'new' ? (
@@ -306,8 +297,7 @@ export function DiagramLinks({
                 </label>
                 {kind === 'viewpoint' && (
                   <p className="muted small-text">
-                    В новую диаграмму будет добавлено представление этого же объекта. Отображение
-                    можно изменить на канвасе.
+                    Новая диаграмма будет пустой. Представления добавляются отдельно.
                   </p>
                 )}
               </>
@@ -327,12 +317,7 @@ export function DiagramLinks({
                     </option>
                   ))}
                 </select>
-                {!targets.length && (
-                  <small>
-                    Нет подходящих диаграмм. Для углубления на целевой диаграмме должно быть
-                    представление этого объекта.
-                  </small>
-                )}
+                {!targets.length && <small>Нет подходящих диаграмм. Можно создать новую.</small>}
               </label>
             )}
             <label>

@@ -2785,12 +2785,13 @@ test('viewpoints: decomposition invariants, arbitrary context transitions, atomi
   });
   expect(transitionResponse.status(), await transitionResponse.text()).toBe(201);
   const transition = await transitionResponse.json();
-  const target: ModelDiagram = await (
+  let target: ModelDiagram = await (
     await request.get(`/api/diagrams/${transition.targetDiagramId}`)
   ).json();
   expect(target.viewpointId).toBe(code.id);
-  expect(target.document.nodes[0].objectId).toBe(entity.id);
-  expect(target.document.nodes[0].id).not.toBe(source.document.nodes[0].id);
+  expect(target.document.nodes).toHaveLength(0);
+  expect(target.document.edges).toHaveLength(0);
+  target = await place(request, target, entity.id, target.document.bindings[0].id);
   expect(
     (
       await request.patch(`/api/viewpoints/${code.id}`, {
@@ -2892,13 +2893,16 @@ test('viewpoints: decomposition invariants, arbitrary context transitions, atomi
       })
     ).status(),
   ).toBe(409);
+  const cleared = await request.put(`/api/diagrams/${target.id}`, {
+    data: { revision: target.revision, document: { ...target.document, nodes: [] } },
+  });
+  expect(cleared.status()).toBe(200);
+  target = await cleared.json();
   expect(
-    (
-      await request.put(`/api/diagrams/${target.id}`, {
-        data: { revision: target.revision, document: { ...target.document, nodes: [] } },
-      })
-    ).status(),
-  ).toBe(409);
+    (await (await request.get('/api/context-links')).json()).some(
+      (l: { id: string }) => l.id === transition.id,
+    ),
+  ).toBe(true);
   const other = await playwright.request.newContext({ baseURL: 'http://localhost:3000' });
   await login(other);
   expect(
@@ -3050,8 +3054,8 @@ test('browser: viewpoint explorer and object transitions preserve identity and c
   await links.getByRole('button', { name: 'Добавить переход', exact: true }).click();
   await expect(links.locator('[data-context-link]')).toHaveCount(2);
   await links.getByRole('link', { name: 'Реализация процесса · Код', exact: true }).click();
-  await expect(page).toHaveURL(/element=/);
-  await expect(page.locator('.react-flow__node-notation.selected')).toHaveCount(1);
+  await expect(page).toHaveURL(/solutions\?diagram=[^&]+$/);
+  await expect(page.locator('.react-flow__node-notation')).toHaveCount(0);
   const updated: import('../../src/lib/structure').Structure = await (
     await request.get('/api/model/structure')
   ).json();
@@ -3059,8 +3063,18 @@ test('browser: viewpoint explorer and object transitions preserve identity and c
     (l) => l.entityId === entity.id && l.kind === 'viewpoint',
   )!;
   expect(
-    updated.representations.find((r) => r.diagramId === transition.targetDiagramId)?.entityId,
-  ).toBe(entity.id);
+    updated.representations.filter((r) => r.diagramId === transition.targetDiagramId),
+  ).toHaveLength(0);
+  const inlineExplorer = page.getByRole('region', { name: 'Обозреватель ракурсов', exact: true });
+  await expect(inlineExplorer.locator(`[data-viewpoint-group="${code.id}"]`)).toContainText(
+    'Реализация процесса',
+  );
+  await expect(
+    inlineExplorer.getByRole('link', { name: 'Реализация процесса', exact: true }),
+  ).toHaveAttribute('aria-current', 'page');
+  await expect(inlineExplorer.locator(`[data-viewpoint-group="${business.id}"]`)).toContainText(
+    'Внутреннее устройство',
+  );
   await expect(page.getByRole('button', { name: 'Ракурсы', exact: true })).toContainText('Код');
   await page.getByRole('button', { name: 'Ракурсы', exact: true }).click();
   await expect(
@@ -3085,6 +3099,18 @@ test('browser: viewpoint explorer and object transitions preserve identity and c
   await creation.getByRole('button', { name: 'Открыть редактор', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Ракурсы', exact: true })).toContainText('Код');
   await page.goto(`/solutions?parent=${entity.id}`);
+  const solutionExplorer = page.getByRole('region', { name: 'Обозреватель ракурсов', exact: true });
+  await expect(solutionExplorer.locator(`[data-viewpoint-group="${code.id}"]`)).toContainText(
+    'Обычная кодовая диаграмма',
+  );
+  await solutionExplorer.locator(`[data-viewpoint-group="${code.id}"] summary`).click();
+  await expect(
+    solutionExplorer.getByRole('link', { name: 'Реализация процесса', exact: true }),
+  ).toBeHidden();
+  await solutionExplorer.locator(`[data-viewpoint-group="${code.id}"] summary`).click();
+  await expect(
+    solutionExplorer.getByRole('link', { name: 'Реализация процесса', exact: true }),
+  ).toBeVisible();
   const treeRow = page.locator(`[data-tree-entity="${entity.id}"] > .solution-tree-row`);
   await treeAction(page, treeRow, `Углубление ${entity.name}`);
   await expect(
@@ -3092,6 +3118,13 @@ test('browser: viewpoint explorer and object transitions preserve identity and c
       .getByRole('dialog', { name: 'Диаграммы объекта: Процесс ракурсов', exact: true })
       .locator('[data-context-link]'),
   ).toHaveCount(2);
+  await page
+    .getByRole('dialog', { name: 'Диаграммы объекта: Процесс ракурсов', exact: true })
+    .getByRole('button', { name: 'Закрыть', exact: true })
+    .click();
+  await solutionExplorer.getByRole('link', { name: 'Реализация процесса', exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`solutions\\?diagram=${transition.targetDiagramId}$`));
+  await expect(page.locator('.react-flow__node-notation')).toHaveCount(0);
 });
 
 test('viewpoints: relation transitions and representation indexes keep shared arrow identity', async ({
@@ -3174,7 +3207,7 @@ test('viewpoints: relation transitions and representation indexes keep shared ar
         data: { revision: target.revision, document: { ...target.document, edges: [] } },
       })
     ).status(),
-  ).toBe(409);
+  ).toBe(200);
   expect(
     (
       await request.delete(`/api/context-links/${link.id}`, { data: { revision: link.revision } })
@@ -3182,9 +3215,28 @@ test('viewpoints: relation transitions and representation indexes keep shared ar
   ).toBe(200);
   expect(
     (
-      await request.put(`/api/diagrams/${target.id}`, {
-        data: { revision: target.revision, document: { ...target.document, edges: [] } },
+      await request.post('/api/context-links', {
+        data: {
+          entityId: relation.id,
+          sourceDiagramId: source.id,
+          kind: 'viewpoint',
+          targetDiagramId: unrelated.id,
+        },
       })
     ).status(),
-  ).toBe(200);
+  ).toBe(201);
+  const emptyTransition = await request.post('/api/context-links', {
+    data: {
+      entityId: relation.id,
+      sourceDiagramId: source.id,
+      kind: 'viewpoint',
+      newDiagram: { name: 'Пустой контекст связи', viewpointId: group.id },
+    },
+  });
+  expect(emptyTransition.status(), await emptyTransition.text()).toBe(201);
+  const emptyDiagram = await (
+    await request.get(`/api/diagrams/${(await emptyTransition.json()).targetDiagramId}`)
+  ).json();
+  expect(emptyDiagram.document.nodes).toHaveLength(0);
+  expect(emptyDiagram.document.edges).toHaveLength(0);
 });

@@ -1,12 +1,7 @@
 import { z } from 'zod';
 import { Prisma } from '@prisma/client';
 import { db } from './db';
-import {
-  ensureModel,
-  newDiagramInTransaction,
-  addRepresentationInTransaction,
-} from './model-service';
-import { modelDiagramSchema } from './model';
+import { ensureModel, newDiagramInTransaction } from './model-service';
 import { reject } from './model-errors';
 
 const id = z.string().min(1).max(100);
@@ -149,30 +144,11 @@ export async function createContextLink(ownerId: string, input: z.infer<typeof c
           parentId: input.kind === 'decomposition' ? entity.id : entity.parentId,
         },
       );
-      if (input.kind === 'viewpoint') {
-        if (!object || object.kind === 'folder' || object.kind === 'diagram')
-          reject(400, 'Выберите существующую диаграмму с представлением этого элемента');
-        const document = modelDiagramSchema.parse(target.document);
-        target = await addRepresentationInTransaction(tx, ownerId, target.id, target.revision, {
-          objectId: entity.id,
-          bindingId: document.bindings[0].id,
-          typeId: 'process',
-          position: { x: 0, y: 0 },
-        });
-      }
     }
     if (!target) reject(404, 'Целевая диаграмма не найдена');
     if (source?.id === target.id) reject(400, 'Выберите другую диаграмму');
     if (input.kind === 'decomposition' && source && source.viewpointId !== target.viewpointId)
       reject(400, 'Декомпозиция сохраняет ракурс исходной диаграммы');
-    if (input.kind === 'viewpoint') {
-      const document = modelDiagramSchema.parse(target.document);
-      if (
-        !document.nodes.some((n) => n.objectId === entity.id) &&
-        !document.edges.some((e) => e.relationId === entity.id)
-      )
-        reject(400, 'На целевой диаграмме нет представления этого объекта');
-    }
     if (
       await tx.diagramContextLink.findFirst({
         where: {

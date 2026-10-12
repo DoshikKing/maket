@@ -3185,3 +3185,40 @@ body {
     grid-template-columns: 1fr;
   }
 }
+
+.viewpoint-explorer {
+  border-top: 1px solid var(--border);
+  margin-top: 16px;
+  padding-top: 12px;
+}
+.viewpoint-explorer details {
+  margin: 8px 0;
+}
+.viewpoint-explorer summary {
+  cursor: pointer;
+  padding: 6px;
+  overflow-wrap: anywhere;
+}
+.viewpoint-explorer summary .tree-count {
+  float: right;
+}
+.viewpoint-explorer-diagram {
+  display: block;
+  margin-left: 18px;
+  padding: 6px 8px;
+  border-left: 1px solid var(--border);
+  color: inherit;
+  overflow-wrap: anywhere;
+  border-radius: 4px;
+}
+.viewpoint-explorer-diagram:hover,
+.viewpoint-explorer-diagram[aria-current='page'] {
+  background: var(--hover);
+}
+.viewpoint-explorer-diagram[aria-current='page'] {
+  font-weight: 600;
+  color: var(--accent);
+}
+.viewpoint-explorer details > p {
+  margin-left: 24px;
+}

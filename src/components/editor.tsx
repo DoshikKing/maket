@@ -45,7 +45,7 @@ import { ContextMenu } from './tree-context-menu';
 import { RepresentationAttributes } from './representation-attributes';
 import { useUnsavedNavigation } from './use-unsaved-navigation';
 import { DiagramLinks } from './diagram-links';
-import { ViewpointBrowser } from './viewpoint-browser';
+import { ViewpointBrowser, ViewpointExplorer } from './viewpoint-browser';
 import { EntityRelations } from './entity-relations';
 import { ShareDialog } from './share-dialog';
 import { ExportDialog } from './export-dialog';
@@ -1495,6 +1495,16 @@ function Editor({ initial }: { initial: Diagram }) {
           objects={objects}
           relations={allRelations}
           onRelationLocate={locateRelation}
+          footer={
+            <ViewpointExplorer
+              viewpoints={viewpoints}
+              diagrams={diagrams}
+              currentDiagramId={initial.id}
+              onManage={async () => {
+                if (await flush()) setViewpointsOpen(true);
+              }}
+            />
+          }
           onDiagramLinks={(entityId, kind) => setDiagramLinks({ entityId, kind })}
           onRelationEdit={(r) => void editRelation(r)}
           onRelationPlace={setRelationPlacement}

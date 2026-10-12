@@ -128,17 +128,6 @@ async function commit(
   reason = 'save',
 ) {
   valid(document);
-  const requiredLinks = await tx.diagramContextLink.findMany({
-    where: { targetDiagramId: diagram.id, kind: 'viewpoint' },
-  });
-  if (requiredLinks.length) {
-    const represented = new Set([
-      ...document.nodes.map((n) => n.objectId),
-      ...document.edges.flatMap((e) => (e.relationId ? [e.relationId] : [])),
-    ]);
-    if (requiredLinks.some((link) => !represented.has(link.entityId)))
-      reject(409, 'Представление используется переходом к ракурсу. Сначала удалите переход');
-  }
   const changed = await tx.diagram.updateMany({
     where: { id: diagram.id, revision: expected },
     data: {
