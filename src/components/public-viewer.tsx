@@ -1,7 +1,7 @@
 'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '@/lib/client';
-import { projectDocument, relationEntity, type ModelDocument } from '@/lib/model';
+import { projectDocument, type ModelDocument } from '@/lib/model';
 import { nodeAppearance } from '@/lib/appearance';
 import { edgeGeometry } from '@/lib/diagram-geometry';
 import { DiagramSvg, diagramBounds, type Bounds } from './diagram-svg';
@@ -15,6 +15,7 @@ export function PublicViewer({ token }: { token: string }) {
     [tree, setTree] = useState(true),
     [exporting, setExporting] = useState(false),
     [closed, setClosed] = useState(new Set<string>()),
+    [relationFolders, setRelationFolders] = useState(new Set<string>()),
     [notice, setNotice] = useState('');
   const svg = useRef<SVGSVGElement>(null),
     drag = useRef<{ x: number; y: number; box: Bounds } | null>(null);
@@ -115,10 +116,7 @@ export function PublicViewer({ token }: { token: string }) {
         <p role="status">Загружаем диаграмму…</p>
       </main>
     );
-  const entities = [
-      ...shared.document.objects,
-      ...(shared.document.relations ?? []).map(relationEntity),
-    ],
+  const entities = shared.document.objects,
     relations = shared.document.relations ?? [];
   const displayed = box ?? diagramBounds(view);
   const chooseEntity = (id: string) => {
@@ -128,6 +126,49 @@ export function PublicViewer({ token }: { token: string }) {
     else setNotice('У объекта нет представления на этой диаграмме');
   };
   const diagramView = view;
+  function relationFolder(id: string, seen: Set<string>): React.ReactNode {
+    const related = relations.filter(
+      (r) =>
+        r.id !== id &&
+        !seen.has(r.id) &&
+        (r.parentId === id || r.sourceId === id || r.targetId === id),
+    );
+    if (!related.length) return null;
+    return (
+      <details
+        className="viewer-relations"
+        open={relationFolders.has(id)}
+        onToggle={(event) => {
+          const open = event.currentTarget.open;
+          setRelationFolders((prev) => {
+            if (prev.has(id) === open) return prev;
+            const next = new Set(prev);
+            if (open) next.add(id);
+            else next.delete(id);
+            return next;
+          });
+        }}
+      >
+        <summary>Связи</summary>
+        {relationFolders.has(id) && (
+          <ul>
+            {related.map((r) => {
+              const path = new Set([...seen, id, r.id]);
+              return (
+                <li key={r.id}>
+                  <button className="text-button" onClick={() => chooseEntity(r.id)}>
+                    {r.name}
+                  </button>
+                  <ul>{branch(r.id, path)}</ul>
+                  {relationFolder(r.id, path)}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </details>
+    );
+  }
   function branch(parent: string | null, seen = new Set<string>()): React.ReactNode {
     return entities
       .filter((e) => e.parentId === parent && !seen.has(e.id))
@@ -160,22 +201,7 @@ export function PublicViewer({ token }: { token: string }) {
           {!closed.has(e.id) && (
             <>
               <ul>{branch(e.id, new Set([...seen, e.id]))}</ul>
-              {relations.some((r) => r.sourceId === e.id || r.targetId === e.id) && (
-                <details className="viewer-relations">
-                  <summary>Связи</summary>
-                  <ul>
-                    {relations
-                      .filter((r) => r.sourceId === e.id || r.targetId === e.id)
-                      .map((r) => (
-                        <li key={r.id}>
-                          <button className="text-button" onClick={() => chooseEntity(r.id)}>
-                            {r.name}
-                          </button>
-                        </li>
-                      ))}
-                  </ul>
-                </details>
-              )}
+              {relationFolder(e.id, new Set([...seen, e.id]))}
             </>
           )}
         </li>

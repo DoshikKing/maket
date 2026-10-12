@@ -6,7 +6,7 @@ import type { ModelObject } from '@/lib/model';
 export function useTreeExpansion(
   entities: ModelObject[],
   focusId?: string | null,
-  focusToken?: number,
+  focusToken?: number | string,
   revealIds?: string[],
 ) {
   const { user } = useUser();

@@ -16,7 +16,7 @@ import {
 } from 'lucide-react';
 import { api } from '@/lib/client';
 import { entityLabels, relationEntity, type ModelObject, type ModelDiagram } from '@/lib/model';
-import type { Structure } from '@/lib/structure';
+import { treeObjectPath, visibleTreeEntities, type Structure } from '@/lib/structure';
 import { ObjectEditor } from './object-tree';
 import { RelationEditor } from './relation-browser';
 import { RepresentationFolder } from './representation-folder';
@@ -77,29 +77,29 @@ export function SolutionsPage() {
   }, []);
   const relationIds = new Set(space?.relations.map((r) => r.id));
   const entities = [...(space?.objects ?? []), ...(space?.relations.map(relationEntity) ?? [])];
-  const expansion = useTreeExpansion(entities, selectedId);
+  const focusPath = selectedId
+    ? treeObjectPath(selectedId, space?.objects ?? [], space?.relations ?? [])
+    : [];
+  const focusThroughRelation = focusPath.some((id) => relationIds.has(id));
+  const expansion = useTreeExpansion(
+    entities,
+    focusThroughRelation ? focusPath[0] : selectedId,
+    selectedId ?? undefined,
+    focusPath,
+  );
   const entityKind = (o: ModelObject): Kind =>
     relationIds.has(o.id) ? 'relation' : (o.kind ?? 'object');
   const selected = entities.find((o) => o.id === selectedId);
-  const children = entities.filter((o) => o.parentId === (selected?.id ?? null));
+  const children = entities.filter(
+    (o) => o.parentId === (selected?.id ?? null) && !relationIds.has(o.id),
+  );
   const ancestors: ModelObject[] = [];
   let ancestor = selected;
   while (ancestor && !ancestors.some((a) => a.id === ancestor!.id)) {
     ancestors.unshift(ancestor);
     ancestor = entities.find((o) => o.id === ancestor?.parentId);
   }
-  const visible = new Set(
-    entities.filter((o) => o.name.toLowerCase().includes(query.toLowerCase())).map((o) => o.id),
-  );
-  for (const o of entities.filter((o) => visible.has(o.id))) {
-    let p = entities.find((x) => x.id === o.parentId);
-    const seen = new Set<string>();
-    while (p && !seen.has(p.id)) {
-      seen.add(p.id);
-      visible.add(p.id);
-      p = entities.find((x) => x.id === p!.parentId);
-    }
-  }
+  const visible = visibleTreeEntities(query, space?.objects ?? [], space?.relations ?? []);
   function select(id: string | null) {
     setSelectedId(id);
     const entity = entities.find((o) => o.id === id);
@@ -220,21 +220,25 @@ export function SolutionsPage() {
     const linked = linkedRelations(id);
     return (
       <RelationFolder
+        forceOpen={!!query && !!level}
         key={`relations:${id}`}
         entityId={id}
         name={name}
+        revealToken={focusPath.includes(id) && focusThroughRelation ? selectedId! : undefined}
         count={linked.length}
         level={level}
       >
         {linked.map((r) => (
           <div
             key={r.id}
+            data-relation-reference={r.id}
+            aria-selected={selectedId === r.id}
             role={level ? 'treeitem' : undefined}
             aria-level={level ? level + 1 : undefined}
           >
             <TreeContextMenu actions={actions(relationEntity(r))}>
               <button
-                className="solution-tree-select tree-row tree-row-leaf"
+                className={`solution-tree-select tree-row tree-row-leaf ${selectedId === r.id ? 'selected' : ''}`}
                 onClick={() => select(r.id)}
               >
                 <GitBranch className="tree-icon" size={16} />
@@ -260,7 +264,7 @@ export function SolutionsPage() {
           o.parentId === parentId &&
           !ancestors.has(o.id) &&
           visible.has(o.id) &&
-          (parentId === null || !relationIds.has(o.id)),
+          !relationIds.has(o.id),
       )
       .map((o) => {
         const Icon = icons[entityKind(o)],
@@ -338,16 +342,22 @@ export function SolutionsPage() {
                 )}
                 {(!['folder', 'diagram'].includes(o.kind ?? 'object') || linked.length > 0) && (
                   <RelationFolder
+                    forceOpen={!!query}
                     entityId={o.id}
                     name={o.name}
+                    revealToken={
+                      focusPath.includes(o.id) && focusThroughRelation ? selectedId! : undefined
+                    }
                     level={depth + 2}
                     count={linked.length}
                   >
                     {linked.map((r) => (
                       <div
                         key={r.id}
+                        data-relation-reference={r.id}
+                        aria-selected={selectedId === r.id}
                         role="treeitem"
-                        aria-expanded={expansion.isExpanded(r.id)}
+                        aria-expanded={expansion.isExpanded(r.id) || !!query}
                         aria-level={depth + 3}
                         draggable={!r.archived}
                         onDragStart={(e) => {
@@ -367,16 +377,22 @@ export function SolutionsPage() {
                           }
                         }}
                       >
-                        <TreeContextMenu actions={actions(relationEntity(r))} className="tree-row">
+                        <TreeContextMenu
+                          actions={actions(relationEntity(r))}
+                          className={`tree-row ${selectedId === r.id ? 'selected' : ''}`}
+                        >
                           <button
                             className="tree-toggle"
-                            aria-label={`${expansion.isExpanded(r.id) ? 'Свернуть' : 'Развернуть'} связь ${r.name}`}
+                            aria-label={`${expansion.isExpanded(r.id) || !!query ? 'Свернуть' : 'Развернуть'} связь ${r.name}`}
                             onClick={() => expansion.toggle(r.id)}
                           >
                             <ChevronRight
                               size={14}
                               style={{
-                                transform: expansion.isExpanded(r.id) ? 'rotate(90deg)' : undefined,
+                                transform:
+                                  expansion.isExpanded(r.id) || !!query
+                                    ? 'rotate(90deg)'
+                                    : undefined,
                               }}
                             />
                           </button>
@@ -391,7 +407,7 @@ export function SolutionsPage() {
                             </span>
                           </button>
                         </TreeContextMenu>
-                        {expansion.isExpanded(r.id) && (
+                        {(expansion.isExpanded(r.id) || !!query) && (
                           <div className="hierarchy-children" role="group">
                             <RepresentationFolder
                               entityId={r.id}
@@ -590,27 +606,25 @@ export function SolutionsPage() {
                 linkedRelations(selected.id).length > 0) &&
               relationFolder(selected.id, selected.name)}
             <div className="solution-cards">
-              {children
-                .filter((o) => !selected || !relationIds.has(o.id))
-                .map((o) => {
-                  const Icon = icons[entityKind(o)];
-                  const diagram = space.diagrams.find((d) => d.entityId === o.id);
-                  return (
-                    <article className="solution-card" key={o.id}>
-                      <button onClick={() => select(o.id)}>
-                        <Icon size={23} />
-                        <strong>{o.name}</strong>
-                        <small>
-                          {entityLabels[entityKind(o)]}
-                          {o.archived ? ' · Архив' : ''}
-                        </small>
-                      </button>
-                      {diagram && (
-                        <Link href={`/solutions?diagram=${diagram.id}`}>Открыть диаграмму →</Link>
-                      )}
-                    </article>
-                  );
-                })}
+              {children.map((o) => {
+                const Icon = icons[entityKind(o)];
+                const diagram = space.diagrams.find((d) => d.entityId === o.id);
+                return (
+                  <article className="solution-card" key={o.id}>
+                    <button onClick={() => select(o.id)}>
+                      <Icon size={23} />
+                      <strong>{o.name}</strong>
+                      <small>
+                        {entityLabels[entityKind(o)]}
+                        {o.archived ? ' · Архив' : ''}
+                      </small>
+                    </button>
+                    {diagram && (
+                      <Link href={`/solutions?diagram=${diagram.id}`}>Открыть диаграмму →</Link>
+                    )}
+                  </article>
+                );
+              })}
             </div>
             {children.length === 0 && (
               <p className="muted">На этом уровне пока нет дочерних элементов.</p>

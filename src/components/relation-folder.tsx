@@ -9,20 +9,22 @@ export function RelationFolder({
   count,
   level,
   revealToken,
+  forceOpen = false,
   children,
 }: {
   entityId: string;
   name: string;
   count: number;
   level?: number;
-  revealToken?: number;
+  revealToken?: number | string;
+  forceOpen?: boolean;
   children?: ReactNode;
 }) {
   const { open, setOpen } = useTreeDisclosure(`relations:${entityId}`);
   useEffect(() => {
     if (revealToken !== undefined) setOpen(true);
   }, [revealToken, setOpen]);
-  const closed = !open;
+  const closed = !open && !forceOpen;
   return (
     <div
       className="system-relation-folder"

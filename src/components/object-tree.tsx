@@ -30,7 +30,12 @@ import {
 import Link from 'next/link';
 import { RepresentationFolder } from './representation-folder';
 import { RelationFolder } from './relation-folder';
-import type { Representation, Structure } from '@/lib/structure';
+import {
+  treeObjectPath,
+  visibleTreeEntities,
+  type Representation,
+  type Structure,
+} from '@/lib/structure';
 import { CopyOrigin } from './copy-origin';
 import { Modal } from './modal';
 import { useTreeExpansion } from './use-tree-expansion';
@@ -406,27 +411,12 @@ export function ObjectTree({
     ),
     [error, setError] = useState('');
   const entities = [...objects, ...relations.map(relationEntity)];
-  function pathToObject(id: string, seen = new Set<string>()): string[] {
-    if (seen.has(id)) return [];
-    seen.add(id);
-    if (objects.some((o) => o.id === id)) return [id];
-    const relation = relations.find((r) => r.id === id);
-    if (!relation) return [];
-    for (const participant of [relation.parentId, relation.sourceId, relation.targetId]) {
-      if (!participant) continue;
-      const path = pathToObject(participant, seen);
-      if (path.length) return [...path, id];
-    }
-    return [];
-  }
-  const focusPath = focusRequest ? pathToObject(focusRequest.id) : [];
-  const expansion = useTreeExpansion(
-    entities,
-    focusPath[0] ?? focusId,
-    focusRequest?.token,
-    focusPath,
-  );
-  const focusOwnerExpanded = expansion.isExpanded(focusPath[0] ?? '');
+  const focusTarget = focusRequest?.id ?? focusId;
+  const focusPath = focusTarget ? treeObjectPath(focusTarget, objects, relations) : [];
+  const focusThroughRelation = focusPath.some((id) => relations.some((r) => r.id === id));
+  const focusOwner = focusThroughRelation ? focusPath[0] : focusTarget;
+  const expansion = useTreeExpansion(entities, focusOwner, focusRequest?.token, focusPath);
+  const focusOwnerExpanded = expansion.isExpanded(focusOwner ?? '');
   useEffect(() => {
     if (!focusRequest || !focusOwnerExpanded) return;
     const frame = requestAnimationFrame(() => {
@@ -453,17 +443,7 @@ export function ObjectTree({
     else onSaved(o);
   };
   const entityResource = (id: string) => (relationIds.has(id) ? 'relations' : 'objects');
-  const visible = new Set(
-    entities.filter((o) => o.name.toLowerCase().includes(query.toLowerCase())).map((o) => o.id),
-  );
-  if (query)
-    for (const o of entities.filter((o) => visible.has(o.id))) {
-      let p = o.parentId;
-      while (p) {
-        visible.add(p);
-        p = entities.find((x) => x.id === p)?.parentId ?? null;
-      }
-    }
+  const visible = visibleTreeEntities(query, objects, relations);
   async function move(id: string, parentId: string | null) {
     const o = entities.find((o) => o.id === id);
     if (!o) return;
@@ -486,8 +466,13 @@ export function ObjectTree({
     );
     return (
       <RelationFolder
+        forceOpen={!!query}
         entityId={id}
-        revealToken={focusPath.includes(id) ? focusRequest?.token : undefined}
+        revealToken={
+          focusPath.includes(id) && (focusRequest || focusThroughRelation)
+            ? (focusRequest?.token ?? focusId ?? undefined)
+            : undefined
+        }
         name={relations.find((r) => r.id === id)?.name ?? 'Связь'}
         count={linked.length}
         level={level}
@@ -825,8 +810,13 @@ export function ObjectTree({
                 )}
                 {(representable || linked.length > 0) && (
                   <RelationFolder
+                    forceOpen={!!query}
                     entityId={o.id}
-                    revealToken={focusPath.includes(o.id) ? focusRequest?.token : undefined}
+                    revealToken={
+                      focusPath.includes(o.id) && (focusRequest || focusThroughRelation)
+                        ? (focusRequest?.token ?? focusId ?? undefined)
+                        : undefined
+                    }
                     name={o.name}
                     count={linked.length}
                     level={depth + 2}
@@ -884,7 +874,7 @@ export function ObjectTree({
                             </>
                           }
                           role="treeitem"
-                          aria-expanded={expansion.isExpanded(r.id)}
+                          aria-expanded={expansion.isExpanded(r.id) || !!query}
                           aria-level={depth + 3}
                           key={r.id}
                           data-relation-reference={r.id}
@@ -919,13 +909,16 @@ export function ObjectTree({
                         >
                           <button
                             className="tree-toggle"
-                            aria-label={`${expansion.isExpanded(r.id) ? 'Свернуть' : 'Развернуть'} связь ${r.name}`}
+                            aria-label={`${expansion.isExpanded(r.id) || !!query ? 'Свернуть' : 'Развернуть'} связь ${r.name}`}
                             onClick={() => expansion.toggle(r.id)}
                           >
                             <ChevronRight
                               size={14}
                               style={{
-                                transform: expansion.isExpanded(r.id) ? 'rotate(90deg)' : undefined,
+                                transform:
+                                  expansion.isExpanded(r.id) || !!query
+                                    ? 'rotate(90deg)'
+                                    : undefined,
                               }}
                             />
                           </button>
@@ -948,7 +941,7 @@ export function ObjectTree({
                             </small>
                           </button>
                         </TreeContextMenu>
-                        {expansion.isExpanded(r.id) && (
+                        {(expansion.isExpanded(r.id) || !!query) && (
                           <div className="hierarchy-children">
                             <RepresentationFolder
                               resource="relations"

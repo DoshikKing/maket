@@ -1816,6 +1816,19 @@ test('browser: share viewer deep links, read-only controls and PNG JPEG PDF expo
     ).toBeVisible();
     await expect(viewer.getByRole('button', { name: 'Сохранить', exact: true })).toHaveCount(0);
     await expect(viewer.locator('.react-flow__handle')).toHaveCount(0);
+    const arrowName = d.document.relations![0].name;
+    await expect(
+      viewer
+        .locator('.viewer-tree > ul > li > .viewer-tree-row')
+        .getByRole('button', { name: arrowName, exact: true }),
+    ).toHaveCount(0);
+    await viewer.locator('.viewer-relations > summary').first().click();
+    await expect(
+      viewer
+        .locator('.viewer-relations')
+        .getByRole('button', { name: arrowName, exact: true })
+        .first(),
+    ).toBeVisible();
     await viewer.getByRole('button', { name: 'Экспорт', exact: true }).click();
     const { readFile } = await import('node:fs/promises');
     for (const [label, extension] of [
@@ -3479,4 +3492,102 @@ test('browser: resize model tree and restore independent panels from workspace e
   } finally {
     await touchContext.close();
   }
+});
+
+test('browser: relations stay in participant folders instead of solution roots, including search and direct focus', async ({
+  page,
+  request,
+}) => {
+  await login(request, page);
+  const solution = await (
+    await request.post('/api/objects', { data: { name: 'Решение со связями', kind: 'solution' } })
+  ).json();
+  const project = await (
+    await request.post('/api/objects', {
+      data: { name: 'Проект со связями', kind: 'project', parentId: solution.id },
+    })
+  ).json();
+  const a = await object(request, 'Первый участник', project.id),
+    b = await object(request, 'Второй участник', project.id);
+  const relationResponse = await request.post('/api/relations', {
+    data: { name: 'Искомая ассоциация', sourceId: a.id, targetId: b.id },
+  });
+  expect(relationResponse.status()).toBe(201);
+  const relation = await relationResponse.json();
+  const nested = await object(request, 'Дочерний объект связи', relation.id);
+  const contextIds: string[] = [];
+  for (const kind of ['decomposition', 'viewpoint']) {
+    const response = await request.post('/api/context-links', {
+      data: {
+        entityId: a.id,
+        kind,
+        newDiagram: {
+          name: kind === 'decomposition' ? 'Детали участника' : 'Другой ракурс участника',
+        },
+      },
+    });
+    expect(response.status()).toBe(201);
+    contextIds.push((await response.json()).id);
+  }
+  await page.goto('/solutions');
+  const tree = page.locator('.solutions-tree [role="tree"]');
+  await expect(tree.locator(':scope > [data-tree-entity]')).toHaveCount(1);
+  await expect(page.locator('.solution-cards .solution-card')).toHaveCount(1);
+  await page.goto(`/solutions?parent=${a.id}`);
+  const folder = (id: string) =>
+    page.locator(`.solutions-tree .system-relation-folder[data-parent-id="${id}"]`).first();
+  await folder(a.id).locator(':scope > button').click();
+  for (const id of [relation.id, ...contextIds]) {
+    await expect(folder(a.id).locator(`[data-relation-reference="${id}"]`)).toBeVisible();
+    await expect(tree.locator(`:scope > [data-tree-entity="${id}"]`)).toHaveCount(0);
+  }
+  const second = page.locator(`.solutions-tree [data-tree-entity="${b.id}"]`);
+  await second.locator(':scope > .tree-row > .tree-toggle').click();
+  await folder(b.id).locator(':scope > button').click();
+  await expect(folder(b.id).locator(`[data-relation-reference="${relation.id}"]`)).toBeVisible();
+  await page.getByLabel('Поиск в решениях', { exact: true }).fill('Искомая ассоциация');
+  await expect(folder(a.id).locator(`[data-relation-reference="${relation.id}"]`)).toBeVisible();
+  await expect(folder(b.id).locator(`[data-relation-reference="${relation.id}"]`)).toBeVisible();
+  await page.getByLabel('Поиск в решениях', { exact: true }).fill(nested.name);
+  await expect(folder(a.id).locator(`[data-tree-entity="${nested.id}"]`)).toBeVisible();
+  await page.goto(`/solutions?parent=${relation.id}`);
+  await expect(folder(a.id).locator(`[data-relation-reference="${relation.id}"]`)).toHaveAttribute(
+    'aria-selected',
+    'true',
+  );
+  await expect(folder(a.id).locator(`[data-relation-reference="${relation.id}"]`)).toContainText(
+    nested.name,
+  );
+  await folder(a.id).locator(':scope > button').click();
+  await expect(folder(a.id)).toHaveAttribute('aria-expanded', 'false');
+  await page.goto(`/solutions?parent=${nested.id}`);
+  await expect(folder(a.id).locator(`[data-tree-entity="${nested.id}"]`)).toBeVisible();
+  const created = await request.post('/api/diagrams', {
+    data: { name: 'Проверка дерева редактора', parentId: nested.id },
+  });
+  expect(created.status()).toBe(201);
+  const diagram = await created.json();
+  await page.goto(`/solutions?diagram=${diagram.id}`);
+  await expect(
+    page.locator(
+      `.object-panel .system-relation-folder[data-parent-id="${a.id}"] [data-tree-entity="${diagram.entityId}"]`,
+    ),
+  ).toBeVisible();
+  const editorFolder = page
+    .locator(`.object-panel .system-relation-folder[data-parent-id="${a.id}"]`)
+    .first();
+  await editorFolder
+    .getByRole('button', { name: `Свернуть связь ${relation.name}`, exact: true })
+    .click();
+  await expect(editorFolder.locator(`[data-tree-entity="${diagram.entityId}"]`)).toBeHidden();
+  await page.getByLabel('Поиск объектов', { exact: true }).fill(diagram.name);
+  await expect(editorFolder.locator(`[data-tree-entity="${diagram.entityId}"]`)).toBeVisible();
+  await page.getByLabel('Поиск объектов', { exact: true }).fill(relation.name);
+  await expect(
+    page.locator(`.object-panel [data-relation-reference="${relation.id}"]`).first(),
+  ).toBeVisible();
+  const unchanged = (await (await request.get('/api/model/structure')).json()).relations.find(
+    (r: { id: string }) => r.id === relation.id,
+  );
+  expect(unchanged).toMatchObject({ sourceId: a.id, targetId: b.id, parentId: null });
 });

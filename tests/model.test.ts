@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { builtinNotation } from '../src/lib/notation';
+import { treeObjectPath, visibleTreeEntities } from '../src/lib/structure';
 import { edgeGeometry } from '../src/lib/diagram-geometry';
 import {
   modelDiagramSchema,
@@ -559,4 +560,35 @@ it('inherits relation attributes while keeping arrow overrides independent', () 
     'Владелец',
   );
   expect(relation.attributes.role).toBe('Владелец');
+});
+
+it('finds participant ancestors for relation search and exits cyclic relation paths', () => {
+  const objects = [
+    { ...object, id: 'root', name: 'Корень' },
+    { ...object, id: 'a', parentId: 'root', name: 'Участник' },
+    { ...object, id: 'unrelated', name: 'Другой объект' },
+  ];
+  const relations = [
+    {
+      ...object,
+      id: 'r1',
+      name: 'Искомая связь',
+      relationType: '',
+      sourceId: 'r2',
+      targetId: 'r2',
+    },
+    {
+      ...object,
+      id: 'r2',
+      name: 'Связь участника',
+      relationType: '',
+      sourceId: 'r1',
+      targetId: 'a',
+    },
+  ];
+  expect(treeObjectPath('r1', objects, relations)).toEqual(['root', 'a', 'r2', 'r1']);
+  expect(visibleTreeEntities('Искомая связь', objects, relations)).toEqual(
+    new Set(['r1', 'r2', 'a', 'root']),
+  );
+  expect(treeObjectPath('r1', [], relations)).toEqual([]);
 });
