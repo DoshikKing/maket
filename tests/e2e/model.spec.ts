@@ -47,6 +47,22 @@ async function treeAction(page: Page, row: Locator, name: string | RegExp) {
   await row.click({ button: 'right' });
   await page.getByRole('menuitem', { name, exact: typeof name === 'string' }).click();
 }
+async function revealRelation(page: Page, id: string) {
+  const row = page.locator(`[data-relation-reference="${id}"]:visible`).first();
+  for (let i = 0; i < 40; i++) {
+    if (await row.count()) return row;
+    const collapsed = page
+      .locator(
+        '.object-panel [aria-expanded="false"] > button.tree-row, .object-panel [data-tree-entity][aria-expanded="false"] > .tree-row > button.tree-toggle:not(:disabled), .object-panel [data-relation-reference][aria-expanded="false"] > button.tree-toggle',
+      )
+      .filter({ visible: true })
+      .first();
+    if (!(await collapsed.count())) break;
+    await collapsed.click();
+  }
+  await expect(row).toBeVisible();
+  return row;
+}
 async function object(
   request: APIRequestContext,
   name: string,
@@ -1138,20 +1154,27 @@ test('browser: relation explorer, nested references, shared arrow placement and 
   d = await place(request, d, target.id);
   await page.goto(`/diagrams/${d.id}`);
   await expect(page.locator('.react-flow__node-notation')).toHaveCount(2);
-  await page.getByRole('button', { name: 'Создать связь модели', exact: true }).click();
+  await expect(page.locator('.object-panel .relation-browser')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Связи модели', exact: true }).click();
+  await page.getByRole('button', { name: 'Создать связь без диаграммы', exact: true }).click();
   await page.getByLabel('Имя связи', { exact: true }).fill('Ответственность');
   await page.getByLabel('Источник связи', { exact: true }).selectOption(source.id);
   await page.getByLabel('Назначение связи', { exact: true }).selectOption(target.id);
   await page.getByRole('button', { name: 'Сохранить связь', exact: true }).click();
-  await expect(page.locator('[data-model-relation-id]')).toHaveCount(1);
+  await expect(page.getByRole('dialog', { name: 'Создать связь модели', exact: true })).toHaveCount(
+    0,
+  );
+  await page
+    .getByRole('dialog', { name: 'Менеджер связей', exact: true })
+    .getByRole('button', { name: 'Закрыть', exact: true })
+    .click();
   const relation = (await (await request.get('/api/model')).json()).relations[0];
-  const row = page.locator(`[data-model-relation-id="${relation.id}"]`);
-  await expect(row).toBeVisible();
+  const row = page.locator(`[data-relation-reference="${relation.id}"]`).first();
   await showObjectLinks(page, source);
   await showObjectLinks(page, target);
   await expect(page.locator(`[data-relation-reference="${relation.id}"]`)).toHaveCount(2);
   for (let i = 0; i < 2; i++) {
-    await treeAction(page, row, 'Разместить связь Ответственность');
+    await treeAction(page, row, 'Вернуть представление связи Ответственность');
     await page.getByRole('button', { name: 'Разместить стрелку', exact: true }).click();
     await expect(page.locator('.react-flow__edge')).toHaveCount(i + 1);
     await expect(page.getByText(/Сохранено · ревизия/)).toBeVisible({ timeout: 15000 });
@@ -1161,10 +1184,10 @@ test('browser: relation explorer, nested references, shared arrow placement and 
     relation.id,
     relation.id,
   ]);
-  await treeAction(page, row, 'Изменить связь Ответственность');
+  await treeAction(page, row, 'Свойства вложенной связи Ответственность');
   await page.getByLabel('Имя связи', { exact: true }).fill('Владелец заказа');
   await page.getByRole('button', { name: 'Сохранить связь', exact: true }).click();
-  await expect(row.locator('.object-tree-name')).toContainText('Владелец заказа');
+  await expect(row.locator('.tree-label')).toContainText('Владелец заказа');
   await expect(page.locator(`[data-relation-reference="${relation.id}"]`)).toHaveCount(2);
   const sourceRow = page.locator(`[data-object-id="${source.id}"]`);
   await treeAction(page, sourceRow, 'Копировать объект Заказ');
@@ -1181,14 +1204,31 @@ test('browser: relation explorer, nested references, shared arrow placement and 
   await expect(page.locator('.copy-origin')).toContainText(source.id);
   await page.getByRole('button', { name: 'Закрыть', exact: true }).click();
   page.on('dialog', (dialog) => dialog.accept());
-  await treeAction(page, row, 'Удалить связь модели Владелец заказа');
-  await expect(page.locator('.relation-browser [role="alert"]')).toContainText('используется');
+  await page.getByRole('button', { name: 'Связи модели', exact: true }).click();
+  await page.getByRole('button', { name: 'Удалить привязку Владелец заказа', exact: true }).click();
+  await expect(
+    page.getByRole('dialog', { name: 'Менеджер связей' }).getByRole('alert'),
+  ).toContainText('используется');
+  await page
+    .getByRole('dialog', { name: 'Менеджер связей' })
+    .getByRole('button', { name: 'Закрыть', exact: true })
+    .click();
   for (let i = 1; i >= 0; i--) {
     await treeAction(page, row, 'Найти связь Владелец заказа');
     await page.getByRole('button', { name: 'Удалить связь', exact: true }).click();
     await expect(page.locator('.react-flow__edge')).toHaveCount(i);
   }
-  await treeAction(page, row, 'Удалить связь модели Владелец заказа');
+  await page.getByRole('button', { name: 'Связи модели', exact: true }).click();
+  await page.getByRole('button', { name: 'Удалить привязку Владелец заказа', exact: true }).click();
+  await expect(
+    page
+      .getByRole('dialog', { name: 'Менеджер связей' })
+      .getByText('Связей пока нет.', { exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole('dialog', { name: 'Менеджер связей' })
+    .getByRole('button', { name: 'Закрыть', exact: true })
+    .click();
   await expect(row).toHaveCount(0);
   await expect(page.locator(`[data-relation-reference="${relation.id}"]`)).toHaveCount(0);
   await page.reload();
@@ -1326,11 +1366,11 @@ test('browser: return a tree arrow, nest objects under it and connect objects to
     sourceId: primary.id,
     targetId: secondary.relationId,
   });
-  const primaryRow = page.locator(`[data-model-relation-id="${primary.id}"]`);
+  const primaryRow = await revealRelation(page, primary.id);
   await treeAction(page, primaryRow, 'Создать дочерний объект связи Переход');
   await page.getByLabel('Имя объекта', { exact: true }).fill('Деталь связи');
   await page.getByRole('button', { name: 'Сохранить объект', exact: true }).click();
-  await expect(page.getByRole('dialog', { name: 'Создать объект', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('dialog')).toHaveCount(0);
   const child = (await (await request.get('/api/model')).json()).objects.find(
     (o: ModelObject) => o.name === 'Деталь связи',
   );
@@ -1357,8 +1397,8 @@ test('browser: return a tree arrow, nest objects under it and connect objects to
   for (const relationId of [secondary.relationId, tertiary.relationId]) {
     await treeAction(
       page,
-      page.locator(`[data-model-relation-id="${relationId}"]`),
-      /Разместить связь/,
+      await revealRelation(page, relationId!),
+      /Разместить связь|Вернуть представление связи/,
     );
     await page.getByRole('button', { name: 'Разместить стрелку', exact: true }).click();
   }
@@ -1543,8 +1583,8 @@ test('browser: distinct tree actions, collapsible panels, detach and rebind arro
   await expect(folder).toHaveAttribute('aria-expanded', 'false');
   await folder.click();
   await expect(folder).toHaveAttribute('aria-expanded', 'true');
-  const catalog = page.locator(`[data-model-relation-id="${original.id}"]`);
-  await treeAction(page, catalog, `Разместить связь ${original.name}`);
+  const catalog = page.locator(`[data-relation-reference="${original.id}"]`).first();
+  await treeAction(page, catalog, `Вернуть представление связи ${original.name}`);
   await expect(
     page.getByRole('dialog', { name: `Разместить связь «${original.name}»`, exact: true }),
   ).toBeVisible();
@@ -2613,7 +2653,7 @@ test('browser: canvas context menu and inherited representation attributes', asy
   await rightClickEdge();
   await page.getByRole('menuitem', { name: 'Показать в дереве объектов', exact: true }).click();
   await expect(
-    page.locator(`[data-model-relation-id="${d.document.relations![0].id}"]`),
+    page.locator(`[data-relation-reference="${d.document.relations![0].id}"]`).first(),
   ).toBeVisible();
   await rightClickEdge();
   await page.getByRole('menuitem', { name: 'Свойства представления', exact: true }).click();

@@ -72,7 +72,7 @@ import {
   type NodeOverride,
   type EdgeOverride,
 } from '@/lib/appearance';
-import { RelationBrowser, RelationEditor, RelationPlacement } from './relation-browser';
+import { RelationEditor, RelationPlacement } from './relation-browser';
 import { ObjectTree, ObjectEditor } from './object-tree';
 import { DiagramPreview, type NotationItem } from './library';
 import {
@@ -1473,49 +1473,6 @@ function Editor({ initial }: { initial: Diagram }) {
           onRelationEdit={(r) => void editRelation(r)}
           onRelationPlace={setRelationPlacement}
           onRelationSaved={(r) => mergeRelations([r])}
-          relationsPanel={(renderChildren, move, createChild, isExpanded, toggle) => (
-            <RelationBrowser
-              relations={allRelations}
-              objects={[...objects, ...allRelations.map(relationEntity)]}
-              renderChildren={renderChildren}
-              onMove={move}
-              onCreateChild={createChild}
-              isExpanded={isExpanded}
-              onToggle={toggle}
-              counts={
-                new Map(
-                  allRelations.map((r) => [
-                    r.id,
-                    document.edges.filter((e) => e.relationId === r.id).length,
-                  ]),
-                )
-              }
-              onEdit={(r) => void editRelation(r)}
-              onLocate={locateRelation}
-              onPlace={(r) => setRelationPlacement(r)}
-              onSaved={(r) => mergeRelations([r])}
-              onBeforeWrite={async () => {
-                if (!(await flush())) throw new Error('Сначала сохраните диаграмму');
-              }}
-              onRemove={async (r) => {
-                setCommandBusy(true);
-                try {
-                  if (!(await flush())) throw new Error('Сначала завершите сохранение диаграммы');
-                  const current = relationsRef.current.find((x) => x.id === r.id) ?? r;
-                  await api(`relations/${r.id}`, 'DELETE', {
-                    revision: current.revision,
-                    incarnation: current.incarnation,
-                  });
-                  mergeRelations(
-                    relationsRef.current.filter((x) => x.id !== r.id),
-                    true,
-                  );
-                } finally {
-                  setCommandBusy(false);
-                }
-              }}
-            />
-          )}
 
           counts={
             new Map([

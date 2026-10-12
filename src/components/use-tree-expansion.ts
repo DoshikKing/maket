@@ -7,6 +7,7 @@ export function useTreeExpansion(
   entities: ModelObject[],
   focusId?: string | null,
   focusToken?: number,
+  revealIds?: string[],
 ) {
   const { user } = useUser();
   const key = `maket:tree:${user.id}`;
@@ -42,13 +43,13 @@ export function useTreeExpansion(
       path.add(entity.id);
       entity = entities.find((o) => o.id === entity?.parentId);
     }
-    setExpanded((prev) => new Set([...(prev ?? []), ...path]));
+    setExpanded((prev) => new Set([...(prev ?? []), ...path, ...(revealIds ?? [])]));
     requestAnimationFrame(() =>
       document
-        .querySelector(`[data-model-relation-id="${focusId}"], [data-tree-entity="${focusId}"]`)
+        .querySelector(`[data-tree-entity="${focusId}"]`)
         ?.scrollIntoView({ block: 'nearest' }),
     );
-  }, [entities, expanded, focusId, focusToken]);
+  }, [entities, expanded, focusId, focusToken, revealIds]);
   useEffect(() => {
     if (expanded)
       try {

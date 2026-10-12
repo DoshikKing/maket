@@ -531,7 +531,15 @@ it('inherits relation attributes while keeping arrow overrides independent', () 
   };
   const type = {
     ...builtinNotation.edgeTypes[0],
-    properties: [{ key: 'role', label: 'Роль', type: 'string' as const, scope: 'object' as const }],
+    properties: [
+      {
+        key: 'role',
+        label: 'Роль',
+        type: 'string' as const,
+        scope: 'object' as const,
+        required: false,
+      },
+    ],
   };
   const edge = {
     id: 'e',

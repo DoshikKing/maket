@@ -371,7 +371,6 @@ export function ObjectTree({
   onRelationEdit,
   onRelationPlace,
   onRelationSaved,
-  relationsPanel,
 }: {
   defaultParentId?: string | null;
   diagramId?: string;
@@ -382,13 +381,6 @@ export function ObjectTree({
   relations?: ModelRelation[];
   onRelationLocate?: (id: string) => void;
   onRelationEdit?: (r: ModelRelation) => void;
-  relationsPanel?: (
-    children: (id: string) => React.ReactNode,
-    move: (id: string, parent: string | null) => Promise<void>,
-    createChild: (id: string) => void,
-    isExpanded: (id: string) => boolean,
-    toggle: (id: string) => void,
-  ) => React.ReactNode;
   onRelationPlace?: (r: ModelRelation) => void;
   onRelationSaved?: (r: ModelRelation) => void;
   counts: Map<string, number>;
@@ -407,7 +399,38 @@ export function ObjectTree({
     ),
     [error, setError] = useState('');
   const entities = [...objects, ...relations.map(relationEntity)];
-  const expansion = useTreeExpansion(entities, focusRequest?.id ?? focusId, focusRequest?.token);
+  function pathToObject(id: string, seen = new Set<string>()): string[] {
+    if (seen.has(id)) return [];
+    seen.add(id);
+    if (objects.some((o) => o.id === id)) return [id];
+    const relation = relations.find((r) => r.id === id);
+    if (!relation) return [];
+    for (const participant of [relation.parentId, relation.sourceId, relation.targetId]) {
+      if (!participant) continue;
+      const path = pathToObject(participant, seen);
+      if (path.length) return [...path, id];
+    }
+    return [];
+  }
+  const focusPath = focusRequest ? pathToObject(focusRequest.id) : [];
+  const expansion = useTreeExpansion(
+    entities,
+    focusPath[0] ?? focusId,
+    focusRequest?.token,
+    focusPath,
+  );
+  const focusOwnerExpanded = expansion.isExpanded(focusPath[0] ?? '');
+  useEffect(() => {
+    if (!focusRequest || !focusOwnerExpanded) return;
+    const frame = requestAnimationFrame(() => {
+      const row = document.querySelector<HTMLElement>(
+        `[data-relation-reference="${focusRequest.id}"], [data-object-id="${focusRequest.id}"]`,
+      );
+      row?.scrollIntoView({ block: 'nearest' });
+      row?.querySelector<HTMLElement>('button.tree-label')?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [focusRequest, focusOwnerExpanded]);
   useEffect(() => {
     if (focusRequest) setQuery('');
   }, [focusRequest]);
@@ -457,6 +480,7 @@ export function ObjectTree({
     return (
       <RelationFolder
         entityId={id}
+        revealToken={focusPath.includes(id) ? focusRequest?.token : undefined}
         name={relations.find((r) => r.id === id)?.name ?? 'Связь'}
         count={linked.length}
         level={level}
@@ -464,6 +488,7 @@ export function ObjectTree({
         {linked.map((r) => (
           <div key={r.id} role="treeitem" aria-level={level + 1}>
             <TreeContextMenu
+              data-relation-reference={r.id}
               actions={
                 <>
                   <button
@@ -755,6 +780,7 @@ export function ObjectTree({
                 {(representable || linked.length > 0) && (
                   <RelationFolder
                     entityId={o.id}
+                    revealToken={focusPath.includes(o.id) ? focusRequest?.token : undefined}
                     name={o.name}
                     count={linked.length}
                     level={depth + 2}
@@ -771,6 +797,13 @@ export function ObjectTree({
                                 onClick={() => onRelationPlace?.(r)}
                               >
                                 <Plus size={12} />
+                              </button>
+                              <button
+                                aria-label={`Найти связь ${r.name}`}
+                                title="Показать представление на диаграмме"
+                                onClick={() => onRelationLocate?.(r.id)}
+                              >
+                                <LocateFixed size={12} />
                               </button>
                               <button
                                 aria-label={`Создать дочерний объект связи ${r.name}`}
@@ -937,30 +970,6 @@ export function ObjectTree({
         <div className="error" role="alert">
           {error}
         </div>
-      )}
-      {relationsPanel?.(
-        (id) =>
-          expansion.isExpanded(id) && (
-            <div className="hierarchy-children" role="group">
-              <RepresentationFolder
-                resource="relations"
-                entityId={id}
-                level={2}
-                localItems={representations}
-                currentDiagramId={diagramId}
-                onLocate={onRepresentationLocate}
-              />
-              {relationFolder(id, 2)}
-              {branch(id, 1, new Set([id]), true)}
-            </div>
-          ),
-        move,
-        (id) => {
-          if (!expansion.isExpanded(id)) expansion.toggle(id);
-          setEditing({ parentId: id });
-        },
-        expansion.isExpanded,
-        expansion.toggle,
       )}
       {editing && (
         <ObjectEditor

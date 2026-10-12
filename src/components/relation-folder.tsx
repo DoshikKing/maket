@@ -1,5 +1,5 @@
 'use client';
-import { type ReactNode } from 'react';
+import { useEffect, type ReactNode } from 'react';
 import { useTreeDisclosure } from './use-tree-disclosure';
 import { ChevronRight, Folder } from 'lucide-react';
 
@@ -8,15 +8,20 @@ export function RelationFolder({
   name,
   count,
   level,
+  revealToken,
   children,
 }: {
   entityId: string;
   name: string;
   count: number;
   level?: number;
+  revealToken?: number;
   children?: ReactNode;
 }) {
   const { open, setOpen } = useTreeDisclosure(`relations:${entityId}`);
+  useEffect(() => {
+    if (revealToken !== undefined) setOpen(true);
+  }, [revealToken, setOpen]);
   const closed = !open;
   return (
     <div
