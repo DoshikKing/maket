@@ -3367,3 +3367,174 @@ body {
     width: 16px;
   }
 }
+
+/* The relationship graph uses the same theme and controls as the workspace. */
+.solution-graph-page {
+  max-width: none;
+}
+.solution-graph-page .page-heading {
+  flex-wrap: wrap;
+}
+.solution-graph-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-end;
+}
+.solution-graph-toolbar label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.solution-graph-toolbar .solution-graph-check {
+  flex-direction: row;
+  align-items: center;
+  padding: 10px 0;
+}
+.solution-graph-check input {
+  width: auto;
+}
+.solution-graph-counts {
+  margin: 14px 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+.solution-graph-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 280px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--panel);
+}
+.solution-graph-canvas {
+  height: max(520px, calc(100dvh - 290px));
+  min-width: 0;
+  background: var(--canvas-bg, var(--bg));
+}
+.solution-graph-node {
+  width: 210px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: 0 2px 8px #0000000a;
+}
+.solution-graph-node > div {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.solution-graph-node svg {
+  flex: none;
+  color: var(--accent);
+}
+.solution-graph-node strong {
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+.solution-graph-node small {
+  display: block;
+  margin-top: 6px;
+  font-size: 10px;
+  color: var(--muted);
+}
+.solution-graph-node.is-relation {
+  background: var(--accent-soft);
+  border-style: dashed;
+}
+.solution-graph-node.is-selected {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.solution-graph-node.is-dim {
+  opacity: 0.25;
+}
+.solution-graph-node .solution-graph-boundary {
+  color: var(--accent);
+}
+.solution-graph-inspector {
+  border-left: 1px solid var(--border);
+  padding: 18px;
+  overflow: auto;
+  max-height: max(520px, calc(100dvh - 290px));
+}
+.solution-graph-inspector > label {
+  display: grid;
+  gap: 8px;
+  font-size: 12px;
+}
+.solution-graph-inspector h2 {
+  font-size: 18px;
+  overflow-wrap: anywhere;
+}
+.solution-graph-inspector p {
+  font-size: 12px;
+  line-height: 1.6;
+}
+.solution-graph-description {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.solution-graph-results {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 200px;
+  overflow: auto;
+  margin: 12px 0;
+}
+.solution-graph-results button {
+  justify-content: space-between;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.solution-graph-results small {
+  color: var(--muted);
+}
+.solution-graph-participant {
+  display: grid;
+  gap: 5px;
+  margin-bottom: 10px;
+}
+.solution-graph-participant button {
+  justify-content: flex-start;
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+.solution-graph-inspector dl {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.solution-graph-inspector dd {
+  margin: 4px 0 12px;
+  color: var(--muted);
+}
+.solution-graph-actions {
+  display: grid;
+  gap: 8px;
+}
+.solution-graph-canvas .react-flow__controls button {
+  background: var(--panel);
+  color: var(--text);
+  border-color: var(--border);
+}
+.solution-graph-canvas .react-flow__controls button svg {
+  fill: currentColor;
+}
+@media (max-width: 850px) {
+  .solution-graph-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .solution-graph-inspector {
+    border-left: none;
+    border-top: 1px solid var(--border);
+    max-height: 400px;
+  }
+  .solution-graph-canvas {
+    height: 520px;
+  }
+}

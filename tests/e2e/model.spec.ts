@@ -3591,3 +3591,142 @@ test('browser: relations stay in participant folders instead of solution roots, 
   );
   expect(unchanged).toMatchObject({ sourceId: a.id, targetId: b.id, parentId: null });
 });
+
+test('browser: interactive solution graph includes model-only and context links and never mutates the model', async ({
+  page,
+  request,
+}) => {
+  await login(request, page);
+  const solution = await (
+    await request.post('/api/objects', { data: { name: 'Граф решения тест', kind: 'solution' } })
+  ).json();
+  const other = await (
+    await request.post('/api/objects', { data: { name: 'Другое решение', kind: 'solution' } })
+  ).json();
+  const a = await object(request, 'Узел графа А', solution.id),
+    b = await object(request, 'Узел графа Б', solution.id),
+    external = await object(request, 'Внешний участник', other.id);
+  const response = await request.post('/api/relations', {
+    data: {
+      name: 'Связь без диаграммы',
+      sourceId: a.id,
+      targetId: b.id,
+      relationType: 'Ассоциация',
+    },
+  });
+  expect(response.status()).toBe(201);
+  const r = await response.json();
+  const child = await object(request, 'Объект внутри связи', r.id);
+  const cross = await (
+    await request.post('/api/relations', {
+      data: { name: 'Между решениями', sourceId: r.id, targetId: external.id },
+    })
+  ).json();
+  const contextResponse = await request.post('/api/context-links', {
+    data: { entityId: a.id, kind: 'decomposition', newDiagram: { name: 'Детали узла графа' } },
+  });
+  expect(contextResponse.status()).toBe(201);
+  const context = await contextResponse.json();
+  let diagram = await (await request.get(`/api/diagrams/${context.targetDiagramId}`)).json();
+  diagram = await place(request, diagram, a.id);
+  diagram = await place(request, diagram, a.id);
+  expect(
+    (
+      await request.patch('/api/settings', {
+        data: { name: 'Модель', theme: 'dark', snapToGrid: false, autosave: false },
+      })
+    ).status(),
+  ).toBe(200);
+  const before = await (await request.get('/api/model')).json();
+  await page.goto(`/solutions?parent=${a.id}`);
+  await page.getByRole('link', { name: 'Граф решения', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Граф связей', exact: true })).toBeVisible();
+  await expect(page.getByLabel('Решение для графа')).toHaveValue(solution.id);
+  expect(
+    await page
+      .locator('.solution-graph-canvas')
+      .evaluate((el) => getComputedStyle(el).backgroundColor),
+  ).not.toBe('rgb(255, 255, 255)');
+  await expect(page.locator('.solution-graph-counts')).toContainText(
+    'Объекты: 6 · Связи: 3 · Вне решения: 1',
+  );
+  for (const id of [
+    a.id,
+    b.id,
+    r.id,
+    child.id,
+    cross.id,
+    context.id,
+    diagram.entityId,
+    external.id,
+  ])
+    await expect(page.locator(`[data-graph-entity="${id}"]`)).toHaveCount(1);
+  await expect(page.locator(`[data-graph-entity="${other.id}"]`)).toHaveCount(0);
+  await expect(page.locator(`[data-graph-entity="${external.id}"]`)).toContainText('Вне решения');
+  await page.getByLabel('Поиск в графе').fill(r.name);
+  await page.locator('.solution-graph-results').getByRole('button', { name: r.name }).click();
+  const details = page.getByRole('region', { name: 'Выбранный элемент графа' });
+  await expect(details.getByRole('heading')).toHaveText(r.name);
+  await expect(details.getByRole('button', { name: a.name, exact: true })).toBeVisible();
+  await expect(details.getByRole('button', { name: b.name, exact: true })).toBeVisible();
+  await page.getByLabel('Поиск в графе').clear();
+  await details.getByRole('button', { name: a.name, exact: true }).click();
+  await page.getByLabel('Только окружение').check();
+  await expect(page.locator(`[data-graph-entity="${solution.id}"]`)).toHaveCount(0);
+  await page.getByLabel('Только окружение').uncheck();
+  await page.getByRole('button', { name: 'Весь граф', exact: true }).click();
+  await page.getByLabel('Вложенность', { exact: true }).check();
+  await expect(
+    page
+      .locator('.react-flow__edge')
+      .filter({ has: page.locator('path[style*="stroke-dasharray"]') }),
+  ).not.toHaveCount(0);
+  await page.getByLabel('Вложенность', { exact: true }).uncheck();
+  await page.getByLabel('Поиск в графе').fill(a.name);
+  await page.locator('.solution-graph-results').getByRole('button', { name: a.name }).click();
+  const node = page.locator(`[data-graph-entity="${a.id}"]`);
+  await expect(node).toBeVisible();
+  await page.waitForTimeout(350);
+  const box = (await node.boundingBox())!;
+  await page.mouse.move(box.x + 30, box.y + 20);
+  await page.mouse.down();
+  await page.mouse.move(box.x + 90, box.y + 60, { steps: 10 });
+  await page.mouse.up();
+  await expect
+    .poll(async () => Math.abs(((await node.boundingBox())?.x ?? box.x) - box.x))
+    .toBeGreaterThan(20);
+  await page.keyboard.press('Delete');
+  await expect(node).toHaveCount(1);
+  await page.getByRole('button', { name: 'Обновить', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Обновить', exact: true })).toBeEnabled();
+  expect(await (await request.get('/api/model')).json()).toEqual(before);
+  await page.getByLabel('Поиск в графе').fill(diagram.name);
+  await page
+    .locator('.solution-graph-results')
+    .getByRole('button', { name: `${diagram.name} Диаграмма`, exact: true })
+    .click();
+  await details.getByRole('link', { name: 'Открыть диаграмму' }).click();
+  await expect(page.locator('.flow-container')).toBeVisible();
+  await expect(page.locator('.react-flow__node-notation')).toHaveCount(2);
+  await page.locator('.react-flow__node-notation').first().click();
+  await page.getByLabel('Уровень слоя', { exact: true }).fill('5');
+  await page.getByLabel('Уровень слоя', { exact: true }).press('Tab');
+  await expect(page.getByText('Есть изменения', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Граф решения', exact: true }).click();
+  await expect(page.getByLabel('Решение для графа')).toHaveValue(solution.id);
+  expect(
+    (await (await request.get(`/api/diagrams/${diagram.id}`)).json()).document.nodes[0].layer,
+  ).toBe(5);
+  await page.getByLabel('Решение для графа').selectOption('all');
+  await expect(page.locator(`[data-graph-entity="${other.id}"]`)).toHaveCount(1);
+  await page.getByLabel('Поиск в графе').fill(child.name);
+  await page.locator('.solution-graph-results').getByRole('button', { name: child.name }).click();
+  await details.getByRole('link', { name: 'Показать в дереве' }).click();
+  await expect(
+    page.locator(`.solutions-tree [data-tree-entity="${child.id}"]`).first(),
+  ).toHaveAttribute('aria-selected', 'true');
+  await page.goto('/solutions?graph=foreign-solution');
+  await expect(page.locator('.solution-graph-page [role="alert"]')).toHaveText(
+    'Решение не найдено или недоступно.',
+  );
+});

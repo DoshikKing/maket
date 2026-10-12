@@ -1,7 +1,7 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import Link from 'next/link';
-import { useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -37,6 +37,7 @@ import {
   Share2,
 } from 'lucide-react';
 import type { Structure, Viewpoint } from '@/lib/structure';
+import { graphSolutionId } from '@/lib/solution-graph';
 import { api, date, download, readJson } from '@/lib/client';
 import { type DiagramDocument as LegacyDocument, defaults } from '@/lib/notation';
 import { useUser } from './workspace';
@@ -156,6 +157,7 @@ export function EditorPage({ id }: { id: string }) {
   );
 }
 function Editor({ initial }: { initial: Diagram }) {
+  const router = useRouter();
   const { panels, setPanels } = useWorkspacePanels();
   const { user } = useUser(),
     flow = useReactFlow();
@@ -1305,6 +1307,17 @@ function Editor({ initial }: { initial: Diagram }) {
             }}
           >
             <GitBranch size={14} /> Связи модели
+          </button>
+          <button
+            className="secondary small"
+            onClick={async () => {
+              if (await flush())
+                router.push(
+                  `/solutions?graph=${graphSolutionId(initial.entityId, { objects, relations: allRelations })}${initial.entityId ? `&object=${initial.entityId}` : ''}`,
+                );
+            }}
+          >
+            Граф решения
           </button>
           <button
             className="secondary small"

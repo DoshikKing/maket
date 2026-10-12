@@ -14,6 +14,7 @@ import {
   Trash2,
   RefreshCw,
 } from 'lucide-react';
+import { graphSolutionId } from '@/lib/solution-graph';
 import { api } from '@/lib/client';
 import { entityLabels, relationEntity, type ModelObject, type ModelDiagram } from '@/lib/model';
 import { treeObjectPath, visibleTreeEntities, type Structure } from '@/lib/structure';
@@ -432,6 +433,15 @@ export function SolutionsPage() {
   return (
     <main className="page solutions-page">
       <div className="page-heading">
+        {space && (
+          <Link
+            className="secondary"
+            href={`/solutions?graph=${graphSolutionId(selectedId, space)}${selectedId ? `&object=${selectedId}` : ''}`}
+          >
+            <Network size={16} />
+            Граф решения
+          </Link>
+        )}
         <button className="secondary" onClick={() => setViewpointsOpen(true)}>
           Ракурсы
         </button>
