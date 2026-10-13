@@ -1,6 +1,7 @@
 import { expect, it } from 'vitest';
 import {
   layerLayout,
+  layerConnectionRoute,
   viewpointLayers,
   UNASSIGNED_LAYER,
   diagramLayerLayout,
@@ -224,4 +225,33 @@ it('anchors connectors to actual extrusion walls and preserves custom corner rou
   ]);
   expect(reversed.target.x).toBeCloseTo(prism.target.x, 8);
   expect(reversed.source.x).toBeCloseTo(prism.source.x, 8);
+});
+
+it('routes interlayer links on the projection axes and in separate outside columns', () => {
+  const source = { x: 300, y: 200 },
+    target = { x: 500, y: 800 };
+  const upper = { origin: 250, depth: 420 },
+    lower = { origin: 850, depth: 420 };
+  const route = layerConnectionRoute(source, target, upper, lower, 0);
+  expect(route.points[0]).toEqual(source);
+  expect(route.points.at(-1)).toEqual(target);
+  expect(route.path).not.toMatch(/[CQ]/);
+  expect(route.points[2].x).toBeLessThan(0);
+  expect(route.points[2].x).toBe(route.points[3].x);
+  for (const [a, b, slope] of [
+    [0, 1, 0.25],
+    [1, 2, -0.25],
+    [3, 4, -0.25],
+    [4, 5, 0.25],
+  ]) {
+    const p = route.points[a],
+      q = route.points[b];
+    expect((q.y - p.y) / (q.x - p.x)).toBeCloseTo(slope, 8);
+  }
+  expect(layerConnectionRoute(source, target, upper, lower, 1).points[2].x).not.toBe(
+    route.points[2].x,
+  );
+  // Alias changes alter the local segment, leaving the interlayer column in place.
+  const alias = layerConnectionRoute({ x: 650, y: 300 }, target, upper, lower, 0);
+  expect(alias.points.slice(2, 4)).toEqual(route.points.slice(2, 4));
 });

@@ -4319,11 +4319,44 @@ test('browser: 2.5D viewpoint layers show previews, actual transitions, collapse
   await expect(page.locator('.viewpoint-layers-counts')).toContainText('Связи: 2');
   await page.getByLabel('Тип связей слоёв').selectOption('viewpoint');
   await expect(page.locator('.viewpoint-layers-counts')).toContainText('Связи: 1');
-  await page.locator('.react-flow__edge').first().click();
+  const routePath = page.locator('.react-flow__edge-path').first();
+  await expect(routePath).toHaveAttribute('d', /^M.*L.*L.*L.*L.*L/);
+  const routeClick = await routePath.evaluate((element) => {
+    const path = element as SVGPathElement;
+    const p = path
+      .getPointAtLength(path.getTotalLength() / 2)
+      .matrixTransform(path.getScreenCTM()!);
+    return { x: p.x, y: p.y };
+  });
+  await page.mouse.click(routeClick.x, routeClick.y);
+
   await expect(page.getByRole('region', { name: 'Выбранные связи слоёв' })).toContainText(
     'Реализация в коде',
   );
   const viewport = page.locator('.viewpoint-layers-canvas .react-flow__viewport');
+  const overviewCamera = await viewport.getAttribute('style');
+  const outsideColumn = await routePath.evaluate((element) => {
+    const path = element as SVGPathElement;
+    const points = path
+      .getAttribute('d')!
+      .split(/[ML]/)
+      .filter(Boolean)
+      .map((p) => p.trim().split(/\s+/).map(Number));
+    const point = path.ownerSVGElement!.createSVGPoint();
+    point.x = points[2][0];
+    point.y = (points[2][1] + points[3][1]) / 2;
+    const screen = point.matrixTransform(path.getScreenCTM()!);
+    return { x: screen.x, y: screen.y };
+  });
+  await page.mouse.move(outsideColumn.x, outsideColumn.y);
+  await page.mouse.wheel(0, -2200);
+  await expect
+    .poll(async () => Number((await viewport.getAttribute('style'))!.match(/scale\(([^)]+)\)/)![1]))
+    .toBeGreaterThan(3);
+  await expect(page.locator('.react-flow__edge-path')).toHaveCount(1);
+  await page.getByRole('button', { name: 'Вписать слои', exact: true }).click();
+  await expect.poll(() => viewport.getAttribute('style')).toBe(overviewCamera);
+
   const planes = page.locator('.viewpoint-plane-node');
   const geometry = () =>
     planes.evaluateAll((nodes) =>
@@ -4427,6 +4460,10 @@ test('browser: 2.5D viewpoint layers show previews, actual transitions, collapse
   await expect(page.locator('.react-flow__edge.is-dim')).toHaveCount(0);
   await page.getByRole('button', { name: 'Вписать слои', exact: true }).click();
   await expect.poll(() => viewport.getAttribute('style')).toBe(originalCamera);
+  await page.getByLabel('Тип связей слоёв').selectOption('all');
+  await expect(page.locator('.react-flow__edge-path')).toHaveCount(3);
+  await page.getByLabel('Тип связей слоёв').selectOption('viewpoint');
+
   await page.getByRole('button', { name: 'Свернуть все слои', exact: true }).click();
   await expect(page.locator('[data-layer-diagram]')).toHaveCount(0);
   await expect(page.locator('.viewpoint-layers-counts')).toContainText('Диаграммы: 5 из 5');

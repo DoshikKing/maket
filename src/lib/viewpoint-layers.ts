@@ -195,9 +195,24 @@ export function objectPrism(a: NodeAppearance, shapes: CustomShape[] = []) {
   }, 0);
   if (area < 0) outline.reverse();
   const points = outline.map((p) => ({ x: p.x + p.y, y: w / 4 - p.x / 4 + p.y / 4 }));
+  const frontPoint =
+    a.shape === 'custom' && custom
+      ? outline.reduce((best, point) =>
+          point.y > best.y ||
+          (point.y === best.y &&
+            (Math.abs(point.x - w / 2) < Math.abs(best.x - w / 2) ||
+              (Math.abs(point.x - w / 2) === Math.abs(best.x - w / 2) && point.x < best.x)))
+            ? point
+            : best,
+        )
+      : { x: w / 2, y: h - inset };
   const left = points.reduce((a, b) => (b.x < a.x ? b : a));
   const right = points.reduce((a, b) => (b.x > a.x ? b : a));
   return {
+    front: {
+      x: frontPoint.x + frontPoint.y,
+      y: w / 4 - frontPoint.x / 4 + frontPoint.y / 4 + OBJECT_DEPTH / 2,
+    },
     target: { x: left.x, y: left.y + OBJECT_DEPTH / 2 },
     source: { x: right.x, y: right.y + OBJECT_DEPTH / 2 },
     width: w + h,
@@ -244,5 +259,33 @@ export function layerLayout(
     depth,
     height: (surfaceWidth + depth) / 4 + 45,
     positions,
+  };
+}
+
+export type LayerRoutePlane = { origin: number; depth: number };
+export function layerConnectionRoute(
+  source: { x: number; y: number },
+  target: { x: number; y: number },
+  sourcePlane: LayerRoutePlane,
+  targetPlane: LayerRoutePlane,
+  lane: number,
+) {
+  const column = -80 - lane * 24;
+  // Runs on a plane follow its two projection axes; only the outside column is vertical.
+  const front = (point: { x: number; y: number }, plane: LayerRoutePlane, margin: number) => {
+    const intercept = plane.origin + (plane.depth + margin) / 2;
+    const x = 2 * intercept - 2 * point.y + point.x / 2;
+    return { x, y: intercept - x / 4 };
+  };
+  const sourceFront = front(source, sourcePlane, 16 + (lane % 4) * 14);
+  const targetFront = front(target, targetPlane, 30 + (lane % 4) * 14);
+  const sourceColumn = { x: column, y: sourceFront.y + (sourceFront.x - column) / 4 };
+  const targetColumn = { x: column, y: targetFront.y + (targetFront.x - column) / 4 };
+  const points = [source, sourceFront, sourceColumn, targetColumn, targetFront, target];
+  return {
+    points,
+    path: points.map((p, i) => `${i ? 'L' : 'M'} ${p.x} ${p.y}`).join(' '),
+    labelX: column,
+    labelY: (sourceColumn.y + targetColumn.y) / 2,
   };
 }

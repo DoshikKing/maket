@@ -15,12 +15,16 @@ import {
   type Node,
   type NodeProps,
   type Edge,
+  type EdgeProps,
+  BaseEdge,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { ChevronDown, Layers, RefreshCw } from 'lucide-react';
 import { api } from '@/lib/client';
 import {
   layerLayout,
+  layerConnectionRoute,
+  type LayerRoutePlane,
   diagramLayerLayout,
   objectPrism,
   OBJECT_DEPTH,
@@ -72,7 +76,50 @@ type ObjectNode = Node<
   },
   'object'
 >;
-type SceneNode = PlaneNode | CardNode | ObjectNode;
+type BoundsNode = Node<Record<string, never>, 'bounds'>;
+type SceneNode = PlaneNode | CardNode | ObjectNode | BoundsNode;
+type LayerEdge = Edge<
+  {
+    connections: LayerConnection[];
+    route: ReturnType<typeof layerConnectionRoute>;
+  },
+  'layer'
+>;
+function RoutedEdge({ id, data, label, selected, markerEnd, style }: EdgeProps<LayerEdge>) {
+  const [hovered, setHovered] = useState(false);
+  const zoom = useStore((state) => state.transform[2]);
+  if (!data) return null;
+  return (
+    <g onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
+      <BaseEdge
+        id={id}
+        path={data.route.path}
+        markerEnd={markerEnd}
+        style={{
+          ...style,
+          strokeWidth: (Number(style?.strokeWidth) || 2) / zoom,
+          strokeDasharray:
+            typeof style?.strokeDasharray === 'string'
+              ? style.strokeDasharray
+                  .split(/\s+/)
+                  .map((n) => Number(n) / zoom)
+                  .join(' ')
+              : style?.strokeDasharray,
+          strokeLinejoin: 'round',
+          strokeLinecap: 'round',
+        }}
+        interactionWidth={20}
+        label={hovered || selected ? label : undefined}
+        labelX={data.route.labelX}
+        labelY={data.route.labelY}
+        labelStyle={{ fill: 'var(--text)', fontSize: 12 / zoom }}
+        labelBgStyle={{ fill: 'var(--panel)' }}
+        labelBgPadding={[6 / zoom, 4 / zoom]}
+      />
+    </g>
+  );
+}
+const edgeTypes = { layer: RoutedEdge };
 function Plane({ data }: NodeProps<PlaneNode>) {
   const { width: w, height: h, planeWidth: p, depth, surfaceWidth: u } = data;
   return (
@@ -108,16 +155,16 @@ function Plane({ data }: NodeProps<PlaneNode>) {
       <Handle
         type="target"
         position={Position.Left}
-        style={{ left: 0, top: u / 4 + 25 }}
+        style={{ left: u / 2 + depth, top: 25 + u / 8 + depth / 4 }}
         isConnectable={false}
       />
       <Handle
         type="source"
         position={Position.Right}
         style={{
-          left: p,
+          left: u / 2 + depth,
           right: 'auto',
-          top: 25 + depth * 0.25,
+          top: 25 + u / 8 + depth / 4,
           transform: 'translate(-50%, -50%)',
         }}
         isConnectable={false}
@@ -160,7 +207,7 @@ function Card({ data, selected }: NodeProps<CardNode>) {
       <Handle
         type="target"
         position={Position.Left}
-        style={{ top: w / 4 + DIAGRAM_DEPTH / 2 }}
+        style={{ left: w / 2 + d, top: w / 8 + d / 4 + DIAGRAM_DEPTH / 2 }}
         isConnectable={false}
       />
       <svg
@@ -217,7 +264,12 @@ function Card({ data, selected }: NodeProps<CardNode>) {
       <Handle
         type="source"
         position={Position.Right}
-        style={{ top: d / 4 + DIAGRAM_DEPTH / 2 }}
+        style={{
+          left: w / 2 + d,
+          right: 'auto',
+          top: w / 8 + d / 4 + DIAGRAM_DEPTH / 2,
+          transform: 'translate(-50%, -50%)',
+        }}
         isConnectable={false}
       />
     </div>
@@ -244,7 +296,7 @@ function ObjectCard({ data, selected }: NodeProps<ObjectNode>) {
       <Handle
         type="target"
         position={Position.Left}
-        style={{ left: prism.target.x, top: prism.target.y }}
+        style={{ left: prism.front.x, top: prism.front.y }}
         isConnectable={false}
       />
       <svg width={prism.width} height={prism.height} className="viewpoint-object-prism">
@@ -266,9 +318,9 @@ function ObjectCard({ data, selected }: NodeProps<ObjectNode>) {
         type="source"
         position={Position.Right}
         style={{
-          left: prism.source.x,
+          left: prism.front.x,
           right: 'auto',
-          top: prism.source.y,
+          top: prism.front.y,
           transform: 'translate(-50%, -50%)',
         }}
         isConnectable={false}
@@ -276,7 +328,7 @@ function ObjectCard({ data, selected }: NodeProps<ObjectNode>) {
     </div>
   );
 }
-const nodeTypes = { plane: Plane, diagram: Card, object: ObjectCard };
+const nodeTypes = { plane: Plane, diagram: Card, object: ObjectCard, bounds: () => null };
 export function ViewpointLayersPage({ diagramId }: { diagramId?: string }) {
   const [space, setSpace] = useState<LayerStructure | null>(null),
     [error, setError] = useState(''),
@@ -364,6 +416,16 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
     () => new Map(space.representations.map((r) => [r.id, r.entityId])),
     [space],
   );
+  const lanes = useMemo(
+    () =>
+      new Map(
+        graph.connections
+          .map((c) => c.id)
+          .sort()
+          .map((id, i) => [id, i]),
+      ),
+    [graph],
+  );
   const scene = useMemo(() => {
     const nodes: SceneNode[] = [],
       locations = new Map<
@@ -371,6 +433,7 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
         { nodeId: string; layerId: string; objects: Map<string, string[]> }
       >();
     const focusEntity = selection?.kind === 'object' ? selection.entityId : undefined;
+    const planes = new Map<string, LayerRoutePlane>();
     let top = 0;
     for (const group of graph.groups) {
       const closed = collapsed.has(group.id),
@@ -381,6 +444,10 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
         ),
         planeId = `layer:${group.id}`;
       const layerTop = top;
+      planes.set(group.id, {
+        origin: layerTop + layout.surfaceWidth / 4 + 25,
+        depth: layout.depth,
+      });
       top += layout.height + 110;
       if (hidden.has(group.id)) continue;
       const items = group.diagrams.filter((d) =>
@@ -499,8 +566,28 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
           ? node.data.diagram.entityId
           : undefined;
     };
+    const port = (id: string) => {
+      const n = byId.get(id)!;
+      if (n.type === 'object') {
+        const p = objectPrism(n.data.item.appearance, n.data.shapes).front;
+        return { x: n.position.x + p.x, y: n.position.y + p.y };
+      }
+      if (n.type === 'diagram') {
+        const { width, depth } = n.data.layout;
+        return {
+          x: n.position.x + width / 2 + depth,
+          y: n.position.y + width / 8 + depth / 4 + DIAGRAM_DEPTH / 2,
+        };
+      }
+      if (n.type === 'plane')
+        return {
+          x: n.position.x + n.data.surfaceWidth / 2 + n.data.depth,
+          y: n.position.y + 25 + n.data.surfaceWidth / 8 + n.data.depth / 4,
+        };
+      return n.position;
+    };
     const neighborhood = new Set<string>(focusEntity ? [focusEntity] : []);
-    const edges: Edge<{ connections: LayerConnection[] }>[] = [...groups].map(([id, group]) => {
+    const edges: LayerEdge[] = [...groups].map(([id, group]) => {
       const { source, target, connections } = group;
       const c = connections[0],
         color = colors[c.kind];
@@ -519,13 +606,23 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
         id,
         source,
         target,
-        data: { connections },
+        type: 'layer',
+        data: {
+          connections,
+          route: layerConnectionRoute(
+            port(source),
+            port(target),
+            planes.get(locations.get(c.source)!.layerId)!,
+            planes.get(locations.get(c.target)!.layerId)!,
+            Math.min(...connections.map((c) => lanes.get(c.id)!)),
+          ),
+        },
         className: related ? 'is-related' : 'is-dim',
         label:
           connections.length > 1
             ? `${kindNames[c.kind]} ×${connections.length}`
             : kindNames[c.kind],
-        markerEnd: { type: MarkerType.ArrowClosed, color },
+        markerEnd: { type: MarkerType.ArrowClosed, color, width: 12, height: 12 },
         style: {
           stroke: color,
           strokeWidth: focusEntity && related ? 3 : 2,
@@ -538,6 +635,41 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
         selected: selection?.kind === 'connection' && selection.id === id,
       };
     });
+    if (edges.length) {
+      // Reserve the full routing envelope so filtering or selecting an alias never refits the scene.
+      const lastLane = Math.max(0, lanes.size - 1);
+      const diagramLayers = new Map(
+        graph.groups.flatMap((g) => g.diagrams.map((d) => [d.id, g.id] as const)),
+      );
+      const referencedLayers = new Set(
+        graph.connections.flatMap((c) => [
+          diagramLayers.get(c.source)!,
+          diagramLayers.get(c.target)!,
+        ]),
+      );
+      const bottom = Math.max(
+        ...[...referencedLayers].map((id) => {
+          const plane = planes.get(id)!;
+          return plane.origin + plane.depth / 2 + 56 + lastLane * 6;
+        }),
+      );
+      for (const [id, position] of [
+        ['route-min', { x: -200 - lastLane * 24, y: 0 }],
+        ['route-max', { x: 0, y: bottom }],
+      ] as const)
+        nodes.push({
+          id,
+          type: 'bounds',
+          position,
+          data: {},
+          width: 1,
+          height: 1,
+          draggable: false,
+          selectable: false,
+          zIndex: -1,
+          style: { width: 1, height: 1, pointerEvents: 'none' },
+        });
+    }
     if (focusEntity)
       for (const document of Object.values(space.previews)) {
         const objects = new Map(document.nodes.map((n) => [n.id, n.objectId]));
@@ -571,6 +703,7 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
     };
   }, [
     graph,
+    lanes,
     space,
     layouts,
     entities,
@@ -697,6 +830,7 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
             nodes={scene.nodes}
             edges={scene.edges}
             nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes}
             nodesDraggable={false}
             elevateNodesOnSelect={false}
             nodesConnectable={false}
@@ -706,7 +840,6 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
             maxZoom={4}
             fitView
             fitViewOptions={{ padding: 0.15 }}
-            onlyRenderVisibleElements
             onNodeClick={(_, n) => {
               if (n.type === 'diagram') setSelection({ kind: 'diagram', id: n.data.diagram.id });
               if (n.type === 'object')
@@ -729,7 +862,13 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
             <MiniMap
               pannable
               zoomable
-              nodeColor={(n) => (n.type === 'plane' ? 'var(--accent-soft)' : 'var(--accent)')}
+              nodeColor={(n) =>
+                n.type === 'bounds'
+                  ? 'transparent'
+                  : n.type === 'plane'
+                    ? 'var(--accent-soft)'
+                    : 'var(--accent)'
+              }
             />
           </ReactFlow>
           {!scene.nodes.length && (
