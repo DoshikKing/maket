@@ -1,6 +1,14 @@
 import { expect, it } from 'vitest';
-import { layerLayout, viewpointLayers, UNASSIGNED_LAYER } from '../src/lib/viewpoint-layers';
+import {
+  layerLayout,
+  viewpointLayers,
+  UNASSIGNED_LAYER,
+  diagramLayerLayout,
+  objectPrism,
+  OBJECT_DEPTH,
+} from '../src/lib/viewpoint-layers';
 import type { Structure } from '../src/lib/structure';
+import { builtinNotation } from '../src/lib/notation';
 const entity = (id: string) => ({
   id,
   parentId: null,
@@ -115,4 +123,46 @@ it('lays out every diagram within finite planes and collapses large groups witho
   }
   const { positions: _, ...expanded } = layerLayout(1000, false);
   expect(layerLayout(1000, true)).toEqual({ ...expanded, positions: [] });
+});
+
+it('expands diagram and layer bounds instead of shrinking distant or large objects', () => {
+  const document = {
+    schemaVersion: 1 as const,
+    notation: builtinNotation,
+    edges: [],
+    nodes: [
+      { id: 'small', typeId: 'process', position: { x: -1000, y: -200 }, properties: {} },
+      {
+        id: 'large',
+        typeId: 'process',
+        position: { x: 5000, y: 3000 },
+        properties: {},
+        size: { width: 1200, height: 800 },
+      },
+    ],
+  };
+  const tile = diagramLayerLayout(document);
+  expect(tile.nodes[1].appearance).toMatchObject({ width: 1200, height: 800 });
+  expect(tile.width).toBeGreaterThan(7200);
+  expect(tile.depth).toBeGreaterThan(4000);
+  const expanded = layerLayout(1, false, [tile]),
+    closed = layerLayout(1, true, [tile]);
+  expect(expanded.positions[0].x + tile.width + tile.depth).toBeLessThan(expanded.planeWidth);
+  expect(expanded.positions[0].y + tile.height).toBeLessThan(expanded.height);
+  expect(closed.planeWidth).toBe(expanded.planeWidth);
+  expect(closed.height).toBe(expanded.height);
+});
+it('extrudes visible walls for notation shapes with a fixed depth independent of object dimensions', () => {
+  for (const shape of ['rectangle', 'rounded', 'ellipse', 'diamond'] as const) {
+    const prism = objectPrism({
+      shape,
+      width: 180,
+      height: 80,
+      fill: '#ffffff',
+      stroke: '#000000',
+    });
+    expect(prism.walls.length).toBeGreaterThan(0);
+    expect(prism.height).toBe(65 + OBJECT_DEPTH);
+    for (const wall of prism.walls) expect(wall).not.toMatch(/NaN|Infinity/);
+  }
 });

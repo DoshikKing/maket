@@ -4234,6 +4234,8 @@ test('browser: 2.5D viewpoint layers show previews, actual transitions, collapse
   let source = await view('Бизнес-модель', business.id);
   source = await place(request, source, owner.id);
   source = await place(request, source, owner.id);
+  const unrelated = await object(request, 'Независимый объект');
+  source = await place(request, source, unrelated.id);
   const target = await place(request, await view('Код процесса', code.id), owner.id);
   const unassigned = await view('Не назначен ракурс', null);
   const transition = await request.post('/api/context-links', {
@@ -4276,7 +4278,7 @@ test('browser: 2.5D viewpoint layers show previews, actual transitions, collapse
   ).toBe(201);
   const before = await (await request.get('/api/model')).json();
   const snapshot = await (await request.get('/api/model/layers')).json();
-  expect(snapshot.previews[source.id].nodes).toHaveLength(2);
+  expect(snapshot.previews[source.id].nodes).toHaveLength(3);
   const emptyArea = await (
     await request.post('/api/workspaces', { data: { name: 'Пустые слои другой области' } })
   ).json();
@@ -4340,19 +4342,75 @@ test('browser: 2.5D viewpoint layers show previews, actual transitions, collapse
   await page.getByRole('heading', { name: 'Слои ракурсов', exact: true }).click();
   await expect(emptyCard.getByRole('tooltip')).toHaveCount(0);
   const card = page.locator(`[data-layer-diagram="${source.id}"]`);
-  await expect(card.locator('[data-layer-object]')).toHaveCount(2);
+  const sourceObjects = page.locator(
+    `[data-layer-diagram-ref="${source.id}"][data-layer-entity="${owner.id}"]`,
+  );
+  const targetObject = page.locator(`[data-layer-diagram-ref="${target.id}"]`);
+  await expect(sourceObjects).toHaveCount(2);
   await expect(card.locator('.viewpoint-hover-label')).toHaveCount(0);
   const contour = card.locator('.viewpoint-diagram-outline');
   await contour.focus();
   await expect(card.getByRole('tooltip')).toHaveText(source.name);
-  await card.locator('[data-layer-object]').first().focus();
-  await expect(card.getByRole('tooltip')).toHaveText(owner.name);
-  await card.locator('[data-layer-object]').first().hover();
-  await expect(card.getByRole('tooltip')).toHaveText(owner.name);
-  const tooltipBounds = await card.getByRole('tooltip').boundingBox();
+  await sourceObjects.first().focus();
+  await expect(sourceObjects.first().getByRole('tooltip')).toHaveText(owner.name);
+  await sourceObjects.first().hover();
+  await expect(sourceObjects.first().getByRole('tooltip')).toHaveText(owner.name);
+  const tooltipBounds = await sourceObjects.first().getByRole('tooltip').boundingBox();
   expect(tooltipBounds!.height).toBeGreaterThan(30);
   await page.getByRole('heading', { name: 'Слои ракурсов', exact: true }).click();
   await expect(card.locator('.viewpoint-hover-label')).toHaveCount(0);
+  // Existing aliases are connection endpoints; selection follows the chosen alias.
+  await page.getByLabel('Тип связей слоёв').selectOption('all');
+  await page.getByLabel('Только межслойные', { exact: true }).uncheck();
+  await sourceObjects.nth(1).click();
+  await expect(page.getByRole('region', { name: 'Выбранный объект слоя' })).toContainText(
+    owner.name,
+  );
+  await expect(page.locator('.react-flow__edge.is-dim')).toHaveCount(1);
+  await expect(page.locator('.react-flow__edge.is-related')).toHaveCount(2);
+  await expect(page.locator('.viewpoint-object-card.is-selected')).toHaveCount(3);
+  await expect(page.locator(`[data-layer-entity="${unrelated.id}"]`)).toHaveClass(/is-dim/);
+  await expect(
+    sourceObjects.first().locator('.viewpoint-object-walls polygon').first(),
+  ).toBeVisible();
+  await page.getByLabel('Тип связей слоёв').selectOption('decomposition');
+  const decomposedSource = await page.locator('.react-flow__edge-path').evaluate((element) => {
+    const path = element as SVGPathElement;
+    const p = path.getPointAtLength(0).matrixTransform(path.getScreenCTM()!);
+    return { x: p.x, y: p.y };
+  });
+  const decompositionPort = await sourceObjects
+    .nth(1)
+    .locator('.react-flow__handle.source')
+    .boundingBox();
+  expect(
+    Math.abs(decomposedSource.x - (decompositionPort!.x + decompositionPort!.width / 2)),
+  ).toBeLessThan(3);
+  expect(
+    Math.abs(decomposedSource.y - (decompositionPort!.y + decompositionPort!.height / 2)),
+  ).toBeLessThan(3);
+  await page.getByLabel('Тип связей слоёв').selectOption('viewpoint');
+  const targetPort = await targetObject.locator('.react-flow__handle.target').boundingBox();
+  const sourcePort = await sourceObjects.nth(1).locator('.react-flow__handle.source').boundingBox();
+  const endpoints = await page.locator('.react-flow__edge-path').evaluate((element) => {
+    const path = element as SVGPathElement,
+      matrix = path.getScreenCTM()!;
+    const start = path.getPointAtLength(0).matrixTransform(matrix);
+    const end = path.getPointAtLength(path.getTotalLength()).matrixTransform(matrix);
+    return { start: { x: start.x, y: start.y }, end: { x: end.x, y: end.y } };
+  });
+  expect(Math.abs(endpoints.start.x - (sourcePort!.x + sourcePort!.width / 2))).toBeLessThan(3);
+  expect(Math.abs(endpoints.start.y - (sourcePort!.y + sourcePort!.height / 2))).toBeLessThan(3);
+  expect(Math.abs(endpoints.end.x - (targetPort!.x + targetPort!.width / 2))).toBeLessThan(3);
+  expect(Math.abs(endpoints.end.y - (targetPort!.y + targetPort!.height / 2))).toBeLessThan(3);
+  await page.getByRole('button', { name: 'Фокусировать объект', exact: true }).click();
+  await expect
+    .poll(async () => (await sourceObjects.nth(1).boundingBox())!.width)
+    .toBeGreaterThan(150);
+  await page.getByRole('button', { name: 'Сбросить фокус', exact: true }).click();
+  await expect(page.locator('.react-flow__edge.is-dim')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Вписать слои', exact: true }).click();
+  await expect.poll(() => viewport.getAttribute('style')).toBe(originalCamera);
   await page.getByRole('button', { name: 'Свернуть все слои', exact: true }).click();
   await expect(page.locator('[data-layer-diagram]')).toHaveCount(0);
   await expect(page.locator('.viewpoint-layers-counts')).toContainText('Диаграммы: 5 из 5');

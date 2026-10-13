@@ -3987,18 +3987,33 @@ body {
 .viewpoint-diagram-card.is-selected .viewpoint-diagram-outline {
   stroke-width: 3;
 }
-.viewpoint-object-shadow {
-  opacity: 0.3;
+.viewpoint-object-card {
+  color: var(--text);
+  cursor: pointer;
 }
-.viewpoint-object-top {
-  filter: drop-shadow(0 3px 2px #00000020);
+.viewpoint-object-card.is-dim {
+  opacity: 0.2;
+}
+.viewpoint-object-card .react-flow__handle {
+  opacity: 0;
+  pointer-events: none;
+}
+.viewpoint-object-prism {
+  overflow: visible;
+  filter: drop-shadow(0 5px 4px #00000020);
+}
+.viewpoint-object-walls {
+  stroke-linejoin: round;
 }
 .viewpoint-object-top .viewpoint-object-shape {
   pointer-events: all;
 }
-.viewpoint-diagram-card [data-layer-object]:hover .viewpoint-object-top,
-.viewpoint-diagram-card [data-layer-object]:focus .viewpoint-object-top {
+.viewpoint-object-card.is-selected .viewpoint-object-top,
+.viewpoint-object-card:hover .viewpoint-object-top {
   filter: drop-shadow(0 0 3px var(--accent));
+}
+.viewpoint-layers-canvas .react-flow__edge.is-dim {
+  opacity: 0.12;
 }
 .viewpoint-hover-label {
   position: absolute;
