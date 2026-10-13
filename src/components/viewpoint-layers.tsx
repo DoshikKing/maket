@@ -38,6 +38,8 @@ type PlaneNode = Node<
     collapsed: boolean;
     width: number;
     height: number;
+    planeWidth: number;
+    depth: number;
     toggle: () => void;
   },
   'plane'
@@ -46,9 +48,10 @@ type CardNode = Node<
   { diagram: LayerStructure['diagrams'][number]; preview: LayerStructure['previews'][string] },
   'diagram'
 >;
-type SceneNode = PlaneNode | CardNode;
+type OrderNode = Node<{ distance: number }, 'order'>;
+type SceneNode = PlaneNode | CardNode | OrderNode;
 function Plane({ data }: NodeProps<PlaneNode>) {
-  const { width: w, height: h } = data;
+  const { width: w, height: h, planeWidth: p, depth } = data;
   return (
     <div
       className={`viewpoint-plane ${data.collapsed ? 'is-collapsed' : ''}`}
@@ -58,16 +61,19 @@ function Plane({ data }: NodeProps<PlaneNode>) {
         <polygon
           points={
             data.collapsed
-              ? `0,25 ${w - 80},0 ${w},40 80,65`
-              : `0,95 ${w - 150},10 ${w},${h - 90} 150,${h - 5}`
+              ? `0,30 740,0 900,40 160,70`
+              : `0,210 740,25 ${p},${25 + depth * 0.25} ${depth},${210 + depth * 0.25}`
           }
         />
-        <polyline
-          points={data.collapsed ? `0,25 80,65 ${w},40` : `0,95 150,${h - 5} ${w},${h - 90}`}
+        <path
+          className="viewpoint-layer-callout"
+          d={`M ${p} ${data.collapsed ? 40 : 25 + depth * 0.25} L ${p + 85} 40`}
         />
       </svg>
       <button
         className="nodrag nopan viewpoint-plane-heading"
+        style={{ left: p + 85, top: 0, width: 300, height: 80 }}
+        title={data.name}
         onClick={data.toggle}
         aria-expanded={!data.collapsed}
         aria-label={`${data.collapsed ? 'Раскрыть' : 'Свернуть'} слой ${data.name}`}
@@ -90,22 +96,40 @@ function Card({ data, selected }: NodeProps<CardNode>) {
     <div
       className={`viewpoint-diagram-card ${selected ? 'is-selected' : ''}`}
       data-layer-diagram={data.diagram.id}
+      title={data.diagram.name}
     >
-      <Handle type="target" position={Position.Left} isConnectable={false} />
-      <div className="viewpoint-diagram-surface">
-        <div className="viewpoint-diagram-miniature">
-          {data.preview && <DiagramPreview document={data.preview} />}
-        </div>
-        <div className="viewpoint-diagram-caption">
-          <FileText size={13} />
-          <strong>{data.diagram.name}</strong>
-        </div>
-      </div>
-      <Handle type="source" position={Position.Right} isConnectable={false} />
+      <Handle type="target" position={Position.Left} style={{ top: 65 }} isConnectable={false} />
+      <svg width="320" height="115" className="viewpoint-diagram-prism">
+        <polygon className="prism-front" points="0,50 120,80 320,30 320,60 120,110 0,80" />
+        <polygon className="prism-side" points="0,50 120,80 120,110 0,80" />
+        <polygon className="prism-top" points="0,50 200,0 320,30 120,80" />
+        <foreignObject width="240" height="120" transform="matrix(0.833333 -0.208333 1 0.25 0 50)">
+          <div className="viewpoint-diagram-surface">
+            <div className="viewpoint-diagram-miniature">
+              {data.preview && <DiagramPreview document={data.preview} />}
+            </div>
+            <div className="viewpoint-diagram-caption">
+              <FileText size={14} />
+              <strong>{data.diagram.name}</strong>
+            </div>
+          </div>
+        </foreignObject>
+      </svg>
+      <Handle type="source" position={Position.Right} style={{ top: 45 }} isConnectable={false} />
     </div>
   );
 }
-const nodeTypes = { plane: Plane, diagram: Card };
+function Order({ data }: NodeProps<OrderNode>) {
+  const d = data.distance;
+  return (
+    <svg className="viewpoint-layer-order" width="180" height={d + 30} aria-hidden="true">
+      <path
+        d={`M 165 15 C 10 15 10 ${d - 15} 165 ${d - 15} M 147 ${d - 33} L 165 ${d - 15} L 147 ${d + 3}`}
+      />
+    </svg>
+  );
+}
+const nodeTypes = { plane: Plane, diagram: Card, order: Order };
 export function ViewpointLayersPage({ diagramId }: { diagramId?: string }) {
   const [space, setSpace] = useState<LayerStructure | null>(null),
     [error, setError] = useState(''),
@@ -188,12 +212,16 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
     const nodes: SceneNode[] = [],
       locations = new Map<string, { nodeId: string; layerId: string }>();
     let top = 0;
-    for (const group of graph.groups) {
-      if (hidden.has(group.id)) continue;
-      const items = group.diagrams.filter((d) =>
-        d.name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()),
-      );
-      if (!items.length && !empty) continue;
+    const visibleGroups = graph.groups
+      .map((group) => ({
+        ...group,
+        diagrams: group.diagrams.filter((d) =>
+          d.name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()),
+        ),
+      }))
+      .filter((g) => !hidden.has(g.id) && (g.diagrams.length || empty));
+    for (const [index, group] of visibleGroups.entries()) {
+      const items = group.diagrams;
       const closed = collapsed.has(group.id),
         layout = layerLayout(items.length, closed),
         planeId = `layer:${group.id}`;
@@ -211,6 +239,8 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
           collapsed: closed,
           width: layout.width,
           height: layout.height,
+          planeWidth: layout.planeWidth,
+          depth: layout.depth,
           toggle: () => toggle(group.id),
         },
         style: { width: layout.width, height: layout.height },
@@ -228,7 +258,24 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
             data: { diagram, preview: space.previews[diagram.id] },
           });
       });
-      top += layout.height + 85;
+      const next = visibleGroups[index + 1];
+      if (next) {
+        const anchor = closed ? 30 : 210,
+          nextAnchor = collapsed.has(next.id) ? 30 : 210;
+        const distance = layout.height + 110 + nextAnchor - anchor;
+        nodes.push({
+          id: `order:${group.id}`,
+          type: 'order',
+          className: 'viewpoint-order-node',
+          position: { x: -190, y: top + anchor - 15 },
+          draggable: false,
+          selectable: false,
+          zIndex: 1,
+          style: { width: 180, height: distance + 30 },
+          data: { distance },
+        });
+      }
+      top += layout.height + 110;
     }
     const groups = new Map<string, LayerConnection[]>();
     for (const connection of graph.connections) {
@@ -412,7 +459,13 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
             <MiniMap
               pannable
               zoomable
-              nodeColor={(n) => (n.type === 'plane' ? 'var(--accent-soft)' : 'var(--accent)')}
+              nodeColor={(n) =>
+                n.type === 'order'
+                  ? 'transparent'
+                  : n.type === 'plane'
+                    ? 'var(--accent-soft)'
+                    : 'var(--accent)'
+              }
             />
           </ReactFlow>
           {!scene.nodes.length && (

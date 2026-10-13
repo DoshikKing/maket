@@ -108,10 +108,10 @@ it('lays out every diagram within finite planes and collapses large groups witho
     expect(layout.positions).toHaveLength(count);
     for (const p of layout.positions) {
       expect(p.x).toBeGreaterThanOrEqual(0);
-      expect(p.x + 220).toBeLessThanOrEqual(layout.width);
-      expect(p.y + 130).toBeLessThanOrEqual(layout.height);
+      expect(p.x + 320).toBeLessThanOrEqual(layout.planeWidth);
+      expect(p.y + 115).toBeLessThanOrEqual(layout.height);
     }
     expect(new Set(layout.positions.map((p) => `${p.x}:${p.y}`)).size).toBe(count);
   }
-  expect(layerLayout(1000, true)).toMatchObject({ height: 70, positions: [] });
+  expect(layerLayout(1000, true)).toMatchObject({ height: 80, positions: [] });
 });

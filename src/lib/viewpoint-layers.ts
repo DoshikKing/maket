@@ -88,11 +88,19 @@ export function viewpointLayers(space: Structure) {
 }
 // Fixed isometric projection; positions change only when groups, filters or collapse state change.
 export function layerLayout(count: number, collapsed: boolean) {
-  if (collapsed) return { width: 960, height: 70, positions: [] };
-  const rows = Math.max(1, Math.ceil(count / 3));
-  const positions = Array.from({ length: count }, (_, i) => ({
-    x: 170 + (i % 3) * 260 + Math.floor(i / 3) * 65,
-    y: 135 + Math.floor(i / 3) * 150 - (i % 3) * 30,
-  }));
-  return { width: 1010 + (rows - 1) * 65, height: 310 + (rows - 1) * 150, positions };
+  if (collapsed) return { width: 1300, planeWidth: 900, depth: 0, height: 80, positions: [] };
+  const rows = Math.max(1, Math.ceil(count / 2)),
+    depth = 240 + (rows - 1) * 190;
+  const positions = Array.from({ length: count }, (_, i) => {
+    const u = 150 + (i % 2) * 340,
+      v = 80 + Math.floor(i / 2) * 190;
+    return { x: u + v, y: 130 - u * 0.25 + v * 0.25 };
+  });
+  return {
+    width: 1140 + depth,
+    planeWidth: 740 + depth,
+    depth,
+    height: 242 + depth * 0.25,
+    positions,
+  };
 }
