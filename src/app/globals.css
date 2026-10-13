@@ -3976,12 +3976,17 @@ body {
 .viewpoint-diagram-plane {
   overflow: visible;
 }
+.viewpoint-diagram-walls polygon {
+  fill: var(--accent-soft);
+  stroke: var(--accent);
+  stroke-width: 1;
+  stroke-linejoin: round;
+}
 .viewpoint-diagram-outline {
   fill: var(--panel);
-  fill-opacity: 0.25;
+  fill-opacity: 1;
   stroke: var(--accent);
   stroke-width: 1.5;
-  stroke-dasharray: 5 3;
   stroke-linejoin: round;
 }
 .viewpoint-diagram-card.is-selected .viewpoint-diagram-outline {

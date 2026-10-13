@@ -24,6 +24,7 @@ import {
   diagramLayerLayout,
   objectPrism,
   OBJECT_DEPTH,
+  DIAGRAM_DEPTH,
   type DiagramLayerLayout,
   viewpointLayers,
   type LayerStructure,
@@ -113,7 +114,12 @@ function Plane({ data }: NodeProps<PlaneNode>) {
       <Handle
         type="source"
         position={Position.Right}
-        style={{ left: p, right: 'auto', top: 25 + depth * 0.25 }}
+        style={{
+          left: p,
+          right: 'auto',
+          top: 25 + depth * 0.25,
+          transform: 'translate(-50%, -50%)',
+        }}
         isConnectable={false}
       />
     </div>
@@ -147,12 +153,30 @@ function Card({ data, selected }: NodeProps<CardNode>) {
   return (
     <div
       className={`viewpoint-diagram-card ${selected ? 'is-selected' : ''}`}
-      style={{ width: w + d, height: h }}
+      style={{ width: w + d, height: h + DIAGRAM_DEPTH }}
       data-layer-diagram={data.diagram.id}
       onMouseLeave={() => setHovered(false)}
     >
-      <Handle type="target" position={Position.Left} style={{ top: w / 4 }} isConnectable={false} />
-      <svg width={w + d} height={h} className="viewpoint-diagram-plane">
+      <Handle
+        type="target"
+        position={Position.Left}
+        style={{ top: w / 4 + DIAGRAM_DEPTH / 2 }}
+        isConnectable={false}
+      />
+      <svg
+        width={w + d}
+        height={h + DIAGRAM_DEPTH}
+        className="viewpoint-diagram-plane"
+        onMouseEnter={() => setHovered(true)}
+      >
+        <g className="viewpoint-diagram-walls" aria-hidden="true">
+          <polygon
+            points={`0,${w / 4} ${d},${h} ${d},${h + DIAGRAM_DEPTH} 0,${w / 4 + DIAGRAM_DEPTH}`}
+          />
+          <polygon
+            points={`${d},${h} ${w + d},${d / 4} ${w + d},${d / 4 + DIAGRAM_DEPTH} ${d},${h + DIAGRAM_DEPTH}`}
+          />
+        </g>
         <polygon
           className="viewpoint-diagram-outline"
           points={`0,${w / 4} ${w},0 ${w + d},${d / 4} ${d},${h}`}
@@ -193,7 +217,7 @@ function Card({ data, selected }: NodeProps<CardNode>) {
       <Handle
         type="source"
         position={Position.Right}
-        style={{ top: d / 4 }}
+        style={{ top: d / 4 + DIAGRAM_DEPTH / 2 }}
         isConnectable={false}
       />
     </div>
@@ -220,7 +244,7 @@ function ObjectCard({ data, selected }: NodeProps<ObjectNode>) {
       <Handle
         type="target"
         position={Position.Left}
-        style={{ top: a.width / 4 + OBJECT_DEPTH / 2 }}
+        style={{ left: prism.target.x, top: prism.target.y }}
         isConnectable={false}
       />
       <svg width={prism.width} height={prism.height} className="viewpoint-object-prism">
@@ -241,7 +265,12 @@ function ObjectCard({ data, selected }: NodeProps<ObjectNode>) {
       <Handle
         type="source"
         position={Position.Right}
-        style={{ top: a.height / 4 + OBJECT_DEPTH / 2 }}
+        style={{
+          left: prism.source.x,
+          right: 'auto',
+          top: prism.source.y,
+          transform: 'translate(-50%, -50%)',
+        }}
         isConnectable={false}
       />
     </div>

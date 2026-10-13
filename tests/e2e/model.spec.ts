@@ -4348,6 +4348,7 @@ test('browser: 2.5D viewpoint layers show previews, actual transitions, collapse
   const targetObject = page.locator(`[data-layer-diagram-ref="${target.id}"]`);
   await expect(sourceObjects).toHaveCount(2);
   await expect(card.locator('.viewpoint-hover-label')).toHaveCount(0);
+  await expect(card.locator('.viewpoint-diagram-walls polygon')).toHaveCount(2);
   const contour = card.locator('.viewpoint-diagram-outline');
   await contour.focus();
   await expect(card.getByRole('tooltip')).toHaveText(source.name);

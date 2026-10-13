@@ -166,3 +166,62 @@ it('extrudes visible walls for notation shapes with a fixed depth independent of
     for (const wall of prism.walls) expect(wall).not.toMatch(/NaN|Infinity/);
   }
 });
+
+it('joins extrusion walls to the inset rounded and elliptical top faces without protruding corners', () => {
+  const appearance = { width: 180, height: 80, fill: '#ffffff', stroke: '#000000', strokeWidth: 8 };
+  const inset = 5;
+  for (const shape of ['rounded', 'ellipse'] as const) {
+    const prism = objectPrism({ ...appearance, shape });
+    for (const wall of prism.walls) {
+      for (const vertex of wall.split(' ').slice(0, 2)) {
+        const [x, y] = vertex.split(',').map(Number);
+        const u = x / 2 - 2 * (y - appearance.width / 4);
+        const v = x / 2 + 2 * (y - appearance.width / 4);
+        expect(u).toBeGreaterThanOrEqual(inset - 1e-8);
+        expect(u).toBeLessThanOrEqual(appearance.width - inset + 1e-8);
+        expect(v).toBeGreaterThanOrEqual(inset - 1e-8);
+        expect(v).toBeLessThanOrEqual(appearance.height - inset + 1e-8);
+        if (shape === 'ellipse') {
+          expect(((u - 90) / 85) ** 2 + ((v - 40) / 35) ** 2).toBeCloseTo(1, 8);
+        } else {
+          const dx = Math.max(inset + 12 - u, 0, u - (180 - inset - 12));
+          const dy = Math.max(inset + 12 - v, 0, v - (80 - inset - 12));
+          expect(dx * dx + dy * dy).toBeLessThanOrEqual(12 * 12 + 1e-8);
+        }
+      }
+    }
+  }
+});
+
+it('anchors connectors to actual extrusion walls and preserves custom corner rounding', () => {
+  const a = {
+    shape: 'rectangle' as const,
+    width: 180,
+    height: 80,
+    strokeWidth: 8,
+    fill: '#ffffff',
+    stroke: '#000000',
+  };
+  expect(objectPrism(a)).toMatchObject({ target: { x: 10, y: 59 }, source: { x: 250, y: 34 } });
+  const shape = {
+    id: 'custom',
+    name: 'Custom',
+    baseShape: 'rectangle' as const,
+    rounding: 25,
+    points: [
+      { x: 0, y: 0 },
+      { x: 100, y: 0 },
+      { x: 100, y: 100 },
+      { x: 0, y: 100 },
+    ],
+  };
+  const prism = objectPrism({ ...a, shape: 'custom', shapeId: shape.id }, [shape]);
+  expect(prism.target.x).toBeGreaterThan(10);
+  expect(prism.source.x).toBeLessThan(250);
+  expect(prism.walls.length).toBeGreaterThan(2);
+  const reversed = objectPrism({ ...a, shape: 'custom', shapeId: shape.id }, [
+    { ...shape, points: [...shape.points].reverse() },
+  ]);
+  expect(reversed.target.x).toBeCloseTo(prism.target.x, 8);
+  expect(reversed.source.x).toBeCloseTo(prism.source.x, 8);
+});
