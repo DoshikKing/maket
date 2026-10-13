@@ -86,14 +86,13 @@ export function viewpointLayers(space: Structure) {
   });
   return { groups, connections, unresolved };
 }
-// Fixed isometric projection; positions change only when groups, filters or collapse state change.
+// Visibility never changes plane geometry or the slots reserved for diagrams.
 export function layerLayout(count: number, collapsed: boolean) {
-  if (collapsed) return { width: 1300, planeWidth: 900, depth: 0, height: 80, positions: [] };
   const rows = Math.max(1, Math.ceil(count / 2)),
-    depth = 240 + (rows - 1) * 190;
-  const positions = Array.from({ length: count }, (_, i) => {
+    depth = 340 + (rows - 1) * 420;
+  const positions = Array.from({ length: collapsed ? 0 : count }, (_, i) => {
     const u = 150 + (i % 2) * 340,
-      v = 80 + Math.floor(i / 2) * 190;
+      v = 80 + Math.floor(i / 2) * 420;
     return { x: u + v, y: 130 - u * 0.25 + v * 0.25 };
   });
   return {

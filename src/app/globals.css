@@ -3971,7 +3971,7 @@ body {
 }
 .viewpoint-diagram-card {
   width: 320px;
-  height: 115px;
+  height: 180px;
 }
 .viewpoint-diagram-prism {
   overflow: visible;
@@ -4011,20 +4011,30 @@ body {
   background: transparent;
 }
 .viewpoint-diagram-caption {
-  font-size: 16px;
+  position: absolute;
+  top: 135px;
+  left: 0;
+  width: 270px;
+  height: 45px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 18px;
   padding: 8px 10px;
+  box-shadow: 0 3px 8px #0000000a;
 }
-.viewpoint-layer-order {
-  overflow: visible;
+.viewpoint-diagram-card.is-selected .viewpoint-diagram-caption {
+  border-color: var(--accent);
+}
+.viewpoint-diagram-callout {
+  position: absolute;
+  top: 0;
+  left: 0;
   pointer-events: none;
 }
-.viewpoint-layer-order path {
+.viewpoint-diagram-callout path {
   fill: none;
   stroke: var(--muted);
-  stroke-width: 3;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-.viewpoint-order-node {
-  pointer-events: none !important;
+  stroke-width: 1.5;
+  stroke-dasharray: 5 4;
 }

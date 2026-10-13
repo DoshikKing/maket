@@ -4321,15 +4321,53 @@ test('browser: 2.5D viewpoint layers show previews, actual transitions, collapse
   await expect(page.getByRole('region', { name: 'Выбранные связи слоёв' })).toContainText(
     'Реализация в коде',
   );
+  const viewport = page.locator('.viewpoint-layers-canvas .react-flow__viewport');
+  const planes = page.locator('.viewpoint-plane-node');
+  const geometry = () =>
+    planes.evaluateAll((nodes) =>
+      nodes.map((node) => ({
+        id: node.getAttribute('data-id'),
+        position: (node as HTMLElement).style.transform,
+        points: node.querySelector('polygon')?.getAttribute('points'),
+      })),
+    );
+  const originalGeometry = await geometry();
+  const originalCamera = await viewport.getAttribute('style');
+  await expect(page.locator('.viewpoint-layer-order')).toHaveCount(0);
+  await expect(
+    page.locator(`[data-layer-diagram="${source.id}"] .viewpoint-diagram-caption`),
+  ).toHaveText(source.name);
   await page.getByRole('button', { name: 'Свернуть все слои', exact: true }).click();
   await expect(page.locator('[data-layer-diagram]')).toHaveCount(0);
   await expect(page.locator('.viewpoint-layers-counts')).toContainText('Диаграммы: 5 из 5');
   await expect(page.locator('.react-flow__edge')).toHaveCount(1);
+  expect(await geometry()).toEqual(originalGeometry);
+  await expect(viewport).toHaveAttribute('style', originalCamera!);
+  // A collapsed connection ends on the plane, before its name callout.
+  for (const plane of await planes.all()) {
+    const anchor = await plane.locator('.react-flow__handle.source').boundingBox();
+    const caption = await plane.locator('.viewpoint-plane-heading').boundingBox();
+    expect(anchor!.x).toBeLessThan(caption!.x);
+  }
+  const targetAnchor = await page
+    .locator(`[data-id="layer:${code.id}"] .react-flow__handle.target`)
+    .boundingBox();
+  const endpoint = await page.locator('.react-flow__edge-path').evaluate((element) => {
+    const path = element as SVGPathElement;
+    const point = path
+      .getPointAtLength(path.getTotalLength())
+      .matrixTransform(path.getScreenCTM()!);
+    return { x: point.x, y: point.y };
+  });
+  expect(Math.abs(endpoint.x - (targetAnchor!.x + targetAnchor!.width / 2))).toBeLessThan(3);
+  expect(Math.abs(endpoint.y - (targetAnchor!.y + targetAnchor!.height / 2))).toBeLessThan(3);
   await page.getByRole('button', { name: 'Раскрыть все слои', exact: true }).click();
   await expect(page.locator('[data-layer-diagram]')).toHaveCount(5);
   await page.getByLabel('Показать слой Код', { exact: true }).uncheck();
   await expect(page.locator(`[data-layer-diagram="${target.id}"]`)).toHaveCount(0);
   await expect(page.locator('.viewpoint-layers-counts')).toContainText('Связи: 0');
+  await expect(viewport).toHaveAttribute('style', originalCamera!);
+  expect(await geometry()).toEqual(originalGeometry.filter((g) => g.id !== `layer:${code.id}`));
   await page.getByLabel('Показать слой Код', { exact: true }).check();
   await page.getByLabel('Поиск диаграмм в слоях').fill(target.name);
   await expect(page.locator('.viewpoint-layers-counts')).toContainText('Диаграммы: 1 из 5');

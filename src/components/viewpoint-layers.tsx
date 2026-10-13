@@ -48,8 +48,7 @@ type CardNode = Node<
   { diagram: LayerStructure['diagrams'][number]; preview: LayerStructure['previews'][string] },
   'diagram'
 >;
-type OrderNode = Node<{ distance: number }, 'order'>;
-type SceneNode = PlaneNode | CardNode | OrderNode;
+type SceneNode = PlaneNode | CardNode;
 function Plane({ data }: NodeProps<PlaneNode>) {
   const { width: w, height: h, planeWidth: p, depth } = data;
   return (
@@ -58,16 +57,10 @@ function Plane({ data }: NodeProps<PlaneNode>) {
       style={{ width: w, height: h }}
     >
       <svg width={w} height={h} aria-hidden="true">
-        <polygon
-          points={
-            data.collapsed
-              ? `0,30 740,0 900,40 160,70`
-              : `0,210 740,25 ${p},${25 + depth * 0.25} ${depth},${210 + depth * 0.25}`
-          }
-        />
+        <polygon points={`0,210 740,25 ${p},${25 + depth * 0.25} ${depth},${210 + depth * 0.25}`} />
         <path
           className="viewpoint-layer-callout"
-          d={`M ${p} ${data.collapsed ? 40 : 25 + depth * 0.25} L ${p + 85} 40`}
+          d={`M ${p} ${25 + depth * 0.25} L ${p + 85} 40`}
         />
       </svg>
       <button
@@ -86,8 +79,18 @@ function Plane({ data }: NodeProps<PlaneNode>) {
         <strong>{data.name}</strong>
         <span>{data.count} диаграмм</span>
       </button>
-      <Handle type="target" position={Position.Left} isConnectable={false} />
-      <Handle type="source" position={Position.Right} isConnectable={false} />
+      <Handle
+        type="target"
+        position={Position.Left}
+        style={{ left: 0, top: 210 }}
+        isConnectable={false}
+      />
+      <Handle
+        type="source"
+        position={Position.Right}
+        style={{ left: p, right: 'auto', top: 25 + depth * 0.25 }}
+        isConnectable={false}
+      />
     </div>
   );
 }
@@ -108,28 +111,21 @@ function Card({ data, selected }: NodeProps<CardNode>) {
             <div className="viewpoint-diagram-miniature">
               {data.preview && <DiagramPreview document={data.preview} />}
             </div>
-            <div className="viewpoint-diagram-caption">
-              <FileText size={14} />
-              <strong>{data.diagram.name}</strong>
-            </div>
           </div>
         </foreignObject>
       </svg>
+      <svg className="viewpoint-diagram-callout" width="320" height="135" aria-hidden="true">
+        <path d="M 120 110 L 120 135" />
+      </svg>
+      <div className="viewpoint-diagram-caption">
+        <FileText size={16} />
+        <strong>{data.diagram.name}</strong>
+      </div>
       <Handle type="source" position={Position.Right} style={{ top: 45 }} isConnectable={false} />
     </div>
   );
 }
-function Order({ data }: NodeProps<OrderNode>) {
-  const d = data.distance;
-  return (
-    <svg className="viewpoint-layer-order" width="180" height={d + 30} aria-hidden="true">
-      <path
-        d={`M 165 15 C 10 15 10 ${d - 15} 165 ${d - 15} M 147 ${d - 33} L 165 ${d - 15} L 147 ${d + 3}`}
-      />
-    </svg>
-  );
-}
-const nodeTypes = { plane: Plane, diagram: Card, order: Order };
+const nodeTypes = { plane: Plane, diagram: Card };
 export function ViewpointLayersPage({ diagramId }: { diagramId?: string }) {
   const [space, setSpace] = useState<LayerStructure | null>(null),
     [error, setError] = useState(''),
@@ -206,30 +202,26 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
       else next.add(id);
       return next;
     });
-    fit();
   }
   const scene = useMemo(() => {
     const nodes: SceneNode[] = [],
       locations = new Map<string, { nodeId: string; layerId: string }>();
     let top = 0;
-    const visibleGroups = graph.groups
-      .map((group) => ({
-        ...group,
-        diagrams: group.diagrams.filter((d) =>
-          d.name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()),
-        ),
-      }))
-      .filter((g) => !hidden.has(g.id) && (g.diagrams.length || empty));
-    for (const [index, group] of visibleGroups.entries()) {
-      const items = group.diagrams;
+    for (const group of graph.groups) {
       const closed = collapsed.has(group.id),
-        layout = layerLayout(items.length, closed),
+        layout = layerLayout(group.diagrams.length, closed),
         planeId = `layer:${group.id}`;
+      const layerTop = top;
+      top += layout.height + 110;
+      const items = group.diagrams.filter((d) =>
+        d.name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()),
+      );
+      if (hidden.has(group.id) || (!items.length && !empty)) continue;
       nodes.push({
         id: planeId,
         type: 'plane',
         className: 'viewpoint-plane-node',
-        position: { x: 0, y: top },
+        position: { x: 0, y: layerTop },
         draggable: false,
         selectable: false,
         zIndex: 0,
@@ -245,37 +237,20 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
         },
         style: { width: layout.width, height: layout.height },
       });
-      items.forEach((diagram, i) => {
+      items.forEach((diagram) => {
+        const i = group.diagrams.indexOf(diagram);
         const nodeId = `diagram:${diagram.id}`;
         locations.set(diagram.id, { nodeId: closed ? planeId : nodeId, layerId: group.id });
         if (!closed)
           nodes.push({
             id: nodeId,
             type: 'diagram',
-            position: { x: layout.positions[i].x, y: top + layout.positions[i].y },
+            position: { x: layout.positions[i].x, y: layerTop + layout.positions[i].y },
             draggable: false,
             zIndex: 3,
             data: { diagram, preview: space.previews[diagram.id] },
           });
       });
-      const next = visibleGroups[index + 1];
-      if (next) {
-        const anchor = closed ? 30 : 210,
-          nextAnchor = collapsed.has(next.id) ? 30 : 210;
-        const distance = layout.height + 110 + nextAnchor - anchor;
-        nodes.push({
-          id: `order:${group.id}`,
-          type: 'order',
-          className: 'viewpoint-order-node',
-          position: { x: -190, y: top + anchor - 15 },
-          draggable: false,
-          selectable: false,
-          zIndex: 1,
-          style: { width: 180, height: distance + 30 },
-          data: { distance },
-        });
-      }
-      top += layout.height + 110;
     }
     const groups = new Map<string, LayerConnection[]>();
     for (const connection of graph.connections) {
@@ -399,7 +374,6 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
             checked={empty}
             onChange={(e) => {
               setEmpty(e.target.checked);
-              fit();
             }}
           />
           Пустые слои
@@ -408,7 +382,6 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
           className="secondary small"
           onClick={() => {
             setCollapsed(new Set(graph.groups.map((g) => g.id)));
-            fit();
           }}
         >
           Свернуть все слои
@@ -417,7 +390,6 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
           className="secondary small"
           onClick={() => {
             setCollapsed(new Set());
-            fit();
           }}
         >
           Раскрыть все слои
@@ -459,13 +431,7 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
             <MiniMap
               pannable
               zoomable
-              nodeColor={(n) =>
-                n.type === 'order'
-                  ? 'transparent'
-                  : n.type === 'plane'
-                    ? 'var(--accent-soft)'
-                    : 'var(--accent)'
-              }
+              nodeColor={(n) => (n.type === 'plane' ? 'var(--accent-soft)' : 'var(--accent)')}
             />
           </ReactFlow>
           {!scene.nodes.length && (
@@ -513,7 +479,6 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
                         else next.add(g.id);
                         return next;
                       });
-                      fit();
                     }}
                   />
                   <span title={g.description}>
