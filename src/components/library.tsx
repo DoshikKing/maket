@@ -440,6 +440,7 @@ export function DiagramPreview({ document: d }: { document: DiagramDocument }) {
           <path
             key={e.id}
             d={g.path}
+            fill="none"
             stroke={
               edgeAppearance(
                 d.notation.edgeTypes.find((t) => t.id === e.typeId)!.appearance,
