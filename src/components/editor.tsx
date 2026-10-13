@@ -1329,6 +1329,14 @@ function Editor({ initial }: { initial: Diagram }) {
             Ракурс: {currentViewpoint?.name ?? 'Без ракурса'}
           </button>
           <button
+            className="secondary small"
+            onClick={async () => {
+              if (await flush()) router.push(`/solutions?layers=1&focus=${initial.id}`);
+            }}
+          >
+            Слои ракурсов · 2.5D
+          </button>
+          <button
             className="icon-button"
             title="Отменить"
             aria-label="Отменить"

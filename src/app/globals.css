@@ -3657,3 +3657,278 @@ body {
     display: none;
   }
 }
+
+.viewpoint-layers-page {
+  max-width: none;
+}
+.viewpoint-layers-page .page-heading {
+  flex-wrap: wrap;
+}
+.viewpoint-layers-toolbar {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.viewpoint-layers-toolbar label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.viewpoint-layers-toolbar input,
+.viewpoint-layer-control input {
+  width: auto;
+}
+.viewpoint-layers-counts {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 15px 0;
+}
+.viewpoint-layers-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 290px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--panel);
+}
+.viewpoint-layers-canvas {
+  position: relative;
+  height: max(550px, calc(100dvh - 290px));
+  min-width: 0;
+  background: var(--canvas-bg);
+}
+.viewpoint-plane {
+  position: relative;
+}
+.viewpoint-plane > svg {
+  pointer-events: none;
+  filter: drop-shadow(0 14px 8px #00000012);
+}
+.viewpoint-plane polygon {
+  fill: var(--accent-soft);
+  fill-opacity: 0.55;
+  stroke: var(--accent);
+  stroke-opacity: 0.35;
+  stroke-width: 1.5;
+}
+.viewpoint-plane polyline {
+  fill: none;
+  stroke: var(--accent);
+  stroke-opacity: 0.35;
+  stroke-width: 5;
+}
+.viewpoint-plane-heading {
+  pointer-events: auto;
+  font-size: 22px;
+  position: absolute;
+  top: 12px;
+  left: 15px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 15px;
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
+  max-width: 700px;
+}
+.viewpoint-plane-heading strong {
+  overflow-wrap: anywhere;
+}
+.viewpoint-plane-heading span {
+  color: var(--muted);
+  font-size: 16px;
+}
+.viewpoint-plane .react-flow__handle {
+  opacity: 0;
+}
+.viewpoint-diagram-card {
+  width: 220px;
+  height: 130px;
+  color: var(--text);
+}
+.viewpoint-diagram-surface {
+  transform: skewY(-7deg);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  box-shadow: 5px 8px 0 var(--border);
+  height: 130px;
+  overflow: hidden;
+}
+.viewpoint-diagram-card.is-selected .viewpoint-diagram-surface {
+  outline: 3px solid var(--accent);
+}
+.viewpoint-diagram-miniature {
+  height: 94px;
+  background: var(--canvas-bg);
+  pointer-events: none;
+}
+.viewpoint-diagram-miniature .preview-svg {
+  padding: 8px;
+}
+.viewpoint-diagram-caption {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px;
+  font-size: 15px;
+}
+.viewpoint-diagram-caption strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.viewpoint-diagram-caption svg {
+  flex-shrink: 0;
+  color: var(--accent);
+}
+.viewpoint-diagram-card .react-flow__handle {
+  width: 5px;
+  height: 5px;
+  background: var(--accent);
+  border: none;
+}
+.viewpoint-layers-inspector {
+  padding: 18px;
+  overflow: auto;
+  max-height: max(550px, calc(100dvh - 290px));
+  border-left: 1px solid var(--border);
+}
+.viewpoint-layers-inspector > label {
+  display: grid;
+  gap: 7px;
+  font-size: 12px;
+}
+.viewpoint-layers-inspector h2 {
+  font-size: 16px;
+  overflow-wrap: anywhere;
+  margin: 18px 0 10px;
+}
+.viewpoint-layers-inspector p {
+  font-size: 12px;
+  line-height: 1.6;
+}
+.viewpoint-layer-control {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+.viewpoint-layer-control label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+.viewpoint-layer-control span {
+  overflow-wrap: anywhere;
+}
+.viewpoint-layer-control small {
+  display: block;
+  color: var(--muted);
+  font-size: 10px;
+  margin-top: 3px;
+}
+.viewpoint-layer-results {
+  display: grid;
+  gap: 5px;
+  max-height: 200px;
+  overflow: auto;
+  margin-top: 10px;
+}
+.viewpoint-layer-results button {
+  justify-content: flex-start;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.viewpoint-selected-preview {
+  height: 140px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--canvas-bg);
+  margin: 10px 0;
+}
+.viewpoint-layer-connection {
+  display: grid;
+  gap: 6px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+.viewpoint-layer-connection button {
+  text-align: left;
+  overflow-wrap: anywhere;
+  justify-content: flex-start;
+}
+.viewpoint-unresolved {
+  margin-top: 20px;
+  font-size: 12px;
+}
+.viewpoint-unresolved > div {
+  display: grid;
+  gap: 4px;
+  margin: 10px 0;
+}
+.viewpoint-layer-legend {
+  display: grid;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.viewpoint-layer-legend span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.viewpoint-layer-legend i {
+  width: 16px;
+  height: 3px;
+}
+.viewpoint-layers-empty {
+  position: absolute;
+  top: 35%;
+  left: 15%;
+  color: var(--muted);
+  pointer-events: none;
+}
+.viewpoint-layers-canvas .react-flow__controls button {
+  background: var(--panel);
+  color: var(--text);
+  border-color: var(--border);
+}
+.viewpoint-layers-canvas .react-flow__controls button svg {
+  fill: currentColor;
+}
+.viewpoint-layers-canvas .react-flow__minimap {
+  background: var(--panel);
+}
+@media (max-width: 850px) {
+  .viewpoint-layers-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .viewpoint-layers-inspector {
+    max-height: 420px;
+    border-left: none;
+    border-top: 1px solid var(--border);
+  }
+}
+.viewpoint-plane-node {
+  pointer-events: none !important;
+}
+.viewpoint-plane .react-flow__handle {
+  pointer-events: none;
+}
+.viewpoint-layers-toolbar label,
+.viewpoint-layer-control label {
+  flex-direction: row;
+}
+.viewpoint-layers-toolbar label:first-child {
+  flex-direction: column;
+  align-items: flex-start;
+}

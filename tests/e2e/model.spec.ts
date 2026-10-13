@@ -4205,3 +4205,163 @@ test('browser: create and switch workspaces without sharing objects or changing 
   await expect(page.locator(`.solutions-tree [data-tree-entity="${other.id}"]`)).toHaveCount(0);
   await otherTab.close();
 });
+
+test('browser: 2.5D viewpoint layers show previews, actual transitions, collapse and scoped readonly filters', async ({
+  page,
+  request,
+  playwright,
+}) => {
+  test.setTimeout(120000);
+  await login(request, page);
+  await request.patch('/api/settings', {
+    data: { name: 'Модель', theme: 'dark', snapToGrid: false, autosave: false },
+  });
+  async function viewpoint(name: string, order: number) {
+    const r = await request.post('/api/viewpoints', { data: { name, order } });
+    expect(r.status()).toBe(201);
+    return r.json();
+  }
+  const business = await viewpoint('Бизнес', 1),
+    middle = await viewpoint('Инфраструктура', 2),
+    code = await viewpoint('Код', 3);
+  async function view(name: string, viewpointId: string | null) {
+    const r = await request.post('/api/diagrams', { data: { name, viewpointId } });
+    expect(r.status()).toBe(201);
+    return r.json();
+  }
+  const owner = await object(request, 'Моделируемый процесс'),
+    orphan = await object(request, 'Процесс без представлений');
+  let source = await view('Бизнес-модель', business.id);
+  source = await place(request, source, owner.id);
+  source = await place(request, source, owner.id);
+  const target = await place(request, await view('Код процесса', code.id), owner.id);
+  const unassigned = await view('Не назначен ракурс', null);
+  const transition = await request.post('/api/context-links', {
+    data: {
+      entityId: owner.id,
+      sourceDiagramId: source.id,
+      targetDiagramId: target.id,
+      kind: 'viewpoint',
+      meaning: 'Реализация в коде',
+    },
+  });
+  expect(transition.status()).toBe(201);
+  const decomposed = await request.post('/api/context-links', {
+    data: {
+      entityId: owner.id,
+      sourceDiagramId: source.id,
+      kind: 'decomposition',
+      newDiagram: { name: 'Внутренние детали', viewpointId: business.id },
+    },
+  });
+  expect(decomposed.status()).toBe(201);
+  const orphaned = await request.post('/api/context-links', {
+    data: {
+      entityId: orphan.id,
+      kind: 'viewpoint',
+      newDiagram: { name: 'Независимая реализация', viewpointId: code.id },
+    },
+  });
+  expect(orphaned.status()).toBe(201);
+  expect(
+    (
+      await request.post('/api/relations', {
+        data: {
+          name: 'Прямая зависимость диаграмм',
+          sourceId: source.entityId,
+          targetId: target.entityId,
+        },
+      })
+    ).status(),
+  ).toBe(201);
+  const before = await (await request.get('/api/model')).json();
+  const snapshot = await (await request.get('/api/model/layers')).json();
+  expect(snapshot.previews[source.id].nodes).toHaveLength(2);
+  const emptyArea = await (
+    await request.post('/api/workspaces', { data: { name: 'Пустые слои другой области' } })
+  ).json();
+  const emptySnapshot = await (
+    await request.get('/api/model/layers', { headers: { 'X-Maket-Workspace': emptyArea.id } })
+  ).json();
+  expect(emptySnapshot).toMatchObject({
+    diagrams: [],
+    contextLinks: [],
+    objects: [],
+    previews: {},
+  });
+  const anonymous = await playwright.request.newContext({ baseURL: 'http://localhost:3000' });
+  expect((await anonymous.get('/api/model/layers')).status()).toBe(401);
+  await anonymous.dispose();
+  await page.goto('/solutions');
+  await page.getByRole('link', { name: 'Слои ракурсов · 2.5D', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Слои ракурсов', exact: true })).toBeVisible();
+  await expect(page.locator('.viewpoint-layers-counts')).toContainText(
+    'Диаграммы: 5 из 5 · Связи: 3 · Переходы без источника: 1',
+  );
+  await request.patch('/api/settings', {
+    data: { name: 'Модель', theme: 'light', snapToGrid: false, autosave: false },
+  });
+  await page.reload();
+  await expect(page.locator('.viewpoint-layers-counts')).toContainText('Диаграммы: 5 из 5');
+  await expect(page.locator(`[data-layer-diagram="${source.id}"]`)).toHaveCount(1);
+  await expect(page.locator(`[data-layer-diagram="${unassigned.id}"]`)).toHaveCount(1);
+  await expect(
+    page.getByRole('button', { name: 'Свернуть слой Инфраструктура', exact: true }),
+  ).toHaveCount(0);
+  await page.getByLabel('Пустые слои', { exact: true }).check();
+  await expect(
+    page.getByRole('button', { name: 'Свернуть слой Инфраструктура', exact: true }),
+  ).toBeVisible();
+  await page.getByLabel('Пустые слои', { exact: true }).uncheck();
+  await page.getByLabel('Только межслойные', { exact: true }).check();
+  await expect(page.locator('.viewpoint-layers-counts')).toContainText('Связи: 2');
+  await page.getByLabel('Тип связей слоёв').selectOption('viewpoint');
+  await expect(page.locator('.viewpoint-layers-counts')).toContainText('Связи: 1');
+  await page.locator('.react-flow__edge').first().click();
+  await expect(page.getByRole('region', { name: 'Выбранные связи слоёв' })).toContainText(
+    'Реализация в коде',
+  );
+  await page.getByRole('button', { name: 'Свернуть все слои', exact: true }).click();
+  await expect(page.locator('[data-layer-diagram]')).toHaveCount(0);
+  await expect(page.locator('.viewpoint-layers-counts')).toContainText('Диаграммы: 5 из 5');
+  await expect(page.locator('.react-flow__edge')).toHaveCount(1);
+  await page.getByRole('button', { name: 'Раскрыть все слои', exact: true }).click();
+  await expect(page.locator('[data-layer-diagram]')).toHaveCount(5);
+  await page.getByLabel('Показать слой Код', { exact: true }).uncheck();
+  await expect(page.locator(`[data-layer-diagram="${target.id}"]`)).toHaveCount(0);
+  await expect(page.locator('.viewpoint-layers-counts')).toContainText('Связи: 0');
+  await page.getByLabel('Показать слой Код', { exact: true }).check();
+  await page.getByLabel('Поиск диаграмм в слоях').fill(target.name);
+  await expect(page.locator('.viewpoint-layers-counts')).toContainText('Диаграммы: 1 из 5');
+  await page
+    .locator('.viewpoint-layer-results')
+    .getByRole('button', { name: target.name, exact: true })
+    .click();
+  await expect(page.getByRole('region', { name: 'Выбранная диаграмма слоя' })).toContainText(
+    'Код процесса',
+  );
+  await page
+    .getByRole('region', { name: 'Выбранная диаграмма слоя' })
+    .getByRole('link', { name: 'Открыть диаграмму' })
+    .click();
+  await expect(page.locator('.react-flow__node-notation')).toHaveCount(1);
+  await page.locator('.react-flow__node-notation').click();
+  await page.getByLabel('Уровень слоя', { exact: true }).fill('9');
+  await page.getByLabel('Уровень слоя', { exact: true }).press('Tab');
+  await expect(page.getByText('Есть изменения', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Слои ракурсов · 2.5D', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Слои ракурсов', exact: true })).toBeVisible();
+  expect(
+    (await (await request.get(`/api/diagrams/${target.id}`)).json()).document.nodes[0].layer,
+  ).toBe(9);
+  await page.getByRole('button', { name: 'Обновить', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Обновить', exact: true })).toBeEnabled();
+  const after = await (await request.get('/api/model')).json();
+  expect(after.objects).toEqual(before.objects);
+  expect(after.relations).toEqual(before.relations);
+  expect(after.diagrams.map((d: { id: string }) => d.id).sort()).toEqual(
+    before.diagrams.map((d: { id: string }) => d.id).sort(),
+  );
+  await page.getByText('Переходы без исходной диаграммы (1)', { exact: true }).click();
+  await expect(page.locator('.viewpoint-unresolved')).toContainText(orphan.name);
+});

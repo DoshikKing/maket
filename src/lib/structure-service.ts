@@ -2,14 +2,22 @@ import { db } from './db';
 import { ensureModel } from './model-service';
 import { reject } from './model-errors';
 import { deleteRelationInTransaction } from './relation-service';
-import { modelDiagramSchema, effectiveNode, effectiveEdge } from './model';
+import {
+  modelDiagramSchema,
+  effectiveNode,
+  effectiveEdge,
+  projectDocument,
+  displayedView,
+} from './model';
+import type { DiagramDocument } from './notation';
 import { nodeLabel } from './appearance';
 import type { Structure, Representation } from './structure';
 export async function getStructure(
   ownerId: string,
   entityId?: string,
   allDiagramMetadata = false,
-): Promise<Structure> {
+  includePreviews = false,
+): Promise<Structure & { previews?: Record<string, DiagramDocument> }> {
   const space = await ensureModel(ownerId);
   if (
     allDiagramMetadata &&
@@ -44,8 +52,17 @@ export async function getStructure(
   const objects = new Map(space.objects.map((o) => [o.id, o]));
   const relations = new Map(space.relations.map((r) => [r.id, r]));
   const representations: Representation[] = [];
+  const previews: Record<string, DiagramDocument> = {};
   for (const d of diagrams) {
     const document = modelDiagramSchema.parse(d.document);
+    if (includePreviews)
+      previews[d.id] = displayedView(
+        projectDocument({
+          ...document,
+          relations: document.relations?.map((r) => relations.get(r.id) ?? r),
+        }),
+        space.objects,
+      );
     for (const n of document.nodes.filter((n) => !entityId || n.objectId === entityId)) {
       const binding = document.bindings.find((b) => b.id === n.bindingId)!;
       const object = objects.get(n.objectId);
@@ -95,6 +112,7 @@ export async function getStructure(
           revision,
         })),
     representations,
+    ...(includePreviews ? { previews } : {}),
   };
 }
 export async function deleteDiagram(ownerId: string, id: string) {

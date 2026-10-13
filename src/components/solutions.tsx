@@ -447,6 +447,9 @@ export function SolutionsPage() {
         <button className="secondary" onClick={() => setViewpointsOpen(true)}>
           Ракурсы
         </button>
+        <Link className="secondary" href="/solutions?layers=1">
+          Слои ракурсов · 2.5D
+        </Link>
         <button className="secondary" onClick={() => setLinksOpen(true)}>
           <GitBranch size={16} />
           Менеджер связей

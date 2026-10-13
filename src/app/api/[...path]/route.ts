@@ -421,7 +421,13 @@ async function handle(req: NextRequest, context: { params: Promise<{ path: strin
       }
     }
     if (resource === 'model' && method === 'GET')
-      return json(id === 'structure' ? await getStructure(user.id) : await ensureModel(user.id));
+      return json(
+        id === 'layers'
+          ? await getStructure(user.id, undefined, false, true)
+          : id === 'structure'
+            ? await getStructure(user.id)
+            : await ensureModel(user.id),
+      );
     if (resource === 'relations') {
       const space = await ensureModel(user.id);
       if (method === 'POST' && !id) {
