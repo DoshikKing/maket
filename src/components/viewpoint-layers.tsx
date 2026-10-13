@@ -698,6 +698,7 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
             edges={scene.edges}
             nodeTypes={nodeTypes}
             nodesDraggable={false}
+            elevateNodesOnSelect={false}
             nodesConnectable={false}
             edgesReconnectable={false}
             deleteKeyCode={null}

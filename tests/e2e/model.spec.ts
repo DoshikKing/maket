@@ -4352,6 +4352,21 @@ test('browser: 2.5D viewpoint layers show previews, actual transitions, collapse
   const contour = card.locator('.viewpoint-diagram-outline');
   await contour.focus();
   await expect(card.getByRole('tooltip')).toHaveText(source.name);
+  // Selecting a plate must not cover its independent object nodes.
+  await contour.dispatchEvent('click');
+  await expect(card).toHaveClass(/is-selected/);
+  await expect(page.getByRole('region', { name: 'Выбранная диаграмма слоя' })).toContainText(
+    source.name,
+  );
+  for (const object of await sourceObjects.all()) {
+    const exposed = await object.locator('.viewpoint-object-top').evaluate((element) => {
+      const box = element.getBoundingClientRect();
+      const top = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2);
+      return top?.closest('[data-layer-object]') === element.closest('[data-layer-object]');
+    });
+    expect(exposed).toBe(true);
+  }
+
   await sourceObjects.first().focus();
   await expect(sourceObjects.first().getByRole('tooltip')).toHaveText(owner.name);
   await sourceObjects.first().hover();
