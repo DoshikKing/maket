@@ -4334,9 +4334,25 @@ test('browser: 2.5D viewpoint layers show previews, actual transitions, collapse
   const originalGeometry = await geometry();
   const originalCamera = await viewport.getAttribute('style');
   await expect(page.locator('.viewpoint-layer-order')).toHaveCount(0);
-  await expect(
-    page.locator(`[data-layer-diagram="${source.id}"] .viewpoint-diagram-caption`),
-  ).toHaveText(source.name);
+  const emptyCard = page.locator(`[data-layer-diagram="${unassigned.id}"]`);
+  await emptyCard.locator('.viewpoint-diagram-outline').hover();
+  await expect(emptyCard.getByRole('tooltip')).toHaveText(unassigned.name);
+  await page.getByRole('heading', { name: 'Слои ракурсов', exact: true }).click();
+  await expect(emptyCard.getByRole('tooltip')).toHaveCount(0);
+  const card = page.locator(`[data-layer-diagram="${source.id}"]`);
+  await expect(card.locator('[data-layer-object]')).toHaveCount(2);
+  await expect(card.locator('.viewpoint-hover-label')).toHaveCount(0);
+  const contour = card.locator('.viewpoint-diagram-outline');
+  await contour.focus();
+  await expect(card.getByRole('tooltip')).toHaveText(source.name);
+  await card.locator('[data-layer-object]').first().focus();
+  await expect(card.getByRole('tooltip')).toHaveText(owner.name);
+  await card.locator('[data-layer-object]').first().hover();
+  await expect(card.getByRole('tooltip')).toHaveText(owner.name);
+  const tooltipBounds = await card.getByRole('tooltip').boundingBox();
+  expect(tooltipBounds!.height).toBeGreaterThan(30);
+  await page.getByRole('heading', { name: 'Слои ракурсов', exact: true }).click();
+  await expect(card.locator('.viewpoint-hover-label')).toHaveCount(0);
   await page.getByRole('button', { name: 'Свернуть все слои', exact: true }).click();
   await expect(page.locator('[data-layer-diagram]')).toHaveCount(0);
   await expect(page.locator('.viewpoint-layers-counts')).toContainText('Диаграммы: 5 из 5');

@@ -11,12 +11,13 @@ import {
   ReactFlow,
   ReactFlowProvider,
   useReactFlow,
+  useStore,
   type Node,
   type NodeProps,
   type Edge,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { ChevronDown, FileText, Layers, RefreshCw } from 'lucide-react';
+import { ChevronDown, Layers, RefreshCw } from 'lucide-react';
 import { api } from '@/lib/client';
 import {
   layerLayout,
@@ -25,6 +26,9 @@ import {
   type LayerConnection,
 } from '@/lib/viewpoint-layers';
 import { DiagramPreview } from './library';
+import { NodeShape } from './node-shape';
+import { nodeAppearance, nodeLabel, edgeAppearance, lineDash } from '@/lib/appearance';
+import { edgeGeometry } from '@/lib/diagram-geometry';
 const kindNames = {
   decomposition: 'Декомпозиция',
   viewpoint: 'Другой ракурс',
@@ -95,33 +99,160 @@ function Plane({ data }: NodeProps<PlaneNode>) {
   );
 }
 function Card({ data, selected }: NodeProps<CardNode>) {
+  const zoom = useStore((state) => state.transform[2]);
+  const [hovered, setHovered] = useState<{
+    name: string;
+    x: number;
+    y: number;
+    object: boolean;
+  } | null>(null);
+  const contents = useMemo(() => {
+    const d = data.preview;
+    if (!d) return null;
+    const nodes = [...d.nodes]
+      .sort((a, b) => (a.layer ?? 0) - (b.layer ?? 0))
+      .flatMap((node) => {
+        const type = d.notation.nodeTypes.find((t) => t.id === node.typeId);
+        return type
+          ? [{ node, appearance: nodeAppearance(node, type), name: nodeLabel(node, type) }]
+          : [];
+      });
+    const edges = edgeGeometry(d);
+    const points = [
+      ...nodes.flatMap(({ node, appearance: a }) => [
+        node.position,
+        { x: node.position.x + a.width, y: node.position.y + a.height },
+      ]),
+      ...[...edges.values()].flatMap((g) => [g.source, g.target, g.center]),
+    ];
+    const minX = points.length ? Math.min(...points.map((p) => p.x)) - 30 : 0;
+    const minY = points.length ? Math.min(...points.map((p) => p.y)) - 30 : 0;
+    const width = points.length ? Math.max(...points.map((p) => p.x)) - minX + 30 : 240;
+    const height = points.length ? Math.max(...points.map((p) => p.y)) - minY + 30 : 120;
+    const scale = Math.min(240 / width, 120 / height);
+    const offsetX = (240 - width * scale) / 2 - minX * scale;
+    const offsetY = (120 - height * scale) / 2 - minY * scale;
+    return {
+      nodes,
+      edges,
+      transform: `translate(${offsetX},${offsetY}) scale(${scale})`,
+      anchor(x: number, y: number) {
+        const u = x * scale + offsetX,
+          v = y * scale + offsetY;
+        return { x: (u * 5) / 6 + v, y: 50 - (u * 5) / 24 + v / 4 - 12 };
+      },
+    };
+  }, [data.preview]);
+  const showDiagram = () => setHovered({ name: data.diagram.name, x: 160, y: 100, object: false });
   return (
     <div
       className={`viewpoint-diagram-card ${selected ? 'is-selected' : ''}`}
       data-layer-diagram={data.diagram.id}
-      title={data.diagram.name}
+      onMouseLeave={() => setHovered(null)}
     >
-      <Handle type="target" position={Position.Left} style={{ top: 65 }} isConnectable={false} />
-      <svg width="320" height="115" className="viewpoint-diagram-prism">
-        <polygon className="prism-front" points="0,50 120,80 320,30 320,60 120,110 0,80" />
-        <polygon className="prism-side" points="0,50 120,80 120,110 0,80" />
-        <polygon className="prism-top" points="0,50 200,0 320,30 120,80" />
-        <foreignObject width="240" height="120" transform="matrix(0.833333 -0.208333 1 0.25 0 50)">
-          <div className="viewpoint-diagram-surface">
-            <div className="viewpoint-diagram-miniature">
-              {data.preview && <DiagramPreview document={data.preview} />}
-            </div>
-          </div>
-        </foreignObject>
+      <Handle type="target" position={Position.Left} style={{ top: 50 }} isConnectable={false} />
+      <svg
+        width="320"
+        height="115"
+        className="viewpoint-diagram-plane"
+        onMouseEnter={showDiagram}
+        onMouseLeave={() => setHovered(null)}
+      >
+        <polygon
+          className="viewpoint-diagram-outline"
+          points="0,50 200,0 320,30 120,80"
+          tabIndex={0}
+          aria-label={`Диаграмма: ${data.diagram.name}`}
+          onMouseEnter={showDiagram}
+          onFocus={showDiagram}
+          onBlur={() => setHovered(null)}
+        />
+        {contents && data.preview && (
+          <>
+            <g transform="matrix(0.833333 -0.208333 1 0.25 0 50)" pointerEvents="none">
+              <g transform={contents.transform}>
+                {data.preview.edges.map((edge) => {
+                  const geometry = contents.edges.get(edge.id);
+                  const type = data.preview.notation.edgeTypes.find((t) => t.id === edge.typeId);
+                  if (!geometry || !type) return null;
+                  const a = edgeAppearance(type.appearance, edge.appearance);
+                  return (
+                    <path
+                      key={edge.id}
+                      d={geometry.path}
+                      fill="none"
+                      stroke={a.color}
+                      strokeWidth={a.width}
+                      strokeDasharray={lineDash(a)}
+                    />
+                  );
+                })}
+              </g>
+            </g>
+            {contents.nodes.map(({ node, appearance: a, name }) => {
+              const anchor = contents.anchor(node.position.x + a.width / 2, node.position.y);
+              const show = () => setHovered({ name, ...anchor, object: true });
+              return (
+                <g
+                  key={node.id}
+                  data-layer-object={node.id}
+                  tabIndex={0}
+                  aria-label={`Объект: ${name}`}
+                  onMouseEnter={show}
+                  onFocus={show}
+                  onMouseLeave={showDiagram}
+                  onBlur={() => setHovered(null)}
+                >
+                  <g
+                    className="viewpoint-object-shadow"
+                    transform="matrix(0.833333 -0.208333 1 0.25 0 50)"
+                    pointerEvents="none"
+                  >
+                    <g transform={contents.transform}>
+                      <g transform={`translate(${node.position.x},${node.position.y})`}>
+                        <NodeShape
+                          className="viewpoint-object-shape"
+                          appearance={{ ...a, shape: a.shape === 'text' ? 'rectangle' : a.shape }}
+                          shapes={data.preview.notation.shapes}
+                        />
+                      </g>
+                    </g>
+                  </g>
+                  <g
+                    className="viewpoint-object-top"
+                    transform="matrix(0.833333 -0.208333 1 0.25 0 42)"
+                  >
+                    <g transform={contents.transform}>
+                      <g transform={`translate(${node.position.x},${node.position.y})`}>
+                        <NodeShape
+                          className="viewpoint-object-shape"
+                          appearance={{ ...a, shape: a.shape === 'text' ? 'rectangle' : a.shape }}
+                          shapes={data.preview.notation.shapes}
+                        />
+                      </g>
+                    </g>
+                  </g>
+                </g>
+              );
+            })}
+          </>
+        )}
       </svg>
-      <svg className="viewpoint-diagram-callout" width="320" height="135" aria-hidden="true">
-        <path d="M 120 110 L 120 135" />
-      </svg>
-      <div className="viewpoint-diagram-caption">
-        <FileText size={16} />
-        <strong>{data.diagram.name}</strong>
-      </div>
-      <Handle type="source" position={Position.Right} style={{ top: 45 }} isConnectable={false} />
+      {hovered && (
+        <div
+          className={`viewpoint-hover-label ${hovered.object ? 'is-object' : ''}`}
+          role="tooltip"
+          style={{
+            left: hovered.x,
+            top: hovered.y,
+            transform: `translate(-50%, ${hovered.object ? '-100%' : '0'}) scale(${1 / zoom})`,
+            transformOrigin: hovered.object ? 'bottom center' : 'top center',
+          }}
+        >
+          {hovered.name}
+        </div>
+      )}
+      <Handle type="source" position={Position.Right} style={{ top: 30 }} isConnectable={false} />
     </div>
   );
 }

@@ -3973,68 +3973,45 @@ body {
   width: 320px;
   height: 180px;
 }
-.viewpoint-diagram-prism {
+.viewpoint-diagram-plane {
   overflow: visible;
-  filter: drop-shadow(0 7px 5px #00000016);
 }
-.viewpoint-diagram-prism > polygon {
+.viewpoint-diagram-outline {
+  fill: var(--panel);
+  fill-opacity: 0.25;
   stroke: var(--accent);
-  stroke-width: 1.3;
+  stroke-width: 1.5;
+  stroke-dasharray: 5 3;
   stroke-linejoin: round;
 }
-.prism-front {
-  fill: var(--accent-soft);
+.viewpoint-diagram-card.is-selected .viewpoint-diagram-outline {
+  stroke-width: 3;
 }
-.prism-side {
-  fill: var(--border);
+.viewpoint-object-shadow {
+  opacity: 0.3;
 }
-.prism-top {
-  fill: var(--panel);
+.viewpoint-object-top {
+  filter: drop-shadow(0 3px 2px #00000020);
 }
-.viewpoint-diagram-surface {
-  transform: none;
-  background: none;
-  border: none;
-  border-radius: 0;
-  box-shadow: none;
-  width: 240px;
-  height: 120px;
+.viewpoint-object-top .viewpoint-object-shape {
+  pointer-events: all;
 }
-.viewpoint-diagram-card.is-selected .viewpoint-diagram-surface {
-  outline: none;
+.viewpoint-diagram-card [data-layer-object]:hover .viewpoint-object-top,
+.viewpoint-diagram-card [data-layer-object]:focus .viewpoint-object-top {
+  filter: drop-shadow(0 0 3px var(--accent));
 }
-.viewpoint-diagram-card.is-selected .prism-top {
-  stroke-width: 4;
-}
-.viewpoint-diagram-miniature {
-  height: 80px;
-  background: transparent;
-}
-.viewpoint-diagram-caption {
+.viewpoint-hover-label {
   position: absolute;
-  top: 135px;
-  left: 0;
-  width: 270px;
-  height: 45px;
-  background: var(--panel);
+  width: max-content;
+  max-width: 300px;
+  overflow-wrap: anywhere;
+  padding: 8px 12px;
   border: 1px solid var(--border);
-  border-radius: 10px;
-  font-size: 18px;
-  padding: 8px 10px;
-  box-shadow: 0 3px 8px #0000000a;
-}
-.viewpoint-diagram-card.is-selected .viewpoint-diagram-caption {
-  border-color: var(--accent);
-}
-.viewpoint-diagram-callout {
-  position: absolute;
-  top: 0;
-  left: 0;
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 16px;
+  box-shadow: 0 3px 8px #00000016;
   pointer-events: none;
-}
-.viewpoint-diagram-callout path {
-  fill: none;
-  stroke: var(--muted);
-  stroke-width: 1.5;
-  stroke-dasharray: 5 4;
+  z-index: 5;
 }
