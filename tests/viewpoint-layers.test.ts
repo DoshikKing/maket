@@ -2,6 +2,9 @@ import { expect, it } from 'vitest';
 import {
   layerLayout,
   layerConnectionRoute,
+  layerOffsets,
+  layerObjectObstacle,
+  crossesObstacle,
   viewpointLayers,
   UNASSIGNED_LAYER,
   diagramLayerLayout,
@@ -111,9 +114,9 @@ it('supports decomposition of diagrams themselves and never infers a missing exp
   expect(graph.connections[0]).toMatchObject({ source: 'a', target: 'b', kind: 'decomposition' });
   expect(graph.unresolved.map((l) => l.id)).toEqual(['missing']);
 });
-it('lays out every diagram within finite planes and collapses large groups without constructing cards', () => {
+it('lays out every diagram within finite planes without shrinking object geometry', () => {
   for (const count of [0, 1, 3, 4, 1000]) {
-    const layout = layerLayout(count, false);
+    const layout = layerLayout(count);
     expect(layout.positions).toHaveLength(count);
     for (const p of layout.positions) {
       expect(p.x).toBeGreaterThanOrEqual(0);
@@ -122,8 +125,6 @@ it('lays out every diagram within finite planes and collapses large groups witho
     }
     expect(new Set(layout.positions.map((p) => `${p.x}:${p.y}`)).size).toBe(count);
   }
-  const { positions: _, ...expanded } = layerLayout(1000, false);
-  expect(layerLayout(1000, true)).toEqual({ ...expanded, positions: [] });
 });
 
 it('expands diagram and layer bounds instead of shrinking distant or large objects', () => {
@@ -146,12 +147,9 @@ it('expands diagram and layer bounds instead of shrinking distant or large objec
   expect(tile.nodes[1].appearance).toMatchObject({ width: 1200, height: 800 });
   expect(tile.width).toBeGreaterThan(7200);
   expect(tile.depth).toBeGreaterThan(4000);
-  const expanded = layerLayout(1, false, [tile]),
-    closed = layerLayout(1, true, [tile]);
+  const expanded = layerLayout(1, [tile]);
   expect(expanded.positions[0].x + tile.width + tile.depth).toBeLessThan(expanded.planeWidth);
   expect(expanded.positions[0].y + tile.height).toBeLessThan(expanded.height);
-  expect(closed.planeWidth).toBe(expanded.planeWidth);
-  expect(closed.height).toBe(expanded.height);
 });
 it('extrudes visible walls for notation shapes with a fixed depth independent of object dimensions', () => {
   for (const shape of ['rectangle', 'rounded', 'ellipse', 'diamond'] as const) {
@@ -227,31 +225,65 @@ it('anchors connectors to actual extrusion walls and preserves custom corner rou
   expect(reversed.source.x).toBeCloseTo(prism.source.x, 8);
 });
 
-it('routes interlayer links on the projection axes and in separate outside columns', () => {
+it('routes links through the side in separate outside columns with projection-aligned segments', () => {
   const source = { x: 300, y: 200 },
     target = { x: 500, y: 800 };
   const upper = { origin: 250, depth: 420 },
     lower = { origin: 850, depth: 420 };
-  const route = layerConnectionRoute(source, target, upper, lower, 0);
+  const route = layerConnectionRoute(source, target, upper, lower, 0)!;
+  expect(route).not.toBeNull();
   expect(route.points[0]).toEqual(source);
   expect(route.points.at(-1)).toEqual(target);
   expect(route.path).not.toMatch(/[CQ]/);
-  expect(route.points[2].x).toBeLessThan(0);
-  expect(route.points[2].x).toBe(route.points[3].x);
-  for (const [a, b, slope] of [
-    [0, 1, 0.25],
-    [1, 2, -0.25],
-    [3, 4, -0.25],
-    [4, 5, 0.25],
-  ]) {
-    const p = route.points[a],
-      q = route.points[b];
-    expect((q.y - p.y) / (q.x - p.x)).toBeCloseTo(slope, 8);
+  const vertical = route.points.find((p, i) => i && route.points[i - 1].x === p.x)!;
+  expect(vertical.x).toBeLessThan(0);
+  for (let i = 1; i < route.points.length; i++) {
+    const p = route.points[i - 1],
+      q = route.points[i];
+    if (p.x !== q.x) expect(Math.abs((q.y - p.y) / (q.x - p.x))).toBeCloseTo(0.25, 8);
   }
-  expect(layerConnectionRoute(source, target, upper, lower, 1).points[2].x).not.toBe(
-    route.points[2].x,
-  );
-  // Alias changes alter the local segment, leaving the interlayer column in place.
-  const alias = layerConnectionRoute({ x: 650, y: 300 }, target, upper, lower, 0);
-  expect(alias.points.slice(2, 4)).toEqual(route.points.slice(2, 4));
+  expect(layerConnectionRoute(source, target, upper, lower, 1)!.points[1].x).not.toBe(vertical.x);
+});
+it('detours around extruded objects instead of crossing their top faces or walls', () => {
+  const obstacle = layerObjectObstacle('blocker', 150, 120, 160, 100);
+  const plane = { origin: 250, depth: 420, obstacles: [obstacle] };
+  const project = (u: number, v: number, origin: number) => ({
+    x: u + v,
+    y: origin - u / 4 + v / 4,
+  });
+  const source = project(450, 160, plane.origin),
+    target = project(300, 160, 900);
+  const route = layerConnectionRoute(source, target, plane, { origin: 900, depth: 420 }, 0)!;
+  expect(route).not.toBeNull();
+  expect(route.points.length).toBeGreaterThan(4);
+  const inverse = (p: { x: number; y: number }) => ({
+    x: p.x / 2 - 2 * (p.y - plane.origin),
+    y: p.x / 2 + 2 * (p.y - plane.origin),
+  });
+  const column = route.points.findIndex((p) => p.x < 0);
+  for (let i = 1; i <= column; i++)
+    expect(
+      crossesObstacle(inverse(route.points[i - 1]), inverse(route.points[i]), obstacle.points),
+    ).toBe(false);
+});
+it('starts compact, opens space on both sides of a chosen layer, and restores original offsets', () => {
+  const heights = [400, 480, 420],
+    compact = layerOffsets(heights, new Set());
+  const open = layerOffsets(heights, new Set([1]));
+  expect(compact[1]).toBeLessThan(heights[0]);
+  expect(open[1] - open[0]).toBeGreaterThan(heights[0]);
+  expect(open[2] - open[1]).toBeGreaterThan(heights[1]);
+  expect(layerOffsets(heights, new Set())).toEqual(compact);
+});
+
+it('does not draw a route through an overlapping object that blocks its endpoint', () => {
+  const plane = {
+    origin: 250,
+    depth: 420,
+    obstacles: [layerObjectObstacle('blocker', 400, 120, 180, 100)],
+  };
+  const source = { x: 450 + 160, y: plane.origin - 450 / 4 + 160 / 4 };
+  expect(
+    layerConnectionRoute(source, { x: 100, y: 900 }, plane, { origin: 900, depth: 420 }, 0),
+  ).toBeNull();
 });

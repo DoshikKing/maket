@@ -4035,3 +4035,15 @@ body {
   pointer-events: none;
   z-index: 5;
 }
+
+/* Only painted geometry captures the pointer; transparent node bounds leave lower layers accessible. */
+.viewpoint-layers-canvas .react-flow__node-diagram,
+.viewpoint-layers-canvas .react-flow__node-object {
+  pointer-events: none !important;
+}
+.viewpoint-diagram-outline,
+.viewpoint-diagram-walls polygon,
+.viewpoint-object-walls polygon,
+.viewpoint-object-shape {
+  pointer-events: all;
+}

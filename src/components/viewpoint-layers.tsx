@@ -23,6 +23,8 @@ import { ChevronDown, Layers, RefreshCw } from 'lucide-react';
 import { api } from '@/lib/client';
 import {
   layerLayout,
+  layerOffsets,
+  layerObjectObstacle,
   layerConnectionRoute,
   type LayerRoutePlane,
   diagramLayerLayout,
@@ -45,15 +47,11 @@ const kindNames = {
 const colors = { decomposition: '#4d87c7', viewpoint: '#8774e4', relation: '#329882' };
 type PlaneNode = Node<
   {
-    name: string;
-    count: number;
-    collapsed: boolean;
     width: number;
     height: number;
     planeWidth: number;
     depth: number;
     surfaceWidth: number;
-    toggle: () => void;
   },
   'plane'
 >;
@@ -76,12 +74,16 @@ type ObjectNode = Node<
   },
   'object'
 >;
+type HeadingNode = Node<
+  { name: string; count: number; expanded: boolean; toggle: () => void },
+  'heading'
+>;
 type BoundsNode = Node<Record<string, never>, 'bounds'>;
-type SceneNode = PlaneNode | CardNode | ObjectNode | BoundsNode;
+type SceneNode = PlaneNode | CardNode | ObjectNode | HeadingNode | BoundsNode;
 type LayerEdge = Edge<
   {
     connections: LayerConnection[];
-    route: ReturnType<typeof layerConnectionRoute>;
+    route: NonNullable<ReturnType<typeof layerConnectionRoute>>;
   },
   'layer'
 >;
@@ -123,10 +125,7 @@ const edgeTypes = { layer: RoutedEdge };
 function Plane({ data }: NodeProps<PlaneNode>) {
   const { width: w, height: h, planeWidth: p, depth, surfaceWidth: u } = data;
   return (
-    <div
-      className={`viewpoint-plane ${data.collapsed ? 'is-collapsed' : ''}`}
-      style={{ width: w, height: h }}
-    >
+    <div className="viewpoint-plane" style={{ width: w, height: h }}>
       <svg width={w} height={h} aria-hidden="true">
         <polygon
           points={`0,${u / 4 + 25} ${u},25 ${p},${25 + depth / 4} ${depth},${25 + (u + depth) / 4}`}
@@ -136,40 +135,43 @@ function Plane({ data }: NodeProps<PlaneNode>) {
           d={`M ${p} ${25 + depth * 0.25} L ${p + 85} 40`}
         />
       </svg>
-      <button
-        className="nodrag nopan viewpoint-plane-heading"
-        style={{ left: p + 85, top: 0, width: 300, height: 80 }}
-        title={data.name}
-        onClick={data.toggle}
-        aria-expanded={!data.collapsed}
-        aria-label={`${data.collapsed ? 'Раскрыть' : 'Свернуть'} слой ${data.name}`}
-      >
-        <ChevronDown
-          size={17}
-          style={{ transform: data.collapsed ? 'rotate(-90deg)' : undefined }}
-        />
-        <Layers size={16} />
-        <strong>{data.name}</strong>
-        <span>{data.count} диаграмм</span>
-      </button>
       <Handle
         type="target"
         position={Position.Left}
-        style={{ left: u / 2 + depth, top: 25 + u / 8 + depth / 4 }}
+        style={{ left: depth / 2, top: 25 + u / 4 + depth / 8 }}
         isConnectable={false}
       />
       <Handle
         type="source"
         position={Position.Right}
         style={{
-          left: u / 2 + depth,
+          left: depth / 2,
           right: 'auto',
-          top: 25 + u / 8 + depth / 4,
+          top: 25 + u / 4 + depth / 8,
           transform: 'translate(-50%, -50%)',
         }}
         isConnectable={false}
       />
     </div>
+  );
+}
+function Heading({ data }: NodeProps<HeadingNode>) {
+  return (
+    <button
+      className="nodrag nopan viewpoint-plane-heading"
+      style={{ left: 0, top: 0, width: 300, height: 80 }}
+      title={data.name}
+      onClick={data.toggle}
+      aria-pressed={data.expanded}
+      aria-label={`${data.expanded ? 'Сблизить' : 'Раздвинуть'} слой ${data.name}`}
+    >
+      <ChevronDown size={17} style={{ transform: data.expanded ? undefined : 'rotate(-90deg)' }} />
+      <Layers size={16} />
+      <strong>{data.name}</strong>
+      <span>
+        {data.count} диаграмм · {data.expanded ? 'Сблизить' : 'Раздвинуть'}
+      </span>
+    </button>
   );
 }
 function HoverLabel({ name, x, y }: { name: string; x: number; y: number }) {
@@ -207,7 +209,7 @@ function Card({ data, selected }: NodeProps<CardNode>) {
       <Handle
         type="target"
         position={Position.Left}
-        style={{ left: w / 2 + d, top: w / 8 + d / 4 + DIAGRAM_DEPTH / 2 }}
+        style={{ left: d / 2, top: w / 4 + d / 8 + DIAGRAM_DEPTH / 2 }}
         isConnectable={false}
       />
       <svg
@@ -265,9 +267,9 @@ function Card({ data, selected }: NodeProps<CardNode>) {
         type="source"
         position={Position.Right}
         style={{
-          left: w / 2 + d,
+          left: d / 2,
           right: 'auto',
-          top: w / 8 + d / 4 + DIAGRAM_DEPTH / 2,
+          top: w / 4 + d / 8 + DIAGRAM_DEPTH / 2,
           transform: 'translate(-50%, -50%)',
         }}
         isConnectable={false}
@@ -296,7 +298,7 @@ function ObjectCard({ data, selected }: NodeProps<ObjectNode>) {
       <Handle
         type="target"
         position={Position.Left}
-        style={{ left: prism.front.x, top: prism.front.y }}
+        style={{ left: prism.target.x, top: prism.target.y }}
         isConnectable={false}
       />
       <svg width={prism.width} height={prism.height} className="viewpoint-object-prism">
@@ -318,9 +320,9 @@ function ObjectCard({ data, selected }: NodeProps<ObjectNode>) {
         type="source"
         position={Position.Right}
         style={{
-          left: prism.front.x,
+          left: prism.target.x,
           right: 'auto',
-          top: prism.front.y,
+          top: prism.target.y,
           transform: 'translate(-50%, -50%)',
         }}
         isConnectable={false}
@@ -328,7 +330,13 @@ function ObjectCard({ data, selected }: NodeProps<ObjectNode>) {
     </div>
   );
 }
-const nodeTypes = { plane: Plane, diagram: Card, object: ObjectCard, bounds: () => null };
+const nodeTypes = {
+  plane: Plane,
+  diagram: Card,
+  object: ObjectCard,
+  heading: Heading,
+  bounds: () => null,
+};
 export function ViewpointLayersPage({ diagramId }: { diagramId?: string }) {
   const [space, setSpace] = useState<LayerStructure | null>(null),
     [error, setError] = useState(''),
@@ -386,7 +394,7 @@ export function ViewpointLayersPage({ diagramId }: { diagramId?: string }) {
 function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string }) {
   const flow = useReactFlow<SceneNode>();
   const graph = useMemo(() => viewpointLayers(space), [space]);
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set()),
+  const [expanded, setExpanded] = useState<Set<string>>(new Set()),
     [hidden, setHidden] = useState<Set<string>>(new Set()),
     [query, setQuery] = useState(''),
     [kind, setKind] = useState('all'),
@@ -401,7 +409,7 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
     requestAnimationFrame(() => void flow.fitView({ duration: 300, padding: 0.15 }));
   }
   function toggle(id: string) {
-    setCollapsed((old) => {
+    setExpanded((old) => {
       const next = new Set(old);
       if (next.has(id)) next.delete(id);
       else next.add(id);
@@ -426,6 +434,35 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
       ),
     [graph],
   );
+  const plans = useMemo(
+    () =>
+      graph.groups.map((group) => {
+        const layout = layerLayout(
+          group.diagrams.length,
+          group.diagrams.map((d) => layouts.get(d.id)!),
+        );
+        const obstacles = group.diagrams.flatMap((diagram, i) => {
+          if (!diagram.name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()))
+            return [];
+          const tile = layouts.get(diagram.id)!,
+            position = layout.positions[i];
+          const y = position.y + tile.width / 4 - (layout.surfaceWidth / 4 + 25);
+          const u = position.x / 2 - 2 * y,
+            v = position.x / 2 + 2 * y;
+          return tile.nodes.map((item) =>
+            layerObjectObstacle(
+              `object:${diagram.id}:${item.node.id}`,
+              u + item.node.position.x - tile.minX,
+              v + item.node.position.y - tile.minY,
+              item.appearance.width,
+              item.appearance.height,
+            ),
+          );
+        });
+        return { layout, obstacles };
+      }),
+    [graph, layouts, query],
+  );
   const scene = useMemo(() => {
     const nodes: SceneNode[] = [],
       locations = new Map<
@@ -434,21 +471,22 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
       >();
     const focusEntity = selection?.kind === 'object' ? selection.entityId : undefined;
     const planes = new Map<string, LayerRoutePlane>();
-    let top = 0;
-    for (const group of graph.groups) {
-      const closed = collapsed.has(group.id),
-        layout = layerLayout(
-          group.diagrams.length,
-          closed,
-          group.diagrams.map((d) => layouts.get(d.id)!),
-        ),
+    const active = graph.groups.flatMap((group, i) => (empty || group.diagrams.length ? [i] : []));
+    const positions = layerOffsets(
+      active.map((i) => plans[i].layout.height),
+      new Set(active.flatMap((i, n) => (expanded.has(graph.groups[i].id) ? [n] : []))),
+    );
+    const offsets = new Map(active.map((i, n) => [graph.groups[i].id, positions[n]]));
+    for (const [index, group] of graph.groups.entries()) {
+      const { layout, obstacles } = plans[index],
         planeId = `layer:${group.id}`;
-      const layerTop = top;
+      const layerTop = offsets.get(group.id) ?? 0,
+        base = (graph.groups.length - index) * 10;
       planes.set(group.id, {
         origin: layerTop + layout.surfaceWidth / 4 + 25,
         depth: layout.depth,
+        obstacles,
       });
-      top += layout.height + 110;
       if (hidden.has(group.id)) continue;
       const items = group.diagrams.filter((d) =>
         d.name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()),
@@ -461,30 +499,42 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
         position: { x: 0, y: layerTop },
         draggable: false,
         selectable: false,
-        zIndex: 0,
+        zIndex: base,
         data: {
-          name: group.name,
-          count: items.length,
-          collapsed: closed,
           width: layout.width,
           height: layout.height,
           planeWidth: layout.planeWidth,
           depth: layout.depth,
           surfaceWidth: layout.surfaceWidth,
-          toggle: () => toggle(group.id),
         },
         style: { width: layout.width, height: layout.height },
+      });
+      nodes.push({
+        id: `heading:${group.id}`,
+        type: 'heading',
+        position: { x: layout.planeWidth + 85, y: layerTop },
+        draggable: false,
+        selectable: false,
+        zIndex: 10000,
+        width: 300,
+        height: 80,
+        data: {
+          name: group.name,
+          count: items.length,
+          expanded: expanded.has(group.id),
+          toggle: () => toggle(group.id),
+        },
+        style: { width: 300, height: 80 },
       });
       group.diagrams.forEach((diagram, i) => {
         if (!items.includes(diagram)) return;
         const nodeId = `diagram:${diagram.id}`;
         const objects = new Map<string, string[]>();
         locations.set(diagram.id, {
-          nodeId: closed ? planeId : nodeId,
+          nodeId,
           layerId: group.id,
           objects,
         });
-        if (closed) return;
         const tile = layouts.get(diagram.id)!;
         const position = { x: layout.positions[i].x, y: layerTop + layout.positions[i].y };
         nodes.push({
@@ -492,7 +542,7 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
           type: 'diagram',
           position,
           draggable: false,
-          zIndex: 1,
+          zIndex: base + 1,
           data: { diagram, preview: space.previews[diagram.id], layout: tile, focusEntity },
         });
         tile.nodes.forEach((item) => {
@@ -517,7 +567,7 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
                 OBJECT_DEPTH,
             },
             draggable: false,
-            zIndex: 3,
+            zIndex: base + 3,
             data: {
               item,
               entityId,
@@ -569,25 +619,26 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
     const port = (id: string) => {
       const n = byId.get(id)!;
       if (n.type === 'object') {
-        const p = objectPrism(n.data.item.appearance, n.data.shapes).front;
+        const p = objectPrism(n.data.item.appearance, n.data.shapes).target;
         return { x: n.position.x + p.x, y: n.position.y + p.y };
       }
       if (n.type === 'diagram') {
         const { width, depth } = n.data.layout;
         return {
-          x: n.position.x + width / 2 + depth,
-          y: n.position.y + width / 8 + depth / 4 + DIAGRAM_DEPTH / 2,
+          x: n.position.x + depth / 2,
+          y: n.position.y + width / 4 + depth / 8 + DIAGRAM_DEPTH / 2,
         };
       }
       if (n.type === 'plane')
         return {
-          x: n.position.x + n.data.surfaceWidth / 2 + n.data.depth,
-          y: n.position.y + 25 + n.data.surfaceWidth / 8 + n.data.depth / 4,
+          x: n.position.x + n.data.depth / 2,
+          y: n.position.y + 25 + n.data.surfaceWidth / 4 + n.data.depth / 8,
         };
       return n.position;
     };
     const neighborhood = new Set<string>(focusEntity ? [focusEntity] : []);
-    const edges: LayerEdge[] = [...groups].map(([id, group]) => {
+    const blockedRoutes: LayerConnection[] = [];
+    const edges: LayerEdge[] = [...groups].flatMap(([id, group]) => {
       const { source, target, connections } = group;
       const c = connections[0],
         color = colors[c.kind];
@@ -602,38 +653,47 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
           if (entityId) neighborhood.add(entityId);
         }
       }
-      return {
-        id,
+      const route = layerConnectionRoute(
+        port(source),
+        port(target),
+        planes.get(locations.get(c.source)!.layerId)!,
+        planes.get(locations.get(c.target)!.layerId)!,
+        Math.min(...connections.map((c) => lanes.get(c.id)!)),
         source,
         target,
-        type: 'layer',
-        data: {
-          connections,
-          route: layerConnectionRoute(
-            port(source),
-            port(target),
-            planes.get(locations.get(c.source)!.layerId)!,
-            planes.get(locations.get(c.target)!.layerId)!,
-            Math.min(...connections.map((c) => lanes.get(c.id)!)),
-          ),
-        },
-        className: related ? 'is-related' : 'is-dim',
-        label:
-          connections.length > 1
-            ? `${kindNames[c.kind]} ×${connections.length}`
-            : kindNames[c.kind],
-        markerEnd: { type: MarkerType.ArrowClosed, color, width: 12, height: 12 },
-        style: {
-          stroke: color,
-          strokeWidth: focusEntity && related ? 3 : 2,
-          strokeDasharray: c.kind === 'decomposition' ? '6 4' : undefined,
-        },
-        labelStyle: { fill: 'var(--text)', fontSize: 11 },
-        labelBgStyle: { fill: 'var(--panel)' },
-        labelBgPadding: [6, 4],
-        zIndex: 2,
-        selected: selection?.kind === 'connection' && selection.id === id,
-      };
+      );
+      if (!route) {
+        blockedRoutes.push(...connections);
+        return [];
+      }
+      return [
+        {
+          id,
+          source,
+          target,
+          type: 'layer',
+          data: {
+            connections,
+            route,
+          },
+          className: related ? 'is-related' : 'is-dim',
+          label:
+            connections.length > 1
+              ? `${kindNames[c.kind]} ×${connections.length}`
+              : kindNames[c.kind],
+          markerEnd: { type: MarkerType.ArrowClosed, color, width: 12, height: 12 },
+          style: {
+            stroke: color,
+            strokeWidth: focusEntity && related ? 3 : 2,
+            strokeDasharray: c.kind === 'decomposition' ? '6 4' : undefined,
+          },
+          labelStyle: { fill: 'var(--text)', fontSize: 11 },
+          labelBgStyle: { fill: 'var(--panel)' },
+          labelBgPadding: [6, 4],
+          zIndex: Math.max(byId.get(source)!.zIndex!, byId.get(target)!.zIndex!) - 1,
+          selected: selection?.kind === 'connection' && selection.id === id,
+        } as LayerEdge,
+      ];
     });
     if (edges.length) {
       // Reserve the full routing envelope so filtering or selecting an alias never refits the scene.
@@ -700,14 +760,16 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
       }),
       edges,
       locations,
+      blockedRoutes,
     };
   }, [
     graph,
     lanes,
     space,
     layouts,
+    plans,
     entities,
-    collapsed,
+    expanded,
     hidden,
     query,
     kind,
@@ -723,9 +785,9 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
       next.delete(group.id);
       return next;
     });
-    setCollapsed((old) => {
+    setExpanded((old) => {
       const next = new Set(old);
-      next.delete(group.id);
+      next.add(group.id);
       return next;
     });
     setQuery('');
@@ -744,7 +806,7 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
     const group = graph.groups.find((g) => g.diagrams.some((d) => d.id === diagramId));
     if (!group) return;
     setHidden((old) => new Set([...old].filter((key) => key !== group.id)));
-    setCollapsed((old) => new Set([...old].filter((key) => key !== group.id)));
+    setExpanded((old) => new Set([...old, group.id]));
     setQuery('');
     requestAnimationFrame(
       () => void flow.fitView({ nodes: [{ id }], padding: 1, maxZoom: 2.5, duration: 300 }),
@@ -802,18 +864,18 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
         <button
           className="secondary small"
           onClick={() => {
-            setCollapsed(new Set(graph.groups.map((g) => g.id)));
+            setExpanded(new Set());
           }}
         >
-          Свернуть все слои
+          Сблизить все слои
         </button>
         <button
           className="secondary small"
           onClick={() => {
-            setCollapsed(new Set());
+            setExpanded(new Set(graph.groups.map((g) => g.id)));
           }}
         >
-          Раскрыть все слои
+          Раздвинуть все слои
         </button>
         <button className="secondary small" onClick={fit}>
           Вписать слои
@@ -833,6 +895,7 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
             edgeTypes={edgeTypes}
             nodesDraggable={false}
             elevateNodesOnSelect={false}
+            elevateEdgesOnSelect={false}
             nodesConnectable={false}
             edgesReconnectable={false}
             deleteKeyCode={null}
@@ -863,7 +926,7 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
               pannable
               zoomable
               nodeColor={(n) =>
-                n.type === 'bounds'
+                n.type === 'bounds' || n.type === 'heading'
                   ? 'transparent'
                   : n.type === 'plane'
                     ? 'var(--accent-soft)'
@@ -925,12 +988,12 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
                 </label>
                 <button
                   className="icon-button"
-                  aria-label={`${collapsed.has(g.id) ? 'Раскрыть' : 'Свернуть'} ракурс ${g.name}`}
+                  aria-label={`${expanded.has(g.id) ? 'Сблизить' : 'Раздвинуть'} ракурс ${g.name}`}
                   onClick={() => toggle(g.id)}
                 >
                   <ChevronDown
                     size={15}
-                    style={{ transform: collapsed.has(g.id) ? 'rotate(-90deg)' : undefined }}
+                    style={{ transform: expanded.has(g.id) ? undefined : 'rotate(-90deg)' }}
                   />
                 </button>
               </div>
@@ -1003,6 +1066,21 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
               ))}
             </section>
           )}
+          {!!scene.blockedRoutes.length && (
+            <details className="viewpoint-unresolved">
+              <summary>Связи без свободного прохода ({scene.blockedRoutes.length})</summary>
+              <p className="muted">
+                Перекрывающиеся объекты не оставляют места для стрелки. Измените их расположение на
+                диаграмме.
+              </p>
+              {scene.blockedRoutes.map((c) => (
+                <div key={c.id}>
+                  <strong>{c.name}</strong>
+                  <Link href={`/solutions?diagram=${c.source}`}>Открыть исходную диаграмму</Link>
+                </div>
+              ))}
+            </details>
+          )}
           {!!graph.unresolved.length && (
             <details className="viewpoint-unresolved">
               <summary>Переходы без исходной диаграммы ({graph.unresolved.length})</summary>
@@ -1025,8 +1103,8 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
           )}
           <p className="muted">
             Порядок ракурсов задаёт порядок плоскостей. Переходы могут пропускать слои. Перемещайте
-            фон, меняйте масштаб и выбирайте объекты, диаграммы или линии связей. Двойной щелчок по
-            объекту приближает его.
+            фон, меняйте масштаб и выбирайте объекты, диаграммы или линии связей. Нажмите на подпись
+            слоя, чтобы раздвинуть его. Двойной щелчок по объекту приближает его.
           </p>
           <div className="viewpoint-layer-legend">
             {Object.entries(kindNames).map(([id, name]) => (

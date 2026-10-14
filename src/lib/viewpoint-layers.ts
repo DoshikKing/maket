@@ -195,24 +195,9 @@ export function objectPrism(a: NodeAppearance, shapes: CustomShape[] = []) {
   }, 0);
   if (area < 0) outline.reverse();
   const points = outline.map((p) => ({ x: p.x + p.y, y: w / 4 - p.x / 4 + p.y / 4 }));
-  const frontPoint =
-    a.shape === 'custom' && custom
-      ? outline.reduce((best, point) =>
-          point.y > best.y ||
-          (point.y === best.y &&
-            (Math.abs(point.x - w / 2) < Math.abs(best.x - w / 2) ||
-              (Math.abs(point.x - w / 2) === Math.abs(best.x - w / 2) && point.x < best.x)))
-            ? point
-            : best,
-        )
-      : { x: w / 2, y: h - inset };
   const left = points.reduce((a, b) => (b.x < a.x ? b : a));
   const right = points.reduce((a, b) => (b.x > a.x ? b : a));
   return {
-    front: {
-      x: frontPoint.x + frontPoint.y,
-      y: w / 4 - frontPoint.x / 4 + frontPoint.y / 4 + OBJECT_DEPTH / 2,
-    },
     target: { x: left.x, y: left.y + OBJECT_DEPTH / 2 },
     source: { x: right.x, y: right.y + OBJECT_DEPTH / 2 },
     width: w + h,
@@ -227,11 +212,7 @@ export function objectPrism(a: NodeAppearance, shapes: CustomShape[] = []) {
   };
 }
 // Visibility never changes plane geometry or the slots reserved for diagrams.
-export function layerLayout(
-  count: number,
-  collapsed: boolean,
-  diagrams?: { width: number; depth: number }[],
-) {
+export function layerLayout(count: number, diagrams?: { width: number; depth: number }[]) {
   const tiles = Array.from(
     { length: count },
     (_, i) => diagrams?.[i] ?? { width: 360, depth: 240 },
@@ -247,8 +228,7 @@ export function layerLayout(
     items.forEach((tile, column) => {
       const u = 40 + (column ? columnWidths[0] + 80 : 0),
         v = depth;
-      if (!collapsed)
-        positions.push({ x: u + v, y: surfaceWidth / 4 + 25 - u / 4 + v / 4 - tile.width / 4 });
+      positions.push({ x: u + v, y: surfaceWidth / 4 + 25 - u / 4 + v / 4 - tile.width / 4 });
     });
     depth += Math.max(240, ...items.map((tile) => tile.depth)) + 100;
   }
@@ -262,30 +242,235 @@ export function layerLayout(
   };
 }
 
-export type LayerRoutePlane = { origin: number; depth: number };
+export type LayerPoint = { x: number; y: number };
+export type LayerObstacle = { id: string; points: LayerPoint[] };
+export type LayerRoutePlane = { origin: number; depth: number; obstacles?: LayerObstacle[] };
+
+export function convexHull(points: LayerPoint[]): LayerPoint[] {
+  const sorted = [...points].sort((a, b) => a.x - b.x || a.y - b.y);
+  const cross = (a: LayerPoint, b: LayerPoint, c: LayerPoint) =>
+    (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+  const half = (list: LayerPoint[]) => {
+    const hull: LayerPoint[] = [];
+    for (const p of list) {
+      while (hull.length > 1 && cross(hull[hull.length - 2], hull[hull.length - 1], p) <= 0)
+        hull.pop();
+      hull.push(p);
+    }
+    return hull.slice(0, -1);
+  };
+  return [...half(sorted), ...half([...sorted].reverse())];
+}
+export function layerObjectObstacle(
+  id: string,
+  u: number,
+  v: number,
+  width: number,
+  height: number,
+): LayerObstacle {
+  // Extrusion shifts the apparent footprint in the inverse projection by (+2z, -2z).
+  const points = [0, OBJECT_DEPTH].flatMap((z) => [
+    { x: u + 2 * z, y: v - 2 * z },
+    { x: u + width + 2 * z, y: v - 2 * z },
+    { x: u + width + 2 * z, y: v + height - 2 * z },
+    { x: u + 2 * z, y: v + height - 2 * z },
+  ]);
+  return {
+    id,
+    points: convexHull(
+      points.flatMap((p) =>
+        [-6, 6].flatMap((x) => [-6, 6].map((y) => ({ x: p.x + x, y: p.y + y }))),
+      ),
+    ),
+  };
+}
+export function crossesObstacle(a: LayerPoint, b: LayerPoint, polygon: LayerPoint[]): boolean {
+  let low = 0,
+    high = 1;
+  for (let i = 0; i < polygon.length; i++) {
+    const p = polygon[i],
+      q = polygon[(i + 1) % polygon.length];
+    const dx = q.x - p.x,
+      dy = q.y - p.y;
+    const initial = dx * (a.y - p.y) - dy * (a.x - p.x);
+    const change = dx * (b.y - a.y) - dy * (b.x - a.x);
+    if (Math.abs(change) < 1e-8) {
+      if (initial <= 1e-7) return false;
+    } else if (change > 0) low = Math.max(low, (1e-7 - initial) / change);
+    else high = Math.min(high, (1e-7 - initial) / change);
+    if (low >= high - 1e-8) return false;
+  }
+  return low < high - 1e-8;
+}
+// A* on the obstacle boundary coordinates; segments stay parallel to the plane's two axes.
+function avoidObjects(
+  start: LayerPoint,
+  goal: LayerPoint,
+  obstacles: LayerObstacle[],
+  depth: number,
+): LayerPoint[] | null {
+  const xs = [...new Set([start.x, goal.x, ...obstacles.flatMap((o) => o.points.map((p) => p.x))])]
+    .filter((x) => x >= goal.x && x <= start.x)
+    .sort((a, b) => a - b);
+  const ys = [
+    ...new Set([0, depth, start.y, goal.y, ...obstacles.flatMap((o) => o.points.map((p) => p.y))]),
+  ]
+    .filter((y) => y >= Math.min(0, start.y) && y <= Math.max(depth, start.y))
+    .sort((a, b) => a - b);
+  const index = (x: number, y: number) => y * xs.length + x;
+  const point = (id: number) => ({ x: xs[id % xs.length], y: ys[Math.floor(id / xs.length)] });
+  const first = index(xs.indexOf(start.x), ys.indexOf(start.y)),
+    last = index(xs.indexOf(goal.x), ys.indexOf(goal.y));
+  const heap: { key: number; score: number }[] = [];
+  const push = (item: { key: number; score: number }) => {
+    heap.push(item);
+    let i = heap.length - 1;
+    while (i) {
+      const parent = (i - 1) >> 1;
+      if (heap[parent].score <= item.score) break;
+      heap[i] = heap[parent];
+      i = parent;
+    }
+    heap[i] = item;
+  };
+  const pop = () => {
+    const best = heap[0],
+      tail = heap.pop()!;
+    if (heap.length) {
+      let i = 0;
+      while (i * 2 + 1 < heap.length) {
+        let child = i * 2 + 1;
+        if (child + 1 < heap.length && heap[child + 1].score < heap[child].score) child++;
+        if (heap[child].score >= tail.score) break;
+        heap[i] = heap[child];
+        i = child;
+      }
+      heap[i] = tail;
+    }
+    return best;
+  };
+  const costs = new Map<number, number>(),
+    previous = new Map<number, number>();
+  const blocked = new Map<string, boolean>();
+  const heuristic = (p: LayerPoint) => Math.abs(p.x - goal.x) + Math.abs(p.y - goal.y);
+  costs.set(first * 2, 0);
+  push({ key: first * 2, score: heuristic(start) });
+  while (heap.length) {
+    const current = pop(),
+      id = Math.floor(current.key / 2),
+      direction = current.key % 2,
+      p = point(id),
+      cost = costs.get(current.key)!;
+    if (current.score > cost + heuristic(p) + 1e-7) continue;
+    if (id === last) {
+      const path: LayerPoint[] = [];
+      let key: number | undefined = current.key;
+      while (key !== undefined) {
+        path.push(point(Math.floor(key / 2)));
+        key = previous.get(key);
+      }
+      return path.reverse();
+    }
+    const x = id % xs.length,
+      y = Math.floor(id / xs.length);
+    for (const [nx, ny, dir] of [
+      [x - 1, y, 0],
+      [x + 1, y, 0],
+      [x, y - 1, 1],
+      [x, y + 1, 1],
+    ]) {
+      if (nx < 0 || nx >= xs.length || ny < 0 || ny >= ys.length) continue;
+      const next = index(nx, ny),
+        q = point(next),
+        edge = `${Math.min(id, next)}:${Math.max(id, next)}`;
+      if (!blocked.has(edge))
+        blocked.set(
+          edge,
+          obstacles.some((o) => crossesObstacle(p, q, o.points)),
+        );
+      if (blocked.get(edge)) continue;
+      const key = next * 2 + dir,
+        value = cost + Math.abs(q.x - p.x) + Math.abs(q.y - p.y) + (dir === direction ? 0 : 16);
+      if (value >= (costs.get(key) ?? Infinity)) continue;
+      costs.set(key, value);
+      previous.set(key, current.key);
+      push({ key, score: value + heuristic(q) });
+    }
+  }
+  return null;
+}
+const branchCache = new WeakMap<LayerObstacle[], Map<string, LayerPoint[] | null>>();
 export function layerConnectionRoute(
-  source: { x: number; y: number },
-  target: { x: number; y: number },
+  source: LayerPoint,
+  target: LayerPoint,
   sourcePlane: LayerRoutePlane,
   targetPlane: LayerRoutePlane,
   lane: number,
+  sourceId?: string,
+  targetId?: string,
 ) {
   const column = -80 - lane * 24;
-  // Runs on a plane follow its two projection axes; only the outside column is vertical.
-  const front = (point: { x: number; y: number }, plane: LayerRoutePlane, margin: number) => {
-    const intercept = plane.origin + (plane.depth + margin) / 2;
-    const x = 2 * intercept - 2 * point.y + point.x / 2;
-    return { x, y: intercept - x / 4 };
+  const branch = (
+    port: LayerPoint,
+    plane: LayerRoutePlane,
+    owner: string | undefined,
+    margin: number,
+  ) => {
+    const start = {
+      x: port.x / 2 - 2 * (port.y - plane.origin),
+      y: port.x / 2 + 2 * (port.y - plane.origin),
+    };
+    const obstacles = plane.obstacles ?? [],
+      own = obstacles.find((o) => o.id === owner);
+    const escape = {
+      x: own ? Math.min(start.x, ...own.points.map((p) => p.x + p.y - start.y)) - 1 : start.x - 8,
+      y: start.y,
+    };
+    if (obstacles.some((o) => o !== own && crossesObstacle(start, escape, o.points))) return null;
+    const goal = { x: -24 - margin, y: start.y };
+    const cache = branchCache.get(obstacles) ?? new Map<string, LayerPoint[] | null>();
+    branchCache.set(obstacles, cache);
+    const key = `${escape.x}:${escape.y}:${goal.x}:${goal.y}:${plane.depth}`;
+    if (!cache.has(key))
+      cache.set(
+        key,
+        obstacles.some((o) => crossesObstacle(escape, goal, o.points))
+          ? avoidObjects(escape, goal, obstacles, plane.depth)
+          : [escape, goal],
+      );
+    const path = cache.get(key)!;
+    if (!path) return null;
+    const project = (p: LayerPoint) => ({ x: p.x + p.y, y: plane.origin - p.x / 4 + p.y / 4 });
+    const points = [port, ...path.map(project)];
+    const end = points[points.length - 1];
+    points.push({ x: column, y: end.y + (end.x - column) / 4 });
+    return points;
   };
-  const sourceFront = front(source, sourcePlane, 16 + (lane % 4) * 14);
-  const targetFront = front(target, targetPlane, 30 + (lane % 4) * 14);
-  const sourceColumn = { x: column, y: sourceFront.y + (sourceFront.x - column) / 4 };
-  const targetColumn = { x: column, y: targetFront.y + (targetFront.x - column) / 4 };
-  const points = [source, sourceFront, sourceColumn, targetColumn, targetFront, target];
+  const outgoing = branch(source, sourcePlane, sourceId, (lane % 4) * 8);
+  const incoming = branch(target, targetPlane, targetId, 8 + (lane % 4) * 8);
+  if (!outgoing || !incoming) return null;
+  const raw = [...outgoing, ...incoming.reverse()];
+  const points: LayerPoint[] = [];
+  for (const p of raw) {
+    const a = points[points.length - 2],
+      b = points[points.length - 1];
+    if (b && Math.hypot(p.x - b.x, p.y - b.y) < 1e-7) continue;
+    if (a && b && Math.abs((b.x - a.x) * (p.y - b.y) - (b.y - a.y) * (p.x - b.x)) < 1e-7)
+      points.pop();
+    points.push(p);
+  }
   return {
     points,
     path: points.map((p, i) => `${i ? 'L' : 'M'} ${p.x} ${p.y}`).join(' '),
     labelX: column,
-    labelY: (sourceColumn.y + targetColumn.y) / 2,
+    labelY: (outgoing[outgoing.length - 1].y + incoming[0].y) / 2,
   };
+}
+export function layerOffsets(heights: number[], expanded: Set<number>) {
+  let top = 0;
+  return heights.map((height, i) => {
+    const offset = top;
+    top += expanded.has(i) || expanded.has(i + 1) ? height + 110 : Math.max(120, height * 0.55);
+    return offset;
+  });
 }
