@@ -91,7 +91,7 @@ type LayerEdge = Edge<
 function RoutedEdge({ id, data, label, selected, markerEnd, style }: EdgeProps<LayerEdge>) {
   const [hovered, setHovered] = useState(false);
   const zoom = useStore((state) => state.transform[2]);
-  if (!data || zoom < 0.55) return null;
+  if (!data) return null;
   return (
     <g onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
       <BaseEdge
@@ -125,12 +125,12 @@ function RoutedEdge({ id, data, label, selected, markerEnd, style }: EdgeProps<L
 function DetailLevel() {
   const level = useStore((state) => {
     const zoom = state.transform[2];
-    return zoom < 0.4
-      ? 'Слои и диаграммы'
-      : zoom < 0.55
-        ? 'Объекты'
+    return zoom < 0.2
+      ? 'Связи слоёв'
+      : zoom < 0.4
+        ? 'Связи диаграмм'
         : zoom < 0.85
-          ? 'Межслойные связи'
+          ? 'Объекты и связи'
           : 'Все детали';
   });
   return (
@@ -419,6 +419,9 @@ export function ViewpointLayersPage({ diagramId }: { diagramId?: string }) {
 function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string }) {
   const flow = useReactFlow<SceneNode>();
   const graph = useMemo(() => viewpointLayers(space), [space]);
+  const endpoints = useStore((state) =>
+    state.transform[2] < 0.2 ? 'layers' : state.transform[2] < 0.4 ? 'diagrams' : 'objects',
+  );
   const [hidden, setHidden] = useState<Set<string>>(new Set()),
     [query, setQuery] = useState(''),
     [kind, setKind] = useState('all'),
@@ -600,6 +603,12 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
     const endpoint = (c: LayerConnection, side: 'source' | 'target') => {
       const location = locations.get(c[side]);
       if (!location) return undefined;
+      if (
+        endpoints === 'layers' &&
+        locations.get(c.source)?.layerId !== locations.get(c.target)?.layerId
+      )
+        return `layer:${location.layerId}`;
+      if (endpoints !== 'objects') return location.nodeId;
       const entityId = c.entityId ?? space.diagrams.find((d) => d.id === c[side])?.entityId;
       const aliases = entityId ? location.objects.get(entityId) : undefined;
       const preferred = selection?.kind === 'object' ? selection.id : undefined;
@@ -668,7 +677,12 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
         (!focusEntity ||
           connections.some((c) => c.entityId === focusEntity) ||
           entityFor(source) === focusEntity ||
-          entityFor(target) === focusEntity);
+          entityFor(target) === focusEntity ||
+          connections.some((c) =>
+            [c.source, c.target].some(
+              (id) => space.diagrams.find((d) => d.id === id)?.entityId === focusEntity,
+            ),
+          ));
       if (focusEntity && related) {
         for (const nodeId of [source, target]) {
           const entityId = entityFor(nodeId);
@@ -713,7 +727,8 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
           labelBgStyle: { fill: 'var(--panel)' },
           labelBgPadding: [6, 4],
           zIndex: Math.max(byId.get(source)!.zIndex!, byId.get(target)!.zIndex!) - 1,
-          selected: selection?.kind === 'connection' && selection.id === id,
+          selected:
+            selection?.kind === 'connection' && connections.some((c) => c.id === selection.id),
         } as LayerEdge,
       ];
     });
@@ -799,6 +814,7 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
     };
   }, [
     graph,
+    endpoints,
     lanes,
     space,
     layouts,
@@ -848,7 +864,8 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
     selection?.kind === 'diagram' ? space.diagrams.find((d) => d.id === selection.id) : undefined;
   const selectedConnections =
     selection?.kind === 'connection'
-      ? scene.edges.find((e) => e.id === selection.id)?.data?.connections
+      ? scene.edges.find((e) => e.data?.connections.some((c) => c.id === selection.id))?.data
+          ?.connections
       : undefined;
   const matches = space.diagrams.filter((d) =>
     d.name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()),
@@ -905,7 +922,7 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
       </p>
       <div className="viewpoint-layers-layout">
         <div className="viewpoint-layers-canvas" aria-label="Обозреватель слоёв 2.5D">
-          <ReactFlow<SceneNode>
+          <ReactFlow<SceneNode, LayerEdge>
             nodes={scene.nodes}
             edges={scene.edges}
             nodeTypes={nodeTypes}
@@ -934,7 +951,10 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
               if (n.type === 'diagram') focus(n.data.diagram.id);
               if (n.type === 'object') focusObject(n.id, n.data.diagramId);
             }}
-            onEdgeClick={(_, e) => setSelection({ kind: 'connection', id: e.id })}
+            onEdgeClick={(_, e) => {
+              const id = e.data?.connections[0]?.id;
+              if (id) setSelection({ kind: 'connection', id });
+            }}
             onPaneClick={() => setSelection(null)}
           >
             <DetailLevel />
