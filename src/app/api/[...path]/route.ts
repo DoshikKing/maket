@@ -508,6 +508,8 @@ async function handle(req: NextRequest, context: { params: Promise<{ path: strin
             parentId: z.string().nullable().optional(),
             attributes: attributesSchema.optional(),
             copyOf: z.string().optional(),
+            baseId: z.string().optional(),
+            derivation: z.enum(['inheritance', 'instance']).optional(),
           })
           .parse(await body(req));
         return json(await addObject(user.id, input), 201);
@@ -543,7 +545,8 @@ async function handle(req: NextRequest, context: { params: Promise<{ path: strin
           .parse(await body(req));
         return json(await deleteObject(user.id, id, revision, incarnation));
       }
-      if (method === 'GET') return json(snapshot(object));
+      if (method === 'GET')
+        return json(space.objects.find((o) => o.id === object.id) ?? snapshot(object));
       if (method === 'PATCH') {
         const input = z
           .object({

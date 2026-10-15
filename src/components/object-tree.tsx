@@ -22,6 +22,7 @@ import {
 import { api, date } from '@/lib/client';
 import {
   attributesSchema,
+  resolveInheritance,
   relationEntity,
   entityLabels,
   type ModelObject,
@@ -44,6 +45,9 @@ export function ObjectEditor({
   object,
   kind = 'object',
   parentId,
+  baseId: initialBase,
+  derivation: initialDerivation,
+  baseObjects,
   objects,
   onSaved,
   onClose,
@@ -52,6 +56,9 @@ export function ObjectEditor({
   object?: ModelObject;
   kind?: ModelObject['kind'];
   parentId?: string | null;
+  baseId?: string;
+  derivation?: 'inheritance' | 'instance';
+  baseObjects?: ModelObject[];
   objects: ModelObject[];
   onSaved: (o: ModelObject) => void;
   onClose: () => void;
@@ -59,6 +66,12 @@ export function ObjectEditor({
 }) {
   const [name, setName] = useState(
       object?.name ??
+        (initialBase
+          ? `${initialDerivation === 'instance' ? 'Реализация' : 'Наследник'} ${(baseObjects ?? objects).find((o) => o.id === initialBase)?.name ?? 'объекта'}`.slice(
+              0,
+              100,
+            )
+          : undefined) ??
         {
           solution: 'Новое решение',
           project: 'Новый проект',
@@ -71,6 +84,10 @@ export function ObjectEditor({
     [parent, setParent] = useState(object?.parentId ?? parentId ?? ''),
     [attributes, setAttributes] = useState(
       Object.entries(object?.attributes ?? {}).map(([key, value]) => ({ key, value })),
+    ),
+    [base, setBase] = useState(initialBase ?? ''),
+    [derivation, setDerivation] = useState<'inheritance' | 'instance'>(
+      initialDerivation ?? 'inheritance',
     ),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(''),
@@ -116,7 +133,7 @@ export function ObjectEditor({
               object ? `objects/${object.id}` : 'objects',
               object ? 'PATCH' : 'POST',
               {
-                ...(!object ? { kind } : {}),
+                ...(!object ? { kind, ...(base ? { baseId: base, derivation } : {}) } : {}),
                 name,
                 description,
                 parentId: parent || null,
@@ -125,6 +142,7 @@ export function ObjectEditor({
               },
             );
             onSaved(result);
+            if (base) onRelationsChanged?.();
             onClose();
           } catch (err) {
             setError((err as Error).message);
@@ -170,6 +188,67 @@ export function ObjectEditor({
               ))}
           </select>
         </label>
+        {!object && kind === 'object' && (
+          <fieldset>
+            <legend>Наследование</legend>
+            <label>
+              Базовый объект
+              <select
+                aria-label="Базовый объект"
+                value={base}
+                onChange={(e) => setBase(e.target.value)}
+              >
+                <option value="">Без наследования</option>
+                {(baseObjects ?? objects)
+                  .filter((o) => !o.archived && (!o.kind || o.kind === 'object'))
+                  .map((o) => (
+                    <option key={o.id} value={o.id}>
+                      {o.name}
+                    </option>
+                  ))}
+              </select>
+            </label>
+            {base && (
+              <label>
+                Вид наследования
+                <select
+                  aria-label="Вид наследования"
+                  value={derivation}
+                  onChange={(e) => setDerivation(e.target.value as 'inheritance' | 'instance')}
+                >
+                  <option value="inheritance">Наследник — наследует</option>
+                  <option value="instance">Реализация — экземпляр</option>
+                </select>
+              </label>
+            )}
+          </fieldset>
+        )}
+        {object?.baseId && (
+          <section aria-label="Наследование объекта">
+            <strong>
+              {object.derivation === 'instance' ? 'Реализация объекта' : 'Наследует от'}:{' '}
+              {(baseObjects ?? objects).find((o) => o.id === object.baseId)?.name ?? object.baseId}
+            </strong>
+            <p className="muted small-text">
+              Базовые атрибуты обновляются автоматически. Собственные значения переопределяют
+              унаследованные; удаление переопределения возвращает значение базы.
+            </p>
+            {Object.entries(object.inheritedAttributes ?? {}).map(([key, value]) => (
+              <div className="inherited-attribute" key={key}>
+                <code>{key}</code>
+                <span>{String(value)}</span>
+                <button
+                  type="button"
+                  className="secondary small"
+                  disabled={attributes.some((a) => a.key === key) || attributes.length >= 100}
+                  onClick={() => setAttributes([...attributes, { key, value }])}
+                >
+                  Переопределить {key}
+                </button>
+              </div>
+            ))}
+          </section>
+        )}
         <div className="section-title">
           <strong>Общие атрибуты</strong>
           <button
@@ -408,11 +487,14 @@ export function ObjectTree({
   onRemove: (object: ModelObject) => Promise<void>;
 }) {
   const [query, setQuery] = useState(''),
-    [editing, setEditing] = useState<{ object?: ModelObject; parentId?: string | null } | null>(
-      null,
-    ),
+    [editing, setEditing] = useState<{
+      object?: ModelObject;
+      parentId?: string | null;
+      baseId?: string;
+      derivation?: 'inheritance' | 'instance';
+    } | null>(null),
     [error, setError] = useState('');
-  const entities = [...objects, ...relations.map(relationEntity)];
+  const entities = [...resolveInheritance(objects, relations), ...relations.map(relationEntity)];
   const focusTarget = focusRequest?.id ?? focusId;
   const focusPath = focusTarget ? treeObjectPath(focusTarget, objects, relations) : [];
   const focusThroughRelation = focusPath.some((id) => relations.some((r) => r.id === id));
@@ -658,6 +740,36 @@ export function ObjectTree({
                   </button>
                   {!relationIds.has(o.id) && (
                     <>
+                      {(!o.kind || o.kind === 'object') && (
+                        <>
+                          <button
+                            aria-label={`Создать наследника ${o.name}`}
+                            disabled={o.archived}
+                            onClick={() =>
+                              setEditing({
+                                parentId: o.parentId,
+                                baseId: o.id,
+                                derivation: 'inheritance',
+                              })
+                            }
+                          >
+                            <GitBranch size={12} />
+                          </button>
+                          <button
+                            aria-label={`Создать реализацию ${o.name}`}
+                            disabled={o.archived}
+                            onClick={() =>
+                              setEditing({
+                                parentId: o.parentId,
+                                baseId: o.id,
+                                derivation: 'instance',
+                              })
+                            }
+                          >
+                            <Box size={12} />
+                          </button>
+                        </>
+                      )}
                       <button
                         hidden={o.kind === 'diagram'}
                         aria-label={`Копировать объект ${o.name}`}
@@ -735,7 +847,7 @@ export function ObjectTree({
                 </>
               }
               className={`object-tree-row tree-row ${(selectedId ?? focusId) === o.id ? 'selected' : ''} ${o.archived ? 'archived' : ''}`}
-              title={`${entityLabels[kind]} · Родитель: ${entities.find((p) => p.id === o.parentId)?.name ?? 'Корень пространства'}`}
+              title={`${o.derivation === 'instance' ? 'Реализация' : o.derivation === 'inheritance' ? 'Наследник' : entityLabels[kind]} · Родитель: ${entities.find((p) => p.id === o.parentId)?.name ?? 'Корень пространства'}`}
               draggable={!o.archived}
               data-object-id={o.id}
               onDragStart={(e) => {
@@ -795,7 +907,11 @@ export function ObjectTree({
               >
                 {o.name}
                 <small>
-                  {entityLabels[kind]}
+                  {o.derivation === 'instance'
+                    ? 'Реализация'
+                    : o.derivation === 'inheritance'
+                      ? 'Наследник'
+                      : entityLabels[kind]}
                   {focusId === o.id ? ' · Открыта' : ''}
                 </small>
                 {o.archived && <small>Архив</small>}
@@ -1043,6 +1159,9 @@ export function ObjectTree({
           onRelationsChanged={onRefresh}
           object={editing.object}
           parentId={editing.parentId}
+          baseId={editing.baseId}
+          derivation={editing.derivation}
+          baseObjects={objects}
           objects={entities}
           onSaved={onSaved}
           onClose={() => setEditing(null)}

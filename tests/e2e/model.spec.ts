@@ -4500,3 +4500,217 @@ test('browser: 2.5D viewpoint layers keep static layers, focus and semantic zoom
   await page.getByText('Переходы без исходной диаграммы (1)', { exact: true }).click();
   await expect(page.locator('.viewpoint-unresolved')).toContainText(orphan.name);
 });
+
+test('inheritance: live attributes, protected semantic links, instance markers and portable diagrams', async ({
+  page,
+  request,
+  playwright,
+}) => {
+  test.setTimeout(120000);
+  await login(request, page);
+  const baseResponse = await request.post('/api/objects', {
+    data: { name: 'Базовый сервис', attributes: { automated: true, region: 'EU', count: 7 } },
+  });
+  expect(baseResponse.status()).toBe(201);
+  let base = await baseResponse.json();
+  const inheritedResponse = await request.post('/api/objects', {
+    data: {
+      name: 'Сервис наследник',
+      baseId: base.id,
+      derivation: 'inheritance',
+      attributes: { region: 'RU' },
+    },
+  });
+  expect(inheritedResponse.status()).toBe(201);
+  const child = await inheritedResponse.json();
+  expect(child).toMatchObject({
+    baseId: base.id,
+    derivation: 'inheritance',
+    inheritedAttributes: { region: 'EU', automated: true },
+    attributes: { region: 'RU' },
+    parentId: null,
+  });
+  const instanceResponse = await request.post('/api/objects', {
+    data: {
+      name: 'Сервис прод',
+      baseId: child.id,
+      derivation: 'instance',
+      attributes: { count: 0 },
+    },
+  });
+  expect(instanceResponse.status()).toBe(201);
+  const instance = await instanceResponse.json();
+  let space = await (await request.get('/api/model')).json();
+  const extendsLink = space.relations.find((r: { targetId: string }) => r.targetId === child.id);
+  const instanceLink = space.relations.find(
+    (r: { targetId: string }) => r.targetId === instance.id,
+  );
+  expect(extendsLink).toMatchObject({ sourceId: base.id, relationType: 'наследует' });
+  expect(instanceLink).toMatchObject({ sourceId: child.id, relationType: 'экземпляр' });
+  expect(
+    (
+      await request.post('/api/relations', {
+        data: { name: 'Цикл', sourceId: instance.id, targetId: base.id, relationType: 'наследует' },
+      })
+    ).status(),
+  ).toBe(400);
+  expect(
+    (
+      await request.post('/api/relations', {
+        data: {
+          name: 'Вторая база',
+          sourceId: base.id,
+          targetId: instance.id,
+          relationType: 'экземпляр',
+        },
+      })
+    ).status(),
+  ).toBe(400);
+  expect(
+    (
+      await request.patch(`/api/relations/${extendsLink.id}`, {
+        data: { revision: extendsLink.revision, sourceId: instance.id },
+      })
+    ).status(),
+  ).toBe(400);
+  expect(
+    (
+      await request.post('/api/objects', {
+        data: { name: 'Нет базы', baseId: 'missing', derivation: 'instance' },
+      })
+    ).status(),
+  ).toBe(404);
+  base = await (
+    await request.patch(`/api/objects/${base.id}`, {
+      data: {
+        revision: base.revision,
+        attributes: { automated: false, region: 'US', count: 9, version: 'v2' },
+      },
+    })
+  ).json();
+  space = await (await request.get('/api/model')).json();
+  expect(space.objects.find((o: { id: string }) => o.id === instance.id)).toMatchObject({
+    attributes: { count: 0 },
+    inheritedAttributes: { count: 9, region: 'RU', automated: false, version: 'v2' },
+  });
+  const foreign = await (
+    await request.post('/api/workspaces', { data: { name: 'Изолированная область наследования' } })
+  ).json();
+  expect(
+    (
+      await request.post('/api/objects', {
+        headers: { 'X-Maket-Workspace': foreign.id },
+        data: { name: 'Чужой наследник', baseId: base.id, derivation: 'inheritance' },
+      })
+    ).status(),
+  ).toBe(404);
+  await page.goto('/solutions');
+  await treeAction(
+    page,
+    page.locator(`[data-tree-entity="${base.id}"] > .tree-row`),
+    `Создать наследника ${base.name}`,
+  );
+  let dialog = page.getByRole('dialog');
+  await expect(dialog.getByLabel('Базовый объект', { exact: true })).toHaveValue(base.id);
+  await dialog.getByLabel('Имя объекта', { exact: true }).fill('Создан из меню');
+  await dialog.getByRole('button', { name: 'Сохранить объект', exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await treeAction(
+    page,
+    page.locator(`[data-tree-entity="${base.id}"] > .tree-row`),
+    `Создать реализацию ${base.name}`,
+  );
+  dialog = page.getByRole('dialog');
+  await expect(dialog.getByLabel('Вид наследования', { exact: true })).toHaveValue('instance');
+  await dialog.getByLabel('Имя объекта', { exact: true }).fill('Реализация из меню');
+  await dialog.getByRole('button', { name: 'Сохранить объект', exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await treeAction(
+    page,
+    page.locator(`[data-tree-entity="${instance.id}"] > .tree-row`),
+    `Свойства ${instance.name}`,
+  );
+  dialog = page.getByRole('dialog');
+  await expect(dialog.getByRole('region', { name: 'Наследование объекта' })).toContainText(
+    'Сервис наследник',
+  );
+  await expect(dialog.getByRole('region', { name: 'Наследование объекта' })).toContainText('v2');
+  await dialog.getByRole('button', { name: 'Переопределить region', exact: true }).click();
+  await dialog.getByLabel('Значение атрибута 2', { exact: true }).fill('APAC');
+  await dialog.getByRole('button', { name: 'Сохранить объект', exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  let d = await create(request, 'Наследование на диаграмме');
+  for (const id of [base.id, child.id, instance.id]) d = await place(request, d, id);
+  d = await save(request, d, {
+    ...d.document,
+    edges: [extendsLink, instanceLink].map((r, index) => ({
+      id: `semantic-${index}`,
+      relationId: r.id,
+      bindingId: null,
+      typeId: 'association',
+      source: d.document.nodes[index].id,
+      target: d.document.nodes[index + 1].id,
+      sourcePort: 'out',
+      targetPort: 'in',
+      properties: {},
+    })),
+  });
+  expect(d.document.objects.find((o) => o.id === instance.id)).toMatchObject({
+    derivation: 'instance',
+    attributes: { count: 0, region: 'APAC' },
+    inheritedAttributes: { version: 'v2' },
+  });
+  await page.goto(`/diagrams/${d.id}`);
+  await expect(page.locator(`.instance-marker[data-instance-of="${child.id}"]`)).toBeVisible();
+  await expect(page.locator('.react-flow__edge-text')).toContainText(['«extends»', '«instance»']);
+  await expect(
+    page.locator('.react-flow__edge[data-id="semantic-1"] .react-flow__edge-path'),
+  ).toHaveCSS('stroke', 'rgb(13, 148, 136)');
+  await expect(
+    page.locator('.react-flow__edge[data-id="semantic-1"] .react-flow__edge-path'),
+  ).not.toHaveCSS('stroke-dasharray', 'none');
+  const share = await (
+    await request.post(`/api/diagrams/${d.id}/share`, { data: { enabled: true } })
+  ).json();
+  const anonymous = await playwright.request.newContext({ baseURL: 'http://localhost:3000' });
+  const publicData = await (
+    await anonymous.get(`/api/public/${share.path.split('/').pop()}`)
+  ).json();
+  expect(
+    publicData.document.objects.find((o: { id: string }) => o.id === instance.id),
+  ).toMatchObject({ derivation: 'instance' });
+  await anonymous.dispose();
+  await page.goto(share.path);
+  await expect(page.locator(`svg [data-instance-of="${child.id}"]`)).toBeVisible();
+  await expect(page.getByRole('img', { name: 'Диаграмма', exact: true })).toContainText(
+    '«extends»',
+  );
+  const instanceOnly = await place(
+    request,
+    await create(request, 'Только реализация'),
+    instance.id,
+  );
+  expect(instanceOnly.document.nodes).toHaveLength(1);
+  expect(instanceOnly.document.objects.map((o) => o.id).sort()).toEqual(
+    [base.id, child.id, instance.id].sort(),
+  );
+  const importedResponse = await request.post('/api/diagrams', {
+    data: { name: 'Импорт наследования', document: instanceOnly.document },
+  });
+  expect(importedResponse.status()).toBe(201);
+  const imported = await importedResponse.json();
+  expect(
+    imported.document.relations.map((r: { relationType: string }) => r.relationType).sort(),
+  ).toEqual(['наследует', 'экземпляр']);
+  expect(
+    imported.document.objects.find((o: ModelObject) => o.derivation === 'instance'),
+  ).toMatchObject({
+    attributes: { count: 0, region: 'APAC' },
+    inheritedAttributes: { version: 'v2' },
+  });
+  expect(
+    imported.document.objects.every(
+      (o: ModelObject) => ![base.id, child.id, instance.id].includes(o.id),
+    ),
+  ).toBe(true);
+});

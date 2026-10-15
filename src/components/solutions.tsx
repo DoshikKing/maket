@@ -49,6 +49,10 @@ export function SolutionsPage() {
     [kind, setKind] = useState<Kind>('solution'),
     [creating, setCreating] = useState(false),
     [editing, setEditing] = useState(false),
+    [deriving, setDeriving] = useState<{
+      base: ModelObject;
+      kind: 'inheritance' | 'instance';
+    } | null>(null),
     [viewpointsOpen, setViewpointsOpen] = useState(false),
     [diagramLinks, setDiagramLinks] = useState<{
       entityId: string;
@@ -185,6 +189,24 @@ export function SolutionsPage() {
           >
             <FileText size={14} />
           </Link>
+        )}
+        {entityKind(o) === 'object' && (
+          <>
+            <button
+              aria-label={`Создать наследника ${o.name}`}
+              disabled={o.archived}
+              onClick={() => setDeriving({ base: o, kind: 'inheritance' })}
+            >
+              <GitBranch size={14} />
+            </button>
+            <button
+              aria-label={`Создать реализацию ${o.name}`}
+              disabled={o.archived}
+              onClick={() => setDeriving({ base: o, kind: 'instance' })}
+            >
+              <Box size={14} />
+            </button>
+          </>
         )}
         <button
           title="Создать внутри"
@@ -328,7 +350,13 @@ export function SolutionsPage() {
                 <Icon className="tree-icon" size={16} />
                 <span>
                   {o.name}
-                  <small>{entityLabels[entityKind(o)]}</small>
+                  <small>
+                    {o.derivation === 'instance'
+                      ? 'Реализация'
+                      : o.derivation === 'inheritance'
+                        ? 'Наследник'
+                        : entityLabels[entityKind(o)]}
+                  </small>
                   {o.archived && <small>Архив</small>}
                 </span>
               </button>
@@ -647,11 +675,26 @@ export function SolutionsPage() {
           </section>
         </div>
       )}
+      {deriving && (
+        <ObjectEditor
+          baseId={deriving.base.id}
+          derivation={deriving.kind}
+          parentId={deriving.base.parentId}
+          objects={entities}
+          baseObjects={space?.objects}
+          onSaved={(o) => {
+            select(o.id);
+            void load();
+          }}
+          onClose={() => setDeriving(null)}
+        />
+      )}
       {creating && kind !== 'diagram' && kind !== 'relation' && (
         <ObjectEditor
           kind={kind}
           parentId={selected?.id ?? null}
           objects={entities}
+          baseObjects={space?.objects}
           onClose={() => setCreating(false)}
           onSaved={(o) => {
             select(o.id);
@@ -692,6 +735,7 @@ export function SolutionsPage() {
           onRelationsChanged={() => void load()}
           object={selected}
           objects={entities}
+          baseObjects={space?.objects}
           onClose={() => setEditing(false)}
           onSaved={() => void load()}
         />

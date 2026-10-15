@@ -90,6 +90,7 @@ import {
   relationEntity,
   modelErrors,
   effectiveNode,
+  resolveInheritance,
   effectiveEdge,
   type ModelRelation,
   qualify,
@@ -251,7 +252,10 @@ function Editor({ initial }: { initial: Diagram }) {
     relationsRef.current = next;
     setRelations(next);
   }, []);
-  const objectLookup = useMemo(() => new Map(objects.map((o) => [o.id, o])), [objects]);
+  const objectLookup = useMemo(
+    () => new Map(resolveInheritance(objects, allRelations).map((o) => [o.id, o])),
+    [objects, allRelations],
+  );
   const mergeObjects = useCallback((updates: ModelObject[], replace = false) => {
     const previous = new Map(objectsRef.current.map((o) => [o.id, o]));
     const next = mergeModelObjects(objectsRef.current, updates, replace);
@@ -823,10 +827,14 @@ function Editor({ initial }: { initial: Diagram }) {
         id: e.id,
         appearance: edgeAppearance(
           document.notation.edgeTypes.find((t) => t.id === e.typeId)!.appearance,
-          e.appearance,
+          effectiveEdge(
+            e,
+            document.notation.edgeTypes.find((t) => t.id === e.typeId)!,
+            relationLookup.get(e.relationId ?? ''),
+          ).appearance,
         ),
       })),
-    [document.edges, document.notation],
+    [document.edges, document.notation, relationLookup],
   );
   const edges = useMemo(
     () =>

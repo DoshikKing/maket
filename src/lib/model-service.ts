@@ -11,6 +11,8 @@ import {
 } from './notation';
 import {
   modelDiagramSchema,
+  resolveInheritance,
+  derivationTypes,
   bindingSchema,
   modelErrors,
   structureError,
@@ -90,7 +92,7 @@ async function liveDocument(tx: Tx, document: ModelDocument): Promise<ModelDocum
         ...document.nodes.map((n) => n.objectId),
         ...document.edges.flatMap((e) => (e.relationId ? [e.relationId] : [])),
       ],
-      all.map(snapshot),
+      resolveInheritance(all.map(snapshot), allRelations),
       allRelations,
     ),
   };
@@ -252,7 +254,7 @@ export async function ensureModel(ownerId: string) {
           where: { id: space.id },
           data: { revision: { increment: 1 } },
         });
-      return {
+      const result = {
         ...(await tx.modelSpace.findUniqueOrThrow({ where: { id: space.id } })),
         viewpoints: await tx.diagramViewpoint.findMany({
           where: { spaceId: space.id },
@@ -275,6 +277,7 @@ export async function ensureModel(ownerId: string) {
           })
         ).map(snapshot),
       };
+      return { ...result, objects: resolveInheritance(result.objects, result.relations) };
     },
     { timeout: 60000 },
   );
@@ -746,6 +749,8 @@ export async function addObject(
     parentId?: string | null;
     attributes?: ModelObject['attributes'];
     copyOf?: string;
+    baseId?: string;
+    derivation?: 'inheritance' | 'instance';
   },
 ) {
   const space = await ensureModel(ownerId);
@@ -756,7 +761,8 @@ export async function addObject(
       !(await modelEntities(tx, space.id)).some((o) => o.id === input.parentId && !o.archived)
     )
       reject(400, 'Активный родительский объект не найден');
-    const { copyOf, ...data } = input;
+    const { copyOf, baseId, derivation, ...data } = input;
+    if (!!baseId !== !!derivation) reject(400, 'Укажите базовый объект и вид наследования');
     if (data.kind === 'diagram') reject(400, 'Создайте диаграмму через API диаграмм');
     const existingEntities = (await modelEntities(tx, space.id)).map((o) => snapshot(o));
     const kindError = structureError([
@@ -779,7 +785,21 @@ export async function addObject(
       if (!origin) reject(404, 'Исходный объект не найден');
       copiedFrom = { id: origin.id, name: origin.name };
     }
-    return createObject(tx, space.id, { ...data, copiedFrom });
+    const object = await createObject(tx, space.id, { ...data, copiedFrom });
+    if (baseId && derivation) {
+      const relation = await createRelation(tx, space.id, {
+        sourceId: baseId,
+        targetId: object.id,
+        name: derivationTypes[derivation],
+        relationType: derivationTypes[derivation],
+      });
+      const all = await tx.modelObject.findMany({ where: { spaceId: space.id } });
+      const links = (await tx.modelRelation.findMany({ where: { spaceId: space.id } })).map(
+        relationSnapshot,
+      );
+      return resolveInheritance(all.map(snapshot), links).find((o) => o.id === object.id)!;
+    }
+    return object;
   });
 }
 export async function deleteObject(

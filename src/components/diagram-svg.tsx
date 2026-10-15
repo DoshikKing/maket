@@ -53,7 +53,7 @@ export function DiagramSvg({
   onSelect?: (id: string) => void;
   bounds?: Bounds;
 } & Omit<SVGProps<SVGSVGElement>, 'onSelect'>) {
-  const d = { ...document, nodes: displayedView(document, objects).nodes },
+  const d: ViewDocument = { ...document, ...displayedView(document, objects) },
     box = bounds ?? diagramBounds(d),
     geometry = edgeGeometry(d);
   const styled = d.edges.map((e) => ({
@@ -175,6 +175,18 @@ export function DiagramSvg({
                 style={{ cursor: onSelect ? 'pointer' : undefined }}
               >
                 <NodeShape appearance={a} shapes={d.notation.shapes} className="svg-node-shape" />
+                {n.instanceOf && (
+                  <text
+                    x={a.width / 2}
+                    y={-5}
+                    textAnchor="middle"
+                    fill="#0d9488"
+                    fontSize={11}
+                    data-instance-of={n.instanceOf}
+                  >
+                    «instance»
+                  </text>
+                )}
                 <defs>
                   <clipPath id={`text-${n.id}`}>
                     <rect x={-w / 2} y={-h / 2} width={Math.max(1, w)} height={Math.max(1, h)} />

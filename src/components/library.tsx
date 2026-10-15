@@ -473,6 +473,11 @@ export function DiagramPreview({ document: d }: { document: DiagramDocument }) {
           return (
             <g key={n.id} transform={`translate(${n.position.x},${n.position.y})`}>
               <NodeShape appearance={a} shapes={d.notation.shapes} className="preview-shape" />
+              {n.instanceOf && (
+                <text x={a.width / 2} y={-5} textAnchor="middle" fontSize={10} fill="#0d9488">
+                  «instance»
+                </text>
+              )}
               <text
                 x={w / 2}
                 y={h / 2}

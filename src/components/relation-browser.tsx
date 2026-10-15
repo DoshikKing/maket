@@ -4,6 +4,7 @@ import { Trash2 } from 'lucide-react';
 import { api, date } from '@/lib/client';
 import {
   attributesSchema,
+  derivationKind,
   type ModelObject,
   type ModelRelation,
   type ViewDocument,
@@ -57,7 +58,11 @@ export function RelationEditor({
     ])
       .then(([s, links]) => {
         setTypes([
-          ...new Set(s.relations.map((r) => r.relationType).filter((t): t is string => !!t)),
+          ...new Set([
+            'наследует',
+            'экземпляр',
+            ...s.relations.map((r) => r.relationType).filter((t): t is string => !!t),
+          ]),
         ]);
         setContextLink(links.find((l) => l.id === relation?.id));
       })
@@ -150,6 +155,13 @@ export function RelationEditor({
             Выберите существующий тип или введите новый. Тип не зависит от нотации.
           </small>
         </label>
+        {derivationKind(relationType) && (
+          <p className="muted small-text">
+            Источник — базовый объект; назначение —{' '}
+            {derivationKind(relationType) === 'instance' ? 'его реализация' : 'наследник'}. Удаление
+            или архивирование этой связи прекращает наследование атрибутов.
+          </p>
+        )}
         <label>
           Имя связи
           <input

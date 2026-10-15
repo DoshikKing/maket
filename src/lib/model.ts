@@ -31,6 +31,11 @@ export const objectSnapshotSchema = z.object({
   name: z.string().trim().min(1).max(100),
   description: z.string().max(4000),
   attributes: attributesSchema,
+  inheritedAttributes: z
+    .record(id, z.union([z.string().max(2000), z.number().finite(), z.boolean()]))
+    .optional(),
+  baseId: id.optional(),
+  derivation: z.enum(['inheritance', 'instance']).optional(),
   archived: z.boolean(),
   revision: z.number().int().positive(),
   incarnation: z.string().datetime().optional(),
@@ -44,6 +49,78 @@ export const relationSnapshotSchema = objectSnapshotSchema.extend({
   targetId: id,
 });
 export type ModelRelation = z.infer<typeof relationSnapshotSchema>;
+export const derivationTypes = { inheritance: 'наследует', instance: 'экземпляр' } as const;
+export function derivationKind(type?: string): 'inheritance' | 'instance' | undefined {
+  return type === derivationTypes.inheritance
+    ? 'inheritance'
+    : type === derivationTypes.instance
+      ? 'instance'
+      : undefined;
+}
+// Tree parenthood and copy provenance never participate in attribute inheritance.
+export function resolveInheritance(objects: ModelObject[], relations: ModelRelation[]) {
+  const lookup = new Map(objects.map((o) => [o.id, o]));
+  const bases = new Map(
+    relations
+      .filter((r) => !r.archived && derivationKind(r.relationType))
+      .map((r) => [r.targetId, r]),
+  );
+  const resolved = new Map<string, ModelObject>();
+  const visiting = new Set<string>();
+  function visit(id: string): ModelObject | undefined {
+    const object = lookup.get(id);
+    if (!object || visiting.has(id)) return undefined;
+    if (resolved.has(id)) return resolved.get(id);
+    const { inheritedAttributes: _attributes, baseId: _base, derivation: _kind, ...own } = object;
+    const relation = bases.get(id);
+    visiting.add(id);
+    const base = relation ? visit(relation.sourceId) : undefined;
+    visiting.delete(id);
+    const result =
+      base && relation
+        ? {
+            ...own,
+            baseId: base.id,
+            derivation: derivationKind(relation.relationType),
+            inheritedAttributes: { ...base.inheritedAttributes, ...base.attributes },
+          }
+        : own;
+    resolved.set(id, result);
+    return result;
+  }
+  return objects.map((o) => visit(o.id)!);
+}
+export function inheritanceError(
+  objects: { id: string; kind?: string }[],
+  relations: Pick<ModelRelation, 'sourceId' | 'targetId' | 'relationType' | 'archived'>[],
+) {
+  const bases = new Map<string, string>();
+  const lookup = new Map(objects.map((o) => [o.id, o]));
+  for (const r of relations) {
+    if (r.archived || !derivationKind(r.relationType)) continue;
+    if (
+      [r.sourceId, r.targetId].some(
+        (id) => !lookup.has(id) || (!!lookup.get(id)?.kind && lookup.get(id)?.kind !== 'object'),
+      )
+    )
+      return 'Наследование доступно только между объектами одной рабочей области';
+    if (bases.has(r.targetId)) return 'У объекта может быть только один базовый объект';
+    bases.set(r.targetId, r.sourceId);
+  }
+  const checked = new Set<string>();
+  for (const id of bases.keys()) {
+    if (checked.has(id)) continue;
+    const seen = new Set<string>();
+    let current: string | undefined = id;
+    while (current && !checked.has(current)) {
+      if (seen.has(current)) return 'Цикл наследования объектов запрещён';
+      seen.add(current);
+      current = bases.get(current);
+    }
+    for (const ancestor of seen) checked.add(ancestor);
+  }
+  return null;
+}
 export const relationEntity = (r: ModelRelation): ModelObject => ({
   ...r,
   parentId: r.parentId ?? null,
@@ -80,6 +157,10 @@ export function normalizeConnection<
 export function modelClosure(ids: string[], objects: ModelObject[], relations: ModelRelation[]) {
   const entities = new Map([...objects, ...relations.map(relationEntity)].map((o) => [o.id, o]));
   const links = new Map(relations.map((r) => [r.id, r]));
+  const inheritedBy = new Map<string, ModelRelation[]>();
+  for (const r of relations)
+    if (!r.archived && derivationKind(r.relationType))
+      inheritedBy.set(r.targetId, [...(inheritedBy.get(r.targetId) ?? []), r]);
   const included = new Set<string>();
   const pending = [...ids];
   for (let index = 0; index < pending.length; index++) {
@@ -89,6 +170,7 @@ export function modelClosure(ids: string[], objects: ModelObject[], relations: M
     const entity = entities.get(id),
       relation = links.get(id);
     if (entity?.parentId) pending.push(entity.parentId);
+    for (const r of inheritedBy.get(id) ?? []) pending.push(r.id, r.sourceId);
     if (relation) pending.push(relation.sourceId, relation.targetId);
   }
   return {
@@ -263,9 +345,9 @@ export function connectionTypeForSource(
 }
 export function effectiveAttributes(
   local: ModelObject['attributes'] | undefined,
-  object?: Pick<ModelObject, 'attributes'>,
+  object?: Pick<ModelObject, 'attributes' | 'inheritedAttributes'>,
 ) {
-  return { ...object?.attributes, ...local };
+  return { ...object?.inheritedAttributes, ...object?.attributes, ...local };
 }
 export function effectiveNode(
   n: DiagramDocument['nodes'][number],
@@ -285,6 +367,7 @@ export function effectiveNode(
   }
   return {
     ...n,
+    instanceOf: object.derivation === 'instance' ? object.baseId : undefined,
     attributes,
     properties,
     ...(!t.properties.some((p) => p.key === 'title') && n.label === undefined
@@ -307,10 +390,27 @@ export function effectiveEdge(
       else if (p.default !== undefined) properties[p.key] = p.default;
       else delete properties[p.key];
     }
-  return { ...e, attributes, properties };
+  const kind = derivationKind(relation.relationType);
+  return {
+    ...e,
+    attributes,
+    properties: kind
+      ? { ...properties, label: kind === 'instance' ? '«instance»' : '«extends»' }
+      : properties,
+    ...(kind
+      ? {
+          appearance: {
+            ...e.appearance,
+            line: kind === 'instance' ? ('dashed' as const) : ('solid' as const),
+            targetMarker: 'thin-arrow' as const,
+            color: kind === 'instance' ? '#0d9488' : '#7c3aed',
+          },
+        }
+      : {}),
+  };
 }
 export function displayedView(d: ViewDocument, objects: ModelObject[]): DiagramDocument {
-  const lookup = new Map(objects.map((o) => [o.id, o]));
+  const lookup = new Map(resolveInheritance(objects, d.relations ?? []).map((o) => [o.id, o]));
   return {
     ...d,
     edges: d.edges.map((e) =>
@@ -419,6 +519,8 @@ export function structureError(objects: ModelObject[]): string | null {
 }
 export function modelErrors(d: ModelDocument): string[] {
   const errors: string[] = [];
+  const inheritance = inheritanceError(d.objects, d.relations ?? []);
+  if (inheritance) errors.push(inheritance);
   if (new Set(d.edges.map((e) => e.id)).size !== d.edges.length)
     errors.push('Повторяющиеся идентификаторы связей');
   if (new Set(d.bindings.map((b) => b.id)).size !== d.bindings.length)

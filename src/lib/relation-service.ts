@@ -5,6 +5,8 @@ import { workspaceInTransaction } from './workspace-service';
 import { reject } from './model-errors';
 import {
   relationSnapshotSchema,
+  inheritanceError,
+  derivationKind,
   structureError,
   objectSnapshotSchema,
   participantId,
@@ -71,6 +73,13 @@ export async function createRelation(
     reject(400, 'Активный родительский объект или связь не найдены');
   if (input.id && entities.some((o) => o.id === input.id))
     reject(409, 'Идентификатор связи уже занят');
+  if (derivationKind(input.relationType) && !input.archived) {
+    const inheritance = inheritanceError(
+      entities.filter((o) => 'kind' in o),
+      [...entities.filter((o) => 'sourceId' in o), { ...input, archived: false }],
+    );
+    if (inheritance) reject(400, inheritance);
+  }
   const r = await tx.modelRelation.create({
     data: {
       id: input.id,
@@ -327,6 +336,16 @@ export async function updateRelation(
         ),
       );
       if (error) reject(400, error);
+    }
+    if (derivationKind(data.relationType ?? r.relationType) && !(data.archived ?? r.archived)) {
+      const entities = await modelEntities(tx, space.id);
+      const inheritance = inheritanceError(
+        entities.filter((o) => 'kind' in o),
+        entities
+          .filter((o) => 'sourceId' in o)
+          .map((link) => (link.id === id ? { ...link, ...data } : link)),
+      );
+      if (inheritance) reject(400, inheritance);
     }
     const updated = await tx.modelRelation.update({
       where: { id },

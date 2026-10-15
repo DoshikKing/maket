@@ -129,6 +129,7 @@ export const diagramSchema = z.object({
       z.object({
         id: identifier,
         typeId: identifier,
+        instanceOf: identifier.optional(),
         objectId: identifier.optional(),
         profiles: z.record(z.string().max(201), values).optional(),
         size: z

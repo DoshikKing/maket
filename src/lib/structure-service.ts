@@ -59,7 +59,7 @@ export async function getStructure(
       previews[d.id] = displayedView(
         projectDocument({
           ...document,
-          relations: document.relations?.map((r) => relations.get(r.id) ?? r),
+          relations: space.relations,
         }),
         space.objects,
       );

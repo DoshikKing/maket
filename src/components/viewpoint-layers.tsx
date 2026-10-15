@@ -308,6 +308,7 @@ function ObjectCard({ data, selected }: NodeProps<ObjectNode>) {
       className={`viewpoint-object-card ${selected ? 'is-selected' : ''} ${data.dim ? 'is-dim' : ''}`}
       style={{ width: prism.width, height: prism.height }}
       data-detail-visible={visible}
+      data-instance-of={node.instanceOf}
       data-layer-object={node.id}
       data-layer-entity={data.entityId}
       data-layer-diagram-ref={data.diagramId}
@@ -338,6 +339,7 @@ function ObjectCard({ data, selected }: NodeProps<ObjectNode>) {
           />
         </g>
       </svg>
+      {node.instanceOf && <span className="viewpoint-instance-marker">«instance»</span>}
       {hovered && <HoverLabel name={name} x={prism.width / 2} y={-8} />}
       <Handle
         type="source"

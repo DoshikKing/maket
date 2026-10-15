@@ -89,6 +89,15 @@ export const DiagramNodeView = memo(function DiagramNodeView({
         onResizeEnd={() => actions.end()}
       />
       <NodeShape appearance={a} shapes={shapes} />
+      {(object?.derivation === 'instance' || node.instanceOf) && (
+        <span
+          className="instance-marker"
+          title="Экземпляр базового объекта"
+          data-instance-of={object?.baseId ?? node.instanceOf}
+        >
+          «instance»
+        </span>
+      )}
       {object?.archived && <span className="archived-marker">Архив</span>}
       <div
         className={`node-content ${a.shape === 'diamond' ? 'diamond-content' : ''}`}
