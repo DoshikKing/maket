@@ -115,6 +115,8 @@ model ModelSpace {
   diagrams Diagram[]
 }
 model ModelObject {
+  shareToken String? @unique
+  shareEnabled Boolean @default(false)
   kind String @default("object")
   diagram Diagram?
   id String @id @default(cuid())

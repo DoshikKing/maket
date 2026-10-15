@@ -39,6 +39,7 @@ import {
 } from '@/lib/structure';
 import { CopyOrigin } from './copy-origin';
 import { Modal } from './modal';
+import { ShareDialog } from './share-dialog';
 import { useTreeExpansion } from './use-tree-expansion';
 import { EntityRelations } from './entity-relations';
 export function ObjectEditor({
@@ -89,6 +90,7 @@ export function ObjectEditor({
     [derivation, setDerivation] = useState<'inheritance' | 'instance'>(
       initialDerivation ?? 'inheritance',
     ),
+    [sharing, setSharing] = useState(false),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(''),
     [usages, setUsages] = useState<
@@ -116,6 +118,25 @@ export function ObjectEditor({
       <p className="muted small-text">
         Имя и атрибуты общие для всех представлений объекта. Вложенность организует дерево.
       </p>
+      {object && (
+        <div className="form-stack">
+          <label>
+            ID объекта
+            <input
+              aria-label="ID объекта"
+              readOnly
+              value={object.id}
+              onFocus={(e) => e.target.select()}
+            />
+          </label>
+          <button className="secondary" type="button" onClick={() => setSharing(true)}>
+            Поделиться объектом
+          </button>
+        </div>
+      )}
+      {sharing && object && (
+        <ShareDialog id={object.id} resource="objects" onClose={() => setSharing(false)} />
+      )}
       <CopyOrigin origin={object?.copiedFrom} />
       <form
         className="form-stack"

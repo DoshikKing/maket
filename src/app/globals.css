@@ -4115,3 +4115,39 @@ body {
   flex: 1;
   overflow-wrap: anywhere;
 }
+
+.public-object-page {
+  min-height: 100vh;
+  display: grid;
+  place-items: start center;
+  padding: 40px 16px;
+  background: var(--bg);
+}
+.public-object-card {
+  width: min(100%, 760px);
+  padding: 28px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+.public-object-card h1 {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.public-object-attributes {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+.public-object-attributes th,
+.public-object-attributes td {
+  padding: 10px 6px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.public-object-attributes td:last-child {
+  color: var(--muted);
+  font-size: 12px;
+}

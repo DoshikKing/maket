@@ -4714,3 +4714,162 @@ test('inheritance: live attributes, protected semantic links, instance markers a
     ),
   ).toBe(true);
 });
+
+test('object sharing: ID links, readonly properties, inherited updates and persistent revocable access', async ({
+  page,
+  request,
+  browser,
+  playwright,
+}) => {
+  test.setTimeout(120000);
+  await login(request, page);
+  const baseResponse = await request.post('/api/objects', {
+    data: { name: 'База публичного объекта', attributes: { zone: 'RU', active: false } },
+  });
+  expect(baseResponse.status(), await baseResponse.text()).toBe(201);
+  let base = await baseResponse.json();
+  const objectResponse = await request.post('/api/objects', {
+    data: {
+      name: 'Объект для просмотра',
+      description: 'Описание публичного объекта',
+      baseId: base.id,
+      derivation: 'instance',
+      attributes: { count: 0 },
+    },
+  });
+  expect(objectResponse.status(), await objectResponse.text()).toBe(201);
+  const sharedObject = await objectResponse.json();
+  const unrelated = await object(request, 'Закрытый сосед');
+  expect(await (await request.get(`/api/objects/${sharedObject.id}/share`)).json()).toEqual({
+    enabled: false,
+    path: null,
+  });
+  await page.goto('/solutions');
+  await treeAction(
+    page,
+    page.locator(`[data-tree-entity="${sharedObject.id}"] > .tree-row`),
+    `Свойства ${sharedObject.name}`,
+  );
+  const properties = page.getByRole('dialog', { name: 'Общие свойства объекта', exact: true });
+  await expect(properties.getByLabel('ID объекта', { exact: true })).toHaveValue(sharedObject.id);
+  await expect(properties.getByLabel('ID объекта', { exact: true })).not.toBeEditable();
+  await properties.getByRole('button', { name: 'Поделиться объектом', exact: true }).click();
+  const sharing = page.getByRole('dialog', { name: 'Поделиться объектом', exact: true });
+  await sharing.getByLabel('Доступ по ссылке', { exact: true }).check();
+  const url = sharing.getByLabel('Публичная ссылка', { exact: true });
+  await expect(url).toHaveValue(new RegExp(`/view/object/${sharedObject.id}/[A-Za-z0-9_-]{43}$`));
+  const originalUrl = await url.inputValue();
+  const token = new URL(originalUrl).pathname.split('/').pop()!;
+  const endpoint = `/api/public-objects/${sharedObject.id}/${token}`;
+  const anonymous = await playwright.request.newContext({ baseURL: 'http://localhost:3000' });
+  const response = await anonymous.get(endpoint);
+  expect(response.status()).toBe(200);
+  expect(response.headers()['cache-control']).toBe('no-store');
+  const data = await response.json();
+  expect(data).toMatchObject({
+    id: sharedObject.id,
+    name: sharedObject.name,
+    description: sharedObject.description,
+    derivation: 'instance',
+    attributes: { zone: 'RU', active: false, count: 0 },
+  });
+  expect(Object.keys(data).sort()).toEqual(
+    [
+      'id',
+      'name',
+      'kind',
+      'description',
+      'archived',
+      'revision',
+      'derivation',
+      'attributes',
+      'ownAttributes',
+      'inheritedAttributes',
+    ].sort(),
+  );
+  expect(JSON.stringify(data)).not.toContain(unrelated.id);
+  expect(JSON.stringify(data)).not.toContain(base.id);
+  expect(JSON.stringify(data)).not.toContain(token);
+  expect((await anonymous.get(`/api/public-objects/${base.id}/${token}`)).status()).toBe(404);
+  expect((await anonymous.get(`/api/public-objects/${sharedObject.id}/invalid`)).status()).toBe(
+    404,
+  );
+  expect((await anonymous.post(endpoint, { data: { name: 'Изменено извне' } })).status()).toBe(405);
+  expect((await anonymous.get(`/api/objects/${sharedObject.id}/share`)).status()).toBe(401);
+  const area = await (
+    await request.post('/api/workspaces', { data: { name: 'Область без объекта' } })
+  ).json();
+  expect(
+    (
+      await request.get(`/api/objects/${sharedObject.id}/share`, {
+        headers: { 'X-Maket-Workspace': area.id },
+      })
+    ).status(),
+  ).toBe(404);
+  const context = await browser.newContext();
+  const viewer = await context.newPage();
+  try {
+    await viewer.goto(originalUrl);
+    const card = viewer.getByRole('region', { name: 'Свойства объекта', exact: true });
+    await expect(card.getByLabel('ID объекта', { exact: true })).toHaveValue(sharedObject.id, {
+      timeout: 15000,
+    });
+    await expect(card.getByLabel('Имя объекта', { exact: true })).not.toBeEditable();
+    await expect(card.getByLabel('Описание объекта', { exact: true })).toHaveValue(
+      sharedObject.description,
+    );
+    await expect(card).toContainText('«instance»');
+    await expect(card.getByRole('row').filter({ hasText: 'zone' })).toContainText('RU');
+    await expect(card.getByRole('row').filter({ hasText: 'active' })).toContainText('Нет');
+    await expect(card.getByRole('row').filter({ hasText: 'count' })).toContainText('0');
+    await expect(card.getByRole('button')).toHaveCount(0);
+    base = await (
+      await request.patch(`/api/objects/${base.id}`, {
+        data: { revision: base.revision, attributes: { zone: 'EU', active: true } },
+      })
+    ).json();
+    await viewer.reload();
+    await expect(card.getByRole('row').filter({ hasText: 'zone' })).toContainText('EU', {
+      timeout: 15000,
+    });
+    await expect(card.getByRole('row').filter({ hasText: 'active' })).toContainText('Да');
+    await sharing.getByRole('button', { name: 'Закрыть', exact: true }).click();
+    await expect(properties).toBeVisible();
+    await properties.getByRole('button', { name: 'Поделиться объектом', exact: true }).click();
+    await expect(url).toHaveValue(originalUrl);
+    await sharing.getByLabel('Доступ по ссылке', { exact: true }).uncheck();
+    await expect(sharing.getByText('Доступ по ссылке отключён.', { exact: true })).toBeVisible();
+    expect((await anonymous.get(endpoint)).status()).toBe(404);
+    await viewer.reload();
+    await expect(
+      viewer.getByRole('region', { name: 'Свойства объекта', exact: true }).getByRole('alert'),
+    ).toContainText('Ссылка недоступна', { timeout: 15000 });
+    await expect(viewer.getByLabel('ID объекта', { exact: true })).toHaveCount(0);
+    const reenabled = await Promise.all([
+      request.post(`/api/objects/${sharedObject.id}/share`, { data: { enabled: true } }),
+      request.post(`/api/objects/${sharedObject.id}/share`, { data: { enabled: true } }),
+    ]);
+    for (const result of reenabled)
+      expect((await result.json()).path).toBe(new URL(originalUrl).pathname);
+    expect((await anonymous.get(endpoint)).status()).toBe(200);
+    await sharing.getByRole('button', { name: 'Сгенерировать новую', exact: true }).click();
+    await expect(url).not.toHaveValue(originalUrl);
+    const rotated = await url.inputValue();
+    expect(new URL(rotated).pathname).toContain(`/view/object/${sharedObject.id}/`);
+    expect((await anonymous.get(endpoint)).status()).toBe(404);
+    await sharing.getByLabel('Доступ по ссылке', { exact: true }).check();
+    await expect(url).toHaveValue(rotated);
+    await viewer.goto(rotated);
+    await expect(viewer.getByLabel('ID объекта', { exact: true })).toHaveValue(sharedObject.id, {
+      timeout: 15000,
+    });
+    const firstEnable = await Promise.all([
+      request.post(`/api/objects/${unrelated.id}/share`, { data: { enabled: true } }),
+      request.post(`/api/objects/${unrelated.id}/share`, { data: { enabled: true } }),
+    ]);
+    expect((await firstEnable[0].json()).path).toBe((await firstEnable[1].json()).path);
+  } finally {
+    await context.close();
+    await anonymous.dispose();
+  }
+});

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { randomBytes } from 'node:crypto';
-import { publicDiagram } from '@/lib/sharing';
+import { publicDiagram, publicObject } from '@/lib/sharing';
 import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { db } from '@/lib/db';
@@ -200,6 +200,12 @@ async function handle(req: NextRequest, context: { params: Promise<{ path: strin
     if (resource === 'public' && id && !action) {
       if (method !== 'GET') fail(405, 'Доступен только просмотр');
       const shared = await publicDiagram(id);
+      if (!shared) fail(404, 'Ссылка недоступна или отключена владельцем');
+      return json(shared);
+    }
+    if (resource === 'public-objects' && id && action && path.length === 3) {
+      if (method !== 'GET') fail(405, 'Доступен только просмотр');
+      const shared = await publicObject(id, action);
       if (!shared) fail(404, 'Ссылка недоступна или отключена владельцем');
       return json(shared);
     }
@@ -518,6 +524,32 @@ async function handle(req: NextRequest, context: { params: Promise<{ path: strin
       const space = await ensureModel(user.id);
       const object = await db.modelObject.findFirst({ where: { id, spaceId: space.id } });
       if (!object) fail(404, 'Объект не найден');
+      if (action === 'share') {
+        const sharing = (value: typeof object) => ({
+          enabled: value.shareEnabled,
+          path: value.shareToken ? `/view/object/${value.id}/${value.shareToken}` : null,
+        });
+        if (method === 'GET') return json(sharing(object));
+        if (method === 'POST') {
+          const input = z
+            .object({ enabled: z.boolean(), rotate: z.boolean().optional() })
+            .parse(await body(req));
+          if (input.enabled && !object.shareToken && !input.rotate)
+            await db.modelObject.updateMany({
+              where: { id, spaceId: space.id, shareToken: null },
+              data: { shareToken: randomBytes(32).toString('base64url') },
+            });
+          const updated = await db.modelObject.update({
+            where: { id, spaceId: space.id },
+            data: {
+              shareEnabled: input.enabled,
+              ...(input.rotate ? { shareToken: randomBytes(32).toString('base64url') } : {}),
+            },
+          });
+          return json(sharing(updated));
+        }
+        fail(405, 'Метод не поддерживается');
+      }
       if (method === 'GET' && action === 'representations')
         return json((await getStructure(user.id, id)).representations);
       if (method === 'GET' && action === 'usages')

@@ -6,10 +6,12 @@ type Sharing = { enabled: boolean; path: string | null };
 export function ShareDialog({
   id,
   selectedId,
+  resource = 'diagrams',
   onClose,
 }: {
   id: string;
   selectedId?: string;
+  resource?: 'diagrams' | 'objects';
   onClose: () => void;
 }) {
   const [sharing, setSharing] = useState<Sharing | null>(null),
@@ -18,7 +20,7 @@ export function ShareDialog({
     [copied, setCopied] = useState('');
   useEffect(() => {
     let active = true;
-    api<Sharing>(`diagrams/${id}/share`)
+    api<Sharing>(`${resource}/${id}/share`)
       .then((s) => {
         if (active) setSharing(s);
       })
@@ -28,7 +30,7 @@ export function ShareDialog({
     return () => {
       active = false;
     };
-  }, [id]);
+  }, [id, resource]);
   async function change(enabled: boolean, rotate = false) {
     const previous = sharing;
     setSharing((s) => (s ? { ...s, enabled } : s));
@@ -36,7 +38,7 @@ export function ShareDialog({
     setError('');
     setCopied('');
     try {
-      setSharing(await api(`diagrams/${id}/share`, 'POST', { enabled, rotate }));
+      setSharing(await api(`${resource}/${id}/share`, 'POST', { enabled, rotate }));
     } catch (e) {
       setSharing(previous);
       setError((e as Error).message);
@@ -46,10 +48,14 @@ export function ShareDialog({
   }
   const url = sharing?.path ? new URL(sharing.path, location.origin).href : '';
   return (
-    <Modal title="Поделиться диаграммой" onClose={onClose}>
+    <Modal
+      title={resource === 'objects' ? 'Поделиться объектом' : 'Поделиться диаграммой'}
+      onClose={onClose}
+    >
       <p>
-        Любой пользователь со ссылкой сможет просматривать последнюю сохранённую диаграмму и
-        связанное дерево объектов без входа в аккаунт.
+        {resource === 'objects'
+          ? 'Любой пользователь со ссылкой сможет просматривать свойства этого объекта, включая унаследованные атрибуты, без входа в аккаунт.'
+          : 'Любой пользователь со ссылкой сможет просматривать последнюю сохранённую диаграмму и связанное дерево объектов без входа в аккаунт.'}
       </p>
       {sharing && (
         <label className="inline-check">
@@ -98,7 +104,7 @@ export function ShareDialog({
             </label>
           )}
           <a href={url} target="_blank" rel="noreferrer">
-            Открыть вьюер
+            {resource === 'objects' ? 'Открыть карточку' : 'Открыть вьюер'}
           </a>
           <small className="muted">
             Отключение доступа сохраняет адрес. Новая ссылка делает прежний адрес недействительным.
