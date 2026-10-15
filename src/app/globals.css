@@ -4047,3 +4047,33 @@ body {
 .viewpoint-object-shape {
   pointer-events: all;
 }
+
+/* Layer focus never changes the scene geometry or camera. */
+.viewpoint-plane polygon {
+  pointer-events: all;
+  cursor: pointer;
+}
+.viewpoint-plane-heading[aria-pressed='true'] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.viewpoint-object-card[data-detail-visible='false'] {
+  visibility: hidden;
+  pointer-events: none;
+}
+.viewpoint-object-card[data-detail-visible='false'] * {
+  pointer-events: none !important;
+}
+.viewpoint-detail-level {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 10001;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 12px;
+  pointer-events: none;
+}

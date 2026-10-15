@@ -4207,7 +4207,7 @@ test('browser: create and switch workspaces without sharing objects or changing 
   await otherTab.close();
 });
 
-test('browser: 2.5D viewpoint layers route around objects, expand layers and keep scoped readonly filters', async ({
+test('browser: 2.5D viewpoint layers keep static layers, focus and semantic zoom with scoped readonly filters', async ({
   page,
   request,
   playwright,
@@ -4237,6 +4237,21 @@ test('browser: 2.5D viewpoint layers route around objects, expand layers and kee
   source = await place(request, source, owner.id);
   const unrelated = await object(request, 'Независимый объект');
   source = await place(request, source, unrelated.id);
+  source = await save(request, source, {
+    ...source.document,
+    edges: [
+      {
+        id: 'detail-flow',
+        bindingId: source.document.bindings[0].id,
+        typeId: 'flow',
+        source: source.document.nodes[0].id,
+        target: source.document.nodes[2].id,
+        sourcePort: 'out',
+        targetPort: 'in',
+        properties: {},
+      },
+    ],
+  });
   const target = await place(request, await view('Код процесса', code.id), owner.id);
   const unassigned = await view('Не назначен ракурс', null);
   const transition = await request.post('/api/context-links', {
@@ -4308,95 +4323,7 @@ test('browser: 2.5D viewpoint layers route around objects, expand layers and kee
   await expect(page.locator('.viewpoint-layers-counts')).toContainText('Диаграммы: 5 из 5');
   await expect(page.locator(`[data-layer-diagram="${source.id}"]`)).toHaveCount(1);
   await expect(page.locator(`[data-layer-diagram="${unassigned.id}"]`)).toHaveCount(1);
-  const compactPositions = await page.locator('.viewpoint-plane-node').evaluateAll((nodes) =>
-    nodes.map((n) => ({
-      id: n.getAttribute('data-id'),
-      transform: (n as HTMLElement).style.transform,
-    })),
-  );
-  const compactCamera = await page.locator('.react-flow__viewport').getAttribute('style');
-  await page.getByRole('button', { name: 'Раздвинуть слой Код', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'Сблизить слой Код', exact: true })).toBeVisible();
-  await expect(page.locator('[data-layer-diagram]')).toHaveCount(5);
-  expect(
-    await page.locator('.viewpoint-plane-node').evaluateAll((nodes) =>
-      nodes.map((n) => ({
-        id: n.getAttribute('data-id'),
-        transform: (n as HTMLElement).style.transform,
-      })),
-    ),
-  ).not.toEqual(compactPositions);
-  await expect(page.locator('.react-flow__viewport')).toHaveAttribute('style', compactCamera!);
-  await page.getByRole('button', { name: 'Сблизить слой Код', exact: true }).click();
-  expect(
-    await page.locator('.viewpoint-plane-node').evaluateAll((nodes) =>
-      nodes.map((n) => ({
-        id: n.getAttribute('data-id'),
-        transform: (n as HTMLElement).style.transform,
-      })),
-    ),
-  ).toEqual(compactPositions);
-  const compactObject = page.locator(`[data-layer-diagram-ref="${target.id}"]`);
-  await compactObject.hover();
-  await expect(compactObject.getByRole('tooltip')).toHaveText(owner.name);
-  await compactObject.click();
-  await expect(page.getByRole('region', { name: 'Выбранный объект слоя' })).toContainText(
-    owner.name,
-  );
-  await page.getByRole('button', { name: 'Сбросить фокус', exact: true }).click();
-  await page.getByRole('button', { name: 'Раздвинуть все слои', exact: true }).click();
-  await page.getByRole('button', { name: 'Вписать слои', exact: true }).click();
-
-  await expect(
-    page.getByRole('button', { name: 'Сблизить слой Инфраструктура', exact: true }),
-  ).toHaveCount(0);
-  await page.getByLabel('Пустые слои', { exact: true }).check();
-  await expect(
-    page.getByRole('button', { name: 'Сблизить слой Инфраструктура', exact: true }),
-  ).toBeVisible();
-  await page.getByLabel('Пустые слои', { exact: true }).uncheck();
-  await page.getByLabel('Только межслойные', { exact: true }).check();
-  await expect(page.locator('.viewpoint-layers-counts')).toContainText('Связи: 2');
-  await page.getByLabel('Тип связей слоёв').selectOption('viewpoint');
-  await expect(page.locator('.viewpoint-layers-counts')).toContainText('Связи: 1');
-  const routePath = page.locator('.react-flow__edge-path').first();
-  await expect(routePath).toHaveAttribute('d', /^M.*L.*L.*L/);
-  const routeClick = await routePath.evaluate((element) => {
-    const path = element as SVGPathElement;
-    const p = path
-      .getPointAtLength(path.getTotalLength() / 2)
-      .matrixTransform(path.getScreenCTM()!);
-    return { x: p.x, y: p.y };
-  });
-  await page.mouse.click(routeClick.x, routeClick.y);
-
-  await expect(page.getByRole('region', { name: 'Выбранные связи слоёв' })).toContainText(
-    'Реализация в коде',
-  );
   const viewport = page.locator('.viewpoint-layers-canvas .react-flow__viewport');
-  const overviewCamera = await viewport.getAttribute('style');
-  const outsideColumn = await routePath.evaluate((element) => {
-    const path = element as SVGPathElement;
-    const points = path
-      .getAttribute('d')!
-      .split(/[ML]/)
-      .filter(Boolean)
-      .map((p) => p.trim().split(/\s+/).map(Number));
-    const point = path.ownerSVGElement!.createSVGPoint();
-    point.x = points[2][0];
-    point.y = (points[2][1] + points[3][1]) / 2;
-    const screen = point.matrixTransform(path.getScreenCTM()!);
-    return { x: screen.x, y: screen.y };
-  });
-  await page.mouse.move(outsideColumn.x, outsideColumn.y);
-  await page.mouse.wheel(0, -2200);
-  await expect
-    .poll(async () => Number((await viewport.getAttribute('style'))!.match(/scale\(([^)]+)\)/)![1]))
-    .toBeGreaterThan(3);
-  await expect(page.locator('.react-flow__edge-path')).toHaveCount(1);
-  await page.getByRole('button', { name: 'Вписать слои', exact: true }).click();
-  await expect.poll(() => viewport.getAttribute('style')).toBe(overviewCamera);
-
   const planes = page.locator('.viewpoint-plane-node');
   const geometry = () =>
     planes.evaluateAll((nodes) =>
@@ -4408,77 +4335,99 @@ test('browser: 2.5D viewpoint layers route around objects, expand layers and kee
     );
   const originalGeometry = await geometry();
   const originalCamera = await viewport.getAttribute('style');
-  await expect(page.locator('.viewpoint-layer-order')).toHaveCount(0);
-  const emptyCard = page.locator(`[data-layer-diagram="${unassigned.id}"]`);
-  await emptyCard.locator('.viewpoint-diagram-outline').hover();
-  await expect(emptyCard.getByRole('tooltip')).toHaveText(unassigned.name);
-  await page.getByRole('heading', { name: 'Слои ракурсов', exact: true }).click();
-  await expect(emptyCard.getByRole('tooltip')).toHaveCount(0);
-  const card = page.locator(`[data-layer-diagram="${source.id}"]`);
+  const bounds = await planes.evaluateAll((nodes) =>
+    nodes.map((node) => {
+      const element = node as HTMLElement;
+      const y = Number(element.style.transform.match(/translate\([^,]+,\s*([^)]+)px\)/)![1]);
+      return { y, height: element.offsetHeight };
+    }),
+  );
+  for (let i = 1; i < bounds.length; i++)
+    expect(bounds[i].y).toBeGreaterThan(bounds[i - 1].y + bounds[i - 1].height);
+  await expect(page.getByRole('button', { name: /Сблизить|Раздвинуть/ })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Фокус на слое Код', exact: true }).click();
+  await expect(
+    page.getByRole('button', { name: 'Фокус на слое Код', exact: true }),
+  ).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator(`[data-id="layer:${code.id}"]`)).not.toHaveCSS('opacity', '0.16');
+  await expect(page.locator(`[data-layer-diagram="${source.id}"]`).locator('..')).toHaveCSS(
+    'opacity',
+    '0.16',
+  );
+  await expect(
+    page.locator(`[data-layer-diagram-ref="${source.id}"]`).first().locator('..'),
+  ).toHaveCSS('opacity', '0.16');
+  expect(await geometry()).toEqual(originalGeometry);
+  await expect(viewport).toHaveAttribute('style', originalCamera!);
+  await page.getByRole('button', { name: 'Сбросить выделение', exact: true }).click();
+  // Clicking the actual plane also focuses a layer, without moving any geometry.
+  const planeClick = await page
+    .locator(`[data-id="layer:${business.id}"] polygon`)
+    .evaluate((element) => {
+      const polygon = element as SVGPolygonElement;
+      const point = polygon.ownerSVGElement!.createSVGPoint();
+      const left = polygon.points.getItem(0),
+        opposite = polygon.points.getItem(2);
+      point.x = left.x * 0.98 + opposite.x * 0.02;
+      point.y = left.y * 0.98 + opposite.y * 0.02;
+      const screen = point.matrixTransform(polygon.getScreenCTM()!);
+      return { x: screen.x, y: screen.y };
+    });
+  await page.mouse.click(planeClick.x, planeClick.y);
+  await expect(
+    page.getByRole('button', { name: 'Фокус на слое Бизнес', exact: true }),
+  ).toHaveAttribute('aria-pressed', 'true');
+  await page.getByRole('button', { name: 'Сбросить выделение', exact: true }).click();
+  const zoom = () =>
+    viewport.evaluate((element) =>
+      Number((element as HTMLElement).style.transform.match(/scale\(([^)]+)\)/)![1]),
+    );
+  const zoomIn = page.locator('.react-flow__controls-zoomin');
+  const zoomOut = page.locator('.react-flow__controls-zoomout');
+  while ((await zoom()) >= 0.4) await zoomOut.click();
+  await expect(page.locator('[data-detail-level]')).toHaveText('Слои и диаграммы');
+  await expect(page.locator('[data-layer-object]').first()).toBeHidden();
+  await expect(page.locator('.react-flow__edge-path')).toHaveCount(0);
+  await expect(page.locator('.viewpoint-diagram-links')).toHaveCount(0);
+  await expect(page.locator('[data-layer-diagram]')).toHaveCount(5);
+  while ((await zoom()) < 0.4) await zoomIn.click();
+  await expect(page.locator('[data-layer-object]').first()).toBeVisible();
+  await expect(page.locator('[data-detail-level]')).toHaveText('Объекты');
+  await expect(page.locator('.react-flow__edge-path')).toHaveCount(0);
+  while ((await zoom()) < 0.55) await zoomIn.click();
+  await expect(page.locator('[data-detail-level]')).toHaveText('Межслойные связи');
+  await expect(page.locator('.react-flow__edge-path')).toHaveCount(3);
+  await expect(page.locator('.viewpoint-diagram-links')).toHaveCount(0);
+  while ((await zoom()) < 0.85) await zoomIn.click();
+  await expect(page.locator('[data-detail-level]')).toHaveText('Все детали');
+  await expect(page.locator('.viewpoint-diagram-links path')).toHaveCount(1);
+  await expect(page.locator('.react-flow__edge-path')).toHaveCount(3);
+  expect(await geometry()).toEqual(originalGeometry);
+  const paths = await page
+    .locator('.react-flow__edge-path')
+    .evaluateAll((elements) => elements.map((e) => e.getAttribute('d')));
+  await page.getByRole('button', { name: 'Выделить ракурс Код', exact: true }).click();
+  await expect(page.locator('.react-flow__edge.is-dim')).toHaveCount(1);
+  expect(
+    await page
+      .locator('.react-flow__edge-path')
+      .evaluateAll((elements) => elements.map((e) => e.getAttribute('d'))),
+  ).toEqual(paths);
+  await page.getByRole('button', { name: 'Сбросить выделение', exact: true }).click();
+  await page.getByLabel('Только межслойные', { exact: true }).check();
+  await expect(page.locator('.viewpoint-layers-counts')).toContainText('Связи: 2');
+  await page.getByLabel('Тип связей слоёв').selectOption('viewpoint');
+  await expect(page.locator('.react-flow__edge-path')).toHaveCount(1);
+  await expect(page.locator('.react-flow__edge-path')).toHaveAttribute('d', /^M.*L.*L.*L/);
   const sourceObjects = page.locator(
     `[data-layer-diagram-ref="${source.id}"][data-layer-entity="${owner.id}"]`,
   );
   const targetObject = page.locator(`[data-layer-diagram-ref="${target.id}"]`);
-  await expect(sourceObjects).toHaveCount(2);
-  await expect(card.locator('.viewpoint-hover-label')).toHaveCount(0);
-  await expect(card.locator('.viewpoint-diagram-walls polygon')).toHaveCount(2);
-  const contour = card.locator('.viewpoint-diagram-outline');
-  await contour.focus();
-  await expect(card.getByRole('tooltip')).toHaveText(source.name);
-  // Selecting a plate must not cover its independent object nodes.
-  await contour.dispatchEvent('click');
-  await expect(card).toHaveClass(/is-selected/);
-  await expect(page.getByRole('region', { name: 'Выбранная диаграмма слоя' })).toContainText(
-    source.name,
-  );
-  for (const object of await sourceObjects.all()) {
-    const exposed = await object.locator('.viewpoint-object-top').evaluate((element) => {
-      const box = element.getBoundingClientRect();
-      const top = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2);
-      return top?.closest('[data-layer-object]') === element.closest('[data-layer-object]');
-    });
-    expect(exposed).toBe(true);
-  }
-
-  await sourceObjects.first().focus();
-  await expect(sourceObjects.first().getByRole('tooltip')).toHaveText(owner.name);
-  await sourceObjects.first().hover();
-  await expect(sourceObjects.first().getByRole('tooltip')).toHaveText(owner.name);
-  const tooltipBounds = await sourceObjects.first().getByRole('tooltip').boundingBox();
-  expect(tooltipBounds!.height).toBeGreaterThan(30);
-  await page.getByRole('heading', { name: 'Слои ракурсов', exact: true }).click();
-  await expect(card.locator('.viewpoint-hover-label')).toHaveCount(0);
-  // Existing aliases are connection endpoints; selection follows the chosen alias.
-  await page.getByLabel('Тип связей слоёв').selectOption('all');
-  await page.getByLabel('Только межслойные', { exact: true }).uncheck();
-  await sourceObjects.nth(1).click();
+  await sourceObjects.nth(1).dispatchEvent('click');
   await expect(page.getByRole('region', { name: 'Выбранный объект слоя' })).toContainText(
     owner.name,
   );
-  await expect(page.locator('.react-flow__edge.is-dim')).toHaveCount(1);
-  await expect(page.locator('.react-flow__edge.is-related')).toHaveCount(2);
   await expect(page.locator('.viewpoint-object-card.is-selected')).toHaveCount(3);
-  await expect(page.locator(`[data-layer-entity="${unrelated.id}"]`)).toHaveClass(/is-dim/);
-  await expect(
-    sourceObjects.first().locator('.viewpoint-object-walls polygon').first(),
-  ).toBeVisible();
-  await page.getByLabel('Тип связей слоёв').selectOption('decomposition');
-  const decomposedSource = await page.locator('.react-flow__edge-path').evaluate((element) => {
-    const path = element as SVGPathElement;
-    const p = path.getPointAtLength(0).matrixTransform(path.getScreenCTM()!);
-    return { x: p.x, y: p.y };
-  });
-  const decompositionPort = await sourceObjects
-    .nth(1)
-    .locator('.react-flow__handle.source')
-    .boundingBox();
-  expect(
-    Math.abs(decomposedSource.x - (decompositionPort!.x + decompositionPort!.width / 2)),
-  ).toBeLessThan(3);
-  expect(
-    Math.abs(decomposedSource.y - (decompositionPort!.y + decompositionPort!.height / 2)),
-  ).toBeLessThan(3);
-  await page.getByLabel('Тип связей слоёв').selectOption('viewpoint');
   const targetPort = await targetObject.locator('.react-flow__handle.target').boundingBox();
   const sourcePort = await sourceObjects.nth(1).locator('.react-flow__handle.source').boundingBox();
   const endpoints = await page.locator('.react-flow__edge-path').evaluate((element) => {
@@ -4538,36 +4487,19 @@ test('browser: 2.5D viewpoint layers route around objects, expand layers and kee
   for (let i = 1; i < routeVertices.length; i++)
     expect(crossesObstacle(routeVertices[i - 1], routeVertices[i], silhouette)).toBe(false);
 
-  await page.getByRole('button', { name: 'Фокусировать объект', exact: true }).click();
-  await expect
-    .poll(async () => (await sourceObjects.nth(1).boundingBox())!.width)
-    .toBeGreaterThan(150);
-  await page.getByRole('button', { name: 'Сбросить фокус', exact: true }).click();
-  await expect(page.locator('.react-flow__edge.is-dim')).toHaveCount(0);
+  // Geometry and filtering are independent of semantic zoom and focus.
   await page.getByRole('button', { name: 'Вписать слои', exact: true }).click();
   await expect.poll(() => viewport.getAttribute('style')).toBe(originalCamera);
-  await page.getByLabel('Тип связей слоёв').selectOption('all');
-  await expect(page.locator('.react-flow__edge-path')).toHaveCount(3);
-  await page.getByLabel('Тип связей слоёв').selectOption('viewpoint');
-
-  await page.getByRole('button', { name: 'Сблизить все слои', exact: true }).click();
-  await expect(page.locator('[data-layer-diagram]')).toHaveCount(5);
-  await expect(page.locator('.react-flow__edge')).toHaveCount(1);
-  await expect(viewport).toHaveAttribute('style', originalCamera!);
-  const closerGeometry = await geometry();
-  expect(closerGeometry.map((g) => g.points)).toEqual(originalGeometry.map((g) => g.points));
-  expect(closerGeometry.map((g) => g.position)).not.toEqual(
-    originalGeometry.map((g) => g.position),
-  );
-  await page.getByRole('button', { name: 'Раздвинуть все слои', exact: true }).click();
-  await expect(page.locator('[data-layer-diagram]')).toHaveCount(5);
-  expect(await geometry()).toEqual(originalGeometry);
   await page.getByLabel('Показать слой Код', { exact: true }).uncheck();
   await expect(page.locator(`[data-layer-diagram="${target.id}"]`)).toHaveCount(0);
   await expect(page.locator('.viewpoint-layers-counts')).toContainText('Связи: 0');
-  await expect(viewport).toHaveAttribute('style', originalCamera!);
   expect(await geometry()).toEqual(originalGeometry.filter((g) => g.id !== `layer:${code.id}`));
   await page.getByLabel('Показать слой Код', { exact: true }).check();
+  await page.getByLabel('Пустые слои', { exact: true }).check();
+  await expect(
+    page.getByRole('button', { name: 'Фокус на слое Инфраструктура', exact: true }),
+  ).toBeVisible();
+  await page.getByLabel('Пустые слои', { exact: true }).uncheck();
   await page.getByLabel('Поиск диаграмм в слоях').fill(target.name);
   await expect(page.locator('.viewpoint-layers-counts')).toContainText('Диаграммы: 1 из 5');
   await page

@@ -266,14 +266,13 @@ it('detours around extruded objects instead of crossing their top faces or walls
       crossesObstacle(inverse(route.points[i - 1]), inverse(route.points[i]), obstacle.points),
     ).toBe(false);
 });
-it('starts compact, opens space on both sides of a chosen layer, and restores original offsets', () => {
-  const heights = [400, 480, 420],
-    compact = layerOffsets(heights, new Set());
-  const open = layerOffsets(heights, new Set([1]));
-  expect(compact[1]).toBeLessThan(heights[0]);
-  expect(open[1] - open[0]).toBeGreaterThan(heights[0]);
-  expect(open[2] - open[1]).toBeGreaterThan(heights[1]);
-  expect(layerOffsets(heights, new Set())).toEqual(compact);
+it('keeps every layer below the full bounds of the previous layer', () => {
+  const heights = [400, 480, 420, 1600];
+  const offsets = layerOffsets(heights);
+  expect(offsets[0]).toBe(0);
+  for (let i = 1; i < heights.length; i++)
+    expect(offsets[i]).toBeGreaterThan(offsets[i - 1] + heights[i - 1]);
+  expect(layerOffsets(heights)).toEqual(offsets);
 });
 
 it('does not draw a route through an overlapping object that blocks its endpoint', () => {

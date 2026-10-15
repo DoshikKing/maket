@@ -19,7 +19,7 @@ import {
   BaseEdge,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { ChevronDown, Layers, RefreshCw } from 'lucide-react';
+import { Focus, Layers, RefreshCw } from 'lucide-react';
 import { api } from '@/lib/client';
 import {
   layerLayout,
@@ -52,6 +52,7 @@ type PlaneNode = Node<
     planeWidth: number;
     depth: number;
     surfaceWidth: number;
+    focus: () => void;
   },
   'plane'
 >;
@@ -75,7 +76,7 @@ type ObjectNode = Node<
   'object'
 >;
 type HeadingNode = Node<
-  { name: string; count: number; expanded: boolean; toggle: () => void },
+  { name: string; count: number; active: boolean; focus: () => void },
   'heading'
 >;
 type BoundsNode = Node<Record<string, never>, 'bounds'>;
@@ -90,7 +91,7 @@ type LayerEdge = Edge<
 function RoutedEdge({ id, data, label, selected, markerEnd, style }: EdgeProps<LayerEdge>) {
   const [hovered, setHovered] = useState(false);
   const zoom = useStore((state) => state.transform[2]);
-  if (!data) return null;
+  if (!data || zoom < 0.55) return null;
   return (
     <g onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
       <BaseEdge
@@ -121,6 +122,23 @@ function RoutedEdge({ id, data, label, selected, markerEnd, style }: EdgeProps<L
     </g>
   );
 }
+function DetailLevel() {
+  const level = useStore((state) => {
+    const zoom = state.transform[2];
+    return zoom < 0.4
+      ? 'Слои и диаграммы'
+      : zoom < 0.55
+        ? 'Объекты'
+        : zoom < 0.85
+          ? 'Межслойные связи'
+          : 'Все детали';
+  });
+  return (
+    <div className="viewpoint-detail-level" role="status" data-detail-level={level}>
+      {level}
+    </div>
+  );
+}
 const edgeTypes = { layer: RoutedEdge };
 function Plane({ data }: NodeProps<PlaneNode>) {
   const { width: w, height: h, planeWidth: p, depth, surfaceWidth: u } = data;
@@ -128,6 +146,8 @@ function Plane({ data }: NodeProps<PlaneNode>) {
     <div className="viewpoint-plane" style={{ width: w, height: h }}>
       <svg width={w} height={h} aria-hidden="true">
         <polygon
+          className="nodrag nopan"
+          onClick={data.focus}
           points={`0,${u / 4 + 25} ${u},25 ${p},${25 + depth / 4} ${depth},${25 + (u + depth) / 4}`}
         />
         <path
@@ -161,16 +181,14 @@ function Heading({ data }: NodeProps<HeadingNode>) {
       className="nodrag nopan viewpoint-plane-heading"
       style={{ left: 0, top: 0, width: 300, height: 80 }}
       title={data.name}
-      onClick={data.toggle}
-      aria-pressed={data.expanded}
-      aria-label={`${data.expanded ? 'Сблизить' : 'Раздвинуть'} слой ${data.name}`}
+      onClick={data.focus}
+      aria-pressed={data.active}
+      aria-label={`Фокус на слое ${data.name}`}
     >
-      <ChevronDown size={17} style={{ transform: data.expanded ? undefined : 'rotate(-90deg)' }} />
+      <Focus size={17} />
       <Layers size={16} />
       <strong>{data.name}</strong>
-      <span>
-        {data.count} диаграмм · {data.expanded ? 'Сблизить' : 'Раздвинуть'}
-      </span>
+      <span>{data.count} диаграмм</span>
     </button>
   );
 }
@@ -192,6 +210,7 @@ function HoverLabel({ name, x, y }: { name: string; x: number; y: number }) {
   );
 }
 function Card({ data, selected }: NodeProps<CardNode>) {
+  const details = useStore((state) => state.transform[2] >= 0.85);
   const [hovered, setHovered] = useState(false);
   const { width: w, depth: d, height: h, minX, minY } = data.layout;
   const preview = data.preview;
@@ -235,8 +254,12 @@ function Card({ data, selected }: NodeProps<CardNode>) {
           onFocus={() => setHovered(true)}
           onBlur={() => setHovered(false)}
         />
-        {preview && (
-          <g transform={`matrix(1 -0.25 1 0.25 0 ${w / 4})`} pointerEvents="none">
+        {preview && details && (
+          <g
+            className="viewpoint-diagram-links"
+            transform={`matrix(1 -0.25 1 0.25 0 ${w / 4})`}
+            pointerEvents="none"
+          >
             <g transform={`translate(${-minX},${-minY})`}>
               {preview.edges.map((edge) => {
                 const geometry = data.layout.edges.get(edge.id);
@@ -278,6 +301,7 @@ function Card({ data, selected }: NodeProps<CardNode>) {
   );
 }
 function ObjectCard({ data, selected }: NodeProps<ObjectNode>) {
+  const visible = useStore((state) => state.transform[2] >= 0.4);
   const [hovered, setHovered] = useState(false);
   const { appearance: a, node, name } = data.item;
   const prism = useMemo(() => objectPrism(a, data.shapes), [a, data.shapes]);
@@ -285,6 +309,7 @@ function ObjectCard({ data, selected }: NodeProps<ObjectNode>) {
     <div
       className={`viewpoint-object-card ${selected ? 'is-selected' : ''} ${data.dim ? 'is-dim' : ''}`}
       style={{ width: prism.width, height: prism.height }}
+      data-detail-visible={visible}
       data-layer-object={node.id}
       data-layer-entity={data.entityId}
       data-layer-diagram-ref={data.diagramId}
@@ -394,27 +419,21 @@ export function ViewpointLayersPage({ diagramId }: { diagramId?: string }) {
 function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string }) {
   const flow = useReactFlow<SceneNode>();
   const graph = useMemo(() => viewpointLayers(space), [space]);
-  const [expanded, setExpanded] = useState<Set<string>>(new Set()),
-    [hidden, setHidden] = useState<Set<string>>(new Set()),
+  const [hidden, setHidden] = useState<Set<string>>(new Set()),
     [query, setQuery] = useState(''),
     [kind, setKind] = useState('all'),
     [interOnly, setInterOnly] = useState(false),
     [empty, setEmpty] = useState(false),
     [selection, setSelection] = useState<
-      | { kind: 'diagram' | 'connection'; id: string }
+      | { kind: 'diagram' | 'connection' | 'layer'; id: string }
       | { kind: 'object'; id: string; entityId: string; diagramId: string }
       | null
     >(diagramId ? { kind: 'diagram', id: diagramId } : null);
   function fit() {
     requestAnimationFrame(() => void flow.fitView({ duration: 300, padding: 0.15 }));
   }
-  function toggle(id: string) {
-    setExpanded((old) => {
-      const next = new Set(old);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
+  function focusLayer(id: string) {
+    setSelection({ kind: 'layer', id });
   }
   const layouts = useMemo(
     () => new Map(space.diagrams.map((d) => [d.id, diagramLayerLayout(space.previews[d.id])])),
@@ -470,12 +489,10 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
         { nodeId: string; layerId: string; objects: Map<string, string[]> }
       >();
     const focusEntity = selection?.kind === 'object' ? selection.entityId : undefined;
+    const focusLayerId = selection?.kind === 'layer' ? selection.id : undefined;
     const planes = new Map<string, LayerRoutePlane>();
     const active = graph.groups.flatMap((group, i) => (empty || group.diagrams.length ? [i] : []));
-    const positions = layerOffsets(
-      active.map((i) => plans[i].layout.height),
-      new Set(active.flatMap((i, n) => (expanded.has(graph.groups[i].id) ? [n] : []))),
-    );
+    const positions = layerOffsets(active.map((i) => plans[i].layout.height));
     const offsets = new Map(active.map((i, n) => [graph.groups[i].id, positions[n]]));
     for (const [index, group] of graph.groups.entries()) {
       const { layout, obstacles } = plans[index],
@@ -506,6 +523,7 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
           planeWidth: layout.planeWidth,
           depth: layout.depth,
           surfaceWidth: layout.surfaceWidth,
+          focus: () => focusLayer(group.id),
         },
         style: { width: layout.width, height: layout.height },
       });
@@ -521,8 +539,8 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
         data: {
           name: group.name,
           count: items.length,
-          expanded: expanded.has(group.id),
-          toggle: () => toggle(group.id),
+          active: focusLayerId === group.id,
+          focus: () => focusLayer(group.id),
         },
         style: { width: 300, height: 80 },
       });
@@ -643,10 +661,14 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
       const c = connections[0],
         color = colors[c.kind];
       const related =
-        !focusEntity ||
-        connections.some((c) => c.entityId === focusEntity) ||
-        entityFor(source) === focusEntity ||
-        entityFor(target) === focusEntity;
+        (!focusLayerId ||
+          [locations.get(c.source)?.layerId, locations.get(c.target)?.layerId].includes(
+            focusLayerId,
+          )) &&
+        (!focusEntity ||
+          connections.some((c) => c.entityId === focusEntity) ||
+          entityFor(source) === focusEntity ||
+          entityFor(target) === focusEntity);
       if (focusEntity && related) {
         for (const nodeId of [source, target]) {
           const entityId = entityFor(nodeId);
@@ -744,6 +766,19 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
       }
     return {
       nodes: nodes.map<SceneNode>((n) => {
+        const layerId =
+          n.type === 'plane'
+            ? n.id.slice(6)
+            : n.type === 'heading'
+              ? n.id.slice(8)
+              : n.type === 'diagram'
+                ? locations.get(n.data.diagram.id)?.layerId
+                : n.type === 'object'
+                  ? locations.get(n.data.diagramId)?.layerId
+                  : undefined;
+        if (focusLayerId && layerId && layerId !== focusLayerId)
+          n = { ...n, style: { ...n.style, opacity: 0.16 } };
+
         if (n.type === 'object')
           return {
             ...n,
@@ -769,7 +804,6 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
     layouts,
     plans,
     entities,
-    expanded,
     hidden,
     query,
     kind,
@@ -783,11 +817,6 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
     setHidden((old) => {
       const next = new Set(old);
       next.delete(group.id);
-      return next;
-    });
-    setExpanded((old) => {
-      const next = new Set(old);
-      next.add(group.id);
       return next;
     });
     setQuery('');
@@ -806,7 +835,6 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
     const group = graph.groups.find((g) => g.diagrams.some((d) => d.id === diagramId));
     if (!group) return;
     setHidden((old) => new Set([...old].filter((key) => key !== group.id)));
-    setExpanded((old) => new Set([...old, group.id]));
     setQuery('');
     requestAnimationFrame(
       () => void flow.fitView({ nodes: [{ id }], padding: 1, maxZoom: 2.5, duration: 300 }),
@@ -861,22 +889,11 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
           />
           Пустые слои
         </label>
-        <button
-          className="secondary small"
-          onClick={() => {
-            setExpanded(new Set());
-          }}
-        >
-          Сблизить все слои
-        </button>
-        <button
-          className="secondary small"
-          onClick={() => {
-            setExpanded(new Set(graph.groups.map((g) => g.id)));
-          }}
-        >
-          Раздвинуть все слои
-        </button>
+        {selection && (
+          <button className="secondary small" onClick={() => setSelection(null)}>
+            Сбросить выделение
+          </button>
+        )}
         <button className="secondary small" onClick={fit}>
           Вписать слои
         </button>
@@ -920,6 +937,7 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
             onEdgeClick={(_, e) => setSelection({ kind: 'connection', id: e.id })}
             onPaneClick={() => setSelection(null)}
           >
+            <DetailLevel />
             <Background color="var(--canvas-dots)" />
             <Controls showInteractive={false} />
             <MiniMap
@@ -988,13 +1006,10 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
                 </label>
                 <button
                   className="icon-button"
-                  aria-label={`${expanded.has(g.id) ? 'Сблизить' : 'Раздвинуть'} ракурс ${g.name}`}
-                  onClick={() => toggle(g.id)}
+                  aria-label={`Выделить ракурс ${g.name}`}
+                  onClick={() => focusLayer(g.id)}
                 >
-                  <ChevronDown
-                    size={15}
-                    style={{ transform: expanded.has(g.id) ? undefined : 'rotate(-90deg)' }}
-                  />
+                  <Focus size={15} />
                 </button>
               </div>
             ))}
@@ -1104,7 +1119,8 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
           <p className="muted">
             Порядок ракурсов задаёт порядок плоскостей. Переходы могут пропускать слои. Перемещайте
             фон, меняйте масштаб и выбирайте объекты, диаграммы или линии связей. Нажмите на подпись
-            слоя, чтобы раздвинуть его. Двойной щелчок по объекту приближает его.
+            слоя или его плоскость, чтобы выделить его. Детализация возрастает при приближении.
+            Двойной щелчок по объекту приближает его.
           </p>
           <div className="viewpoint-layer-legend">
             {Object.entries(kindNames).map(([id, name]) => (

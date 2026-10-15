@@ -466,11 +466,11 @@ export function layerConnectionRoute(
     labelY: (outgoing[outgoing.length - 1].y + incoming[0].y) / 2,
   };
 }
-export function layerOffsets(heights: number[], expanded: Set<number>) {
+export function layerOffsets(heights: number[]) {
   let top = 0;
-  return heights.map((height, i) => {
+  return heights.map((height) => {
     const offset = top;
-    top += expanded.has(i) || expanded.has(i + 1) ? height + 110 : Math.max(120, height * 0.55);
+    top += height + 110;
     return offset;
   });
 }
