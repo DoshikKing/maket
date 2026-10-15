@@ -3,8 +3,6 @@ import {
   layerLayout,
   layerConnectionRoute,
   layerOffsets,
-  layerObjectObstacle,
-  crossesObstacle,
   viewpointLayers,
   UNASSIGNED_LAYER,
   diagramLayerLayout,
@@ -225,47 +223,30 @@ it('anchors connectors to actual extrusion walls and preserves custom corner rou
   expect(reversed.source.x).toBeCloseTo(prism.source.x, 8);
 });
 
-it('routes links through the side in separate outside columns with projection-aligned segments', () => {
+it('draws direct curved arrows with exact endpoints and a label at the curve midpoint', () => {
   const source = { x: 300, y: 200 },
     target = { x: 500, y: 800 };
-  const upper = { origin: 250, depth: 420 },
-    lower = { origin: 850, depth: 420 };
-  const route = layerConnectionRoute(source, target, upper, lower, 0)!;
-  expect(route).not.toBeNull();
-  expect(route.points[0]).toEqual(source);
-  expect(route.points.at(-1)).toEqual(target);
-  expect(route.path).not.toMatch(/[CQ]/);
-  const vertical = route.points.find((p, i) => i && route.points[i - 1].x === p.x)!;
-  expect(vertical.x).toBeLessThan(0);
-  for (let i = 1; i < route.points.length; i++) {
-    const p = route.points[i - 1],
-      q = route.points[i];
-    if (p.x !== q.x) expect(Math.abs((q.y - p.y) / (q.x - p.x))).toBeCloseTo(0.25, 8);
-  }
-  expect(layerConnectionRoute(source, target, upper, lower, 1)!.points[1].x).not.toBe(vertical.x);
+  const route = layerConnectionRoute(source, target, 0);
+  const values = route.path.match(/-?[\d.]+/g)!.map(Number);
+  expect(values.slice(0, 2)).toEqual([source.x, source.y]);
+  expect(values.slice(-2)).toEqual([target.x, target.y]);
+  expect(route.path).toContain(' C ');
+  expect(route.path).not.toMatch(/[LQ]/);
+  expect(values[2]).toBeLessThan(source.x);
+  expect(values[4]).toBe(values[2]);
+  expect(route.labelX).toBe((source.x + target.x + 6 * values[2]) / 8);
+  expect(route.labelY).toBe(500);
+  expect(layerConnectionRoute(source, target, 1).path).not.toBe(route.path);
 });
-it('detours around extruded objects instead of crossing their top faces or walls', () => {
-  const obstacle = layerObjectObstacle('blocker', 150, 120, 160, 100);
-  const plane = { origin: 250, depth: 420, obstacles: [obstacle] };
-  const project = (u: number, v: number, origin: number) => ({
-    x: u + v,
-    y: origin - u / 4 + v / 4,
-  });
-  const source = project(450, 160, plane.origin),
-    target = project(300, 160, 900);
-  const route = layerConnectionRoute(source, target, plane, { origin: 900, depth: 420 }, 0)!;
-  expect(route).not.toBeNull();
-  expect(route.points.length).toBeGreaterThan(4);
-  const inverse = (p: { x: number; y: number }) => ({
-    x: p.x / 2 - 2 * (p.y - plane.origin),
-    y: p.x / 2 + 2 * (p.y - plane.origin),
-  });
-  const column = route.points.findIndex((p) => p.x < 0);
-  for (let i = 1; i <= column; i++)
-    expect(
-      crossesObstacle(inverse(route.points[i - 1]), inverse(route.points[i]), obstacle.points),
-    ).toBe(false);
+it('keeps curves finite for horizontal, vertical and coincident endpoints', () => {
+  for (const target of [
+    { x: 300, y: 800 },
+    { x: 500, y: 200 },
+    { x: 300, y: 200 },
+  ])
+    expect(layerConnectionRoute({ x: 300, y: 200 }, target, 0).path).not.toMatch(/NaN|Infinity/);
 });
+
 it('keeps every layer below the full bounds of the previous layer', () => {
   const heights = [400, 480, 420, 1600];
   const offsets = layerOffsets(heights);
@@ -273,16 +254,4 @@ it('keeps every layer below the full bounds of the previous layer', () => {
   for (let i = 1; i < heights.length; i++)
     expect(offsets[i]).toBeGreaterThan(offsets[i - 1] + heights[i - 1]);
   expect(layerOffsets(heights)).toEqual(offsets);
-});
-
-it('does not draw a route through an overlapping object that blocks its endpoint', () => {
-  const plane = {
-    origin: 250,
-    depth: 420,
-    obstacles: [layerObjectObstacle('blocker', 400, 120, 180, 100)],
-  };
-  const source = { x: 450 + 160, y: plane.origin - 450 / 4 + 160 / 4 };
-  expect(
-    layerConnectionRoute(source, { x: 100, y: 900 }, plane, { origin: 900, depth: 420 }, 0),
-  ).toBeNull();
 });

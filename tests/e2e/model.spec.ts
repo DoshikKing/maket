@@ -3,7 +3,6 @@ import { test, expect, type APIRequestContext, type Page, type Locator } from '@
 import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { scryptSync, randomBytes } from 'node:crypto';
-import { convexHull, crossesObstacle } from '../../src/lib/viewpoint-layers';
 import { builtinNotation, type DiagramDocument } from '../../src/lib/notation';
 import type { ModelDiagram, ModelDocument, ModelObject } from '../../src/lib/model';
 const db = new PrismaClient({
@@ -4431,7 +4430,7 @@ test('browser: 2.5D viewpoint layers keep static layers, focus and semantic zoom
   await expect(page.locator('.viewpoint-layers-counts')).toContainText('Связи: 2');
   await page.getByLabel('Тип связей слоёв').selectOption('viewpoint');
   await expect(page.locator('.react-flow__edge-path')).toHaveCount(1);
-  await expect(page.locator('.react-flow__edge-path')).toHaveAttribute('d', /^M.*L.*L.*L/);
+  await expect(page.locator('.react-flow__edge-path')).toHaveAttribute('d', /^M.*C/);
   const sourceObjects = page.locator(
     `[data-layer-diagram-ref="${source.id}"][data-layer-entity="${owner.id}"]`,
   );
@@ -4454,52 +4453,6 @@ test('browser: 2.5D viewpoint layers keep static layers, focus and semantic zoom
   expect(Math.abs(endpoints.start.y - (sourcePort!.y + sourcePort!.height / 2))).toBeLessThan(3);
   expect(Math.abs(endpoints.end.x - (targetPort!.x + targetPort!.width / 2))).toBeLessThan(3);
   expect(Math.abs(endpoints.end.y - (targetPort!.y + targetPort!.height / 2))).toBeLessThan(3);
-  const otherShape = await sourceObjects.first().evaluate((object) => {
-    const points: { x: number; y: number }[] = [];
-    const top = object.querySelector('.viewpoint-object-shape') as SVGSVGElement;
-    const box = top.getBBox(),
-      matrix = top.getScreenCTM()!;
-    for (const [x, y] of [
-      [box.x, box.y],
-      [box.x + box.width, box.y],
-      [box.x + box.width, box.y + box.height],
-      [box.x, box.y + box.height],
-    ]) {
-      const point = top.createSVGPoint();
-      point.x = x;
-      point.y = y;
-      const p = point.matrixTransform(matrix);
-      points.push({ x: p.x, y: p.y });
-    }
-    for (const element of object.querySelectorAll('.viewpoint-object-walls polygon')) {
-      const polygon = element as SVGPolygonElement;
-      for (let i = 0; i < polygon.points.numberOfItems; i++) {
-        const p = polygon.points.getItem(i).matrixTransform(polygon.getScreenCTM()!);
-        points.push({ x: p.x, y: p.y });
-      }
-    }
-    return points;
-  });
-  const routeVertices = await page.locator('.react-flow__edge-path').evaluate((element) => {
-    const path = element as SVGPathElement,
-      matrix = path.getScreenCTM()!;
-    return path
-      .getAttribute('d')!
-      .split(/[ML]/)
-      .filter(Boolean)
-      .map((text) => {
-        const [x, y] = text.trim().split(/\s+/).map(Number);
-        const p = path.ownerSVGElement!.createSVGPoint();
-        p.x = x;
-        p.y = y;
-        const screen = p.matrixTransform(matrix);
-        return { x: screen.x, y: screen.y };
-      });
-  });
-  const silhouette = convexHull(otherShape);
-  for (let i = 1; i < routeVertices.length; i++)
-    expect(crossesObstacle(routeVertices[i - 1], routeVertices[i], silhouette)).toBe(false);
-
   // Geometry and filtering are independent of semantic zoom and focus.
   await page.getByRole('button', { name: 'Вписать слои', exact: true }).click();
   await expect.poll(() => viewport.getAttribute('style')).toBe(originalCamera);

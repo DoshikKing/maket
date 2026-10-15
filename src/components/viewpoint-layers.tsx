@@ -24,9 +24,7 @@ import { api } from '@/lib/client';
 import {
   layerLayout,
   layerOffsets,
-  layerObjectObstacle,
   layerConnectionRoute,
-  type LayerRoutePlane,
   diagramLayerLayout,
   objectPrism,
   OBJECT_DEPTH,
@@ -84,7 +82,7 @@ type SceneNode = PlaneNode | CardNode | ObjectNode | HeadingNode | BoundsNode;
 type LayerEdge = Edge<
   {
     connections: LayerConnection[];
-    route: NonNullable<ReturnType<typeof layerConnectionRoute>>;
+    route: ReturnType<typeof layerConnectionRoute>;
   },
   'layer'
 >;
@@ -463,27 +461,9 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
           group.diagrams.length,
           group.diagrams.map((d) => layouts.get(d.id)!),
         );
-        const obstacles = group.diagrams.flatMap((diagram, i) => {
-          if (!diagram.name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()))
-            return [];
-          const tile = layouts.get(diagram.id)!,
-            position = layout.positions[i];
-          const y = position.y + tile.width / 4 - (layout.surfaceWidth / 4 + 25);
-          const u = position.x / 2 - 2 * y,
-            v = position.x / 2 + 2 * y;
-          return tile.nodes.map((item) =>
-            layerObjectObstacle(
-              `object:${diagram.id}:${item.node.id}`,
-              u + item.node.position.x - tile.minX,
-              v + item.node.position.y - tile.minY,
-              item.appearance.width,
-              item.appearance.height,
-            ),
-          );
-        });
-        return { layout, obstacles };
+        return { layout };
       }),
-    [graph, layouts, query],
+    [graph, layouts],
   );
   const scene = useMemo(() => {
     const nodes: SceneNode[] = [],
@@ -493,19 +473,18 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
       >();
     const focusEntity = selection?.kind === 'object' ? selection.entityId : undefined;
     const focusLayerId = selection?.kind === 'layer' ? selection.id : undefined;
-    const planes = new Map<string, LayerRoutePlane>();
+    const planes = new Map<string, { origin: number; depth: number }>();
     const active = graph.groups.flatMap((group, i) => (empty || group.diagrams.length ? [i] : []));
     const positions = layerOffsets(active.map((i) => plans[i].layout.height));
     const offsets = new Map(active.map((i, n) => [graph.groups[i].id, positions[n]]));
     for (const [index, group] of graph.groups.entries()) {
-      const { layout, obstacles } = plans[index],
+      const { layout } = plans[index],
         planeId = `layer:${group.id}`;
       const layerTop = offsets.get(group.id) ?? 0,
         base = (graph.groups.length - index) * 10;
       planes.set(group.id, {
         origin: layerTop + layout.surfaceWidth / 4 + 25,
         depth: layout.depth,
-        obstacles,
       });
       if (hidden.has(group.id)) continue;
       const items = group.diagrams.filter((d) =>
@@ -664,7 +643,6 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
       return n.position;
     };
     const neighborhood = new Set<string>(focusEntity ? [focusEntity] : []);
-    const blockedRoutes: LayerConnection[] = [];
     const edges: LayerEdge[] = [...groups].flatMap(([id, group]) => {
       const { source, target, connections } = group;
       const c = connections[0],
@@ -692,16 +670,8 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
       const route = layerConnectionRoute(
         port(source),
         port(target),
-        planes.get(locations.get(c.source)!.layerId)!,
-        planes.get(locations.get(c.target)!.layerId)!,
         Math.min(...connections.map((c) => lanes.get(c.id)!)),
-        source,
-        target,
       );
-      if (!route) {
-        blockedRoutes.push(...connections);
-        return [];
-      }
       return [
         {
           id,
@@ -733,8 +703,7 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
       ];
     });
     if (edges.length) {
-      // Reserve the full routing envelope so filtering or selecting an alias never refits the scene.
-      const lastLane = Math.max(0, lanes.size - 1);
+      // Reserve room for the widest arc without changing bounds on zoom or selection.
       const diagramLayers = new Map(
         graph.groups.flatMap((g) => g.diagrams.map((d) => [d.id, g.id] as const)),
       );
@@ -747,11 +716,11 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
       const bottom = Math.max(
         ...[...referencedLayers].map((id) => {
           const plane = planes.get(id)!;
-          return plane.origin + plane.depth / 2 + 56 + lastLane * 6;
+          return plane.origin + plane.depth / 2 + 56;
         }),
       );
       for (const [id, position] of [
-        ['route-min', { x: -200 - lastLane * 24, y: 0 }],
+        ['route-min', { x: -560, y: 0 }],
         ['route-max', { x: 0, y: bottom }],
       ] as const)
         nodes.push({
@@ -810,7 +779,6 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
       }),
       edges,
       locations,
-      blockedRoutes,
     };
   }, [
     graph,
@@ -1100,21 +1068,6 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
                 </div>
               ))}
             </section>
-          )}
-          {!!scene.blockedRoutes.length && (
-            <details className="viewpoint-unresolved">
-              <summary>Связи без свободного прохода ({scene.blockedRoutes.length})</summary>
-              <p className="muted">
-                Перекрывающиеся объекты не оставляют места для стрелки. Измените их расположение на
-                диаграмме.
-              </p>
-              {scene.blockedRoutes.map((c) => (
-                <div key={c.id}>
-                  <strong>{c.name}</strong>
-                  <Link href={`/solutions?diagram=${c.source}`}>Открыть исходную диаграмму</Link>
-                </div>
-              ))}
-            </details>
           )}
           {!!graph.unresolved.length && (
             <details className="viewpoint-unresolved">
