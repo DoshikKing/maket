@@ -32,7 +32,10 @@ export function WorkspaceSwitcher({
           }
         }}
       >
-        <summary aria-label="Выбрать рабочую область">
+        <summary
+          aria-label="Выбрать рабочую область"
+          title={current?.name ?? 'Выбрать рабочую область'}
+        >
           <Workflow size={16} />
           <span>
             <small>РАБОЧАЯ ОБЛАСТЬ</small>

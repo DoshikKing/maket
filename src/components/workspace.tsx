@@ -2,7 +2,17 @@
 import { createContext, useContext, useState, useLayoutEffect } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { Workflow, Library, Shapes, Settings, LogOut, ChevronRight, Sparkles } from 'lucide-react';
+import {
+  Workflow,
+  Library,
+  Shapes,
+  Settings,
+  LogOut,
+  ChevronRight,
+  Sparkles,
+  PanelLeftClose,
+  PanelLeftOpen,
+} from 'lucide-react';
 import { api } from '@/lib/client';
 import { WorkspaceSwitcher, type WorkspaceItem } from './workspace-switcher';
 export type User = {
@@ -35,6 +45,18 @@ export function Workspace({
     router = useRouter(),
     searchParams = useSearchParams();
   const [error, setError] = useState('');
+  const [collapsed, setCollapsed] = useState(false);
+  const sidebarKey = `maket:sidebar:${initialUser.id}`;
+  useLayoutEffect(() => {
+    try {
+      const saved = localStorage.getItem(sidebarKey);
+      setCollapsed(
+        saved === null ? window.matchMedia('(max-width: 650px)').matches : saved === '1',
+      );
+    } catch {
+      setCollapsed(window.matchMedia('(max-width: 650px)').matches);
+    }
+  }, [sidebarKey]);
   useLayoutEffect(() => {
     document.documentElement.dataset.theme = user.settings.theme;
     return () => {
@@ -57,23 +79,46 @@ export function Workspace({
   return (
     <UserContext.Provider value={{ user, setUser, workspaceId }}>
       <div className={`workspace ${user.settings.theme === 'dark' ? 'dark' : ''}`}>
-        <aside className="sidebar">
-          <Link href="/library" className="brand">
+        <aside className={`sidebar ${collapsed ? 'is-collapsed' : ''}`} aria-label="Главное меню">
+          <button
+            type="button"
+            className="icon-button sidebar-toggle"
+            aria-label={collapsed ? 'Развернуть меню' : 'Свернуть меню'}
+            title={collapsed ? 'Развернуть меню' : 'Свернуть меню'}
+            aria-expanded={!collapsed}
+            aria-controls="workspace-navigation"
+            onClick={() => {
+              const next = !collapsed;
+              setCollapsed(next);
+              try {
+                localStorage.setItem(sidebarKey, next ? '1' : '0');
+              } catch {
+                /* Keep the menu usable when browser storage is unavailable. */
+              }
+            }}
+          >
+            {collapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
+          </button>
+          <Link href="/library" className="brand" aria-label="maket" title="maket">
             <span className="brand-icon">
               <Workflow size={23} />
             </span>
-            maket<span className="brand-dot">.</span>
+            <span className="sidebar-brand-name">
+              maket<span className="brand-dot">.</span>
+            </span>
           </Link>
           <WorkspaceSwitcher initialItems={initialWorkspaces} currentId={workspaceId} />
-          <nav>
+          <nav id="workspace-navigation" aria-label="Разделы приложения">
             {links.map(({ href, label, icon: Icon }) => (
               <Link
+                aria-label={label}
+                title={label}
                 key={href}
                 href={href}
                 className={pathname === href || (href === '/solutions' && editor) ? 'active' : ''}
               >
                 <Icon size={19} />
-                {label}
+                <span className="nav-label">{label}</span>
                 {pathname === href && <ChevronRight size={15} className="nav-chevron" />}
               </Link>
             ))}

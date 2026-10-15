@@ -1846,33 +1846,11 @@ details p {
 }
 @media (max-width: 650px) {
   .sidebar {
-    width: 65px;
-    padding: 22px 7px 0;
+    width: 200px;
+    padding: 22px 12px 0;
   }
-  .sidebar > .brand {
-    font-size: 0;
-    padding: 0;
-    justify-content: center;
-    gap: 0;
-  }
-  .sidebar .brand-dot,
-  .workspace-label,
-  .sidebar nav a .nav-chevron,
-  .profile > div,
-  .profile > .icon-button {
+  .workspace-label {
     display: none;
-  }
-  .sidebar nav {
-    margin-top: 35px;
-  }
-  .sidebar nav a {
-    font-size: 0;
-    gap: 0;
-    justify-content: center;
-    padding: 14px 0;
-  }
-  .profile {
-    justify-content: center;
   }
   .sidebar nav a svg {
     width: 22px;
@@ -3652,10 +3630,6 @@ body {
     margin: 18px 0;
     padding: 8px;
   }
-  .workspace-switcher summary > span,
-  .workspace-switcher summary > svg:last-child {
-    display: none;
-  }
 }
 
 .viewpoint-layers-page {
@@ -4150,4 +4124,87 @@ body {
 .public-object-attributes td:last-child {
   color: var(--muted);
   font-size: 12px;
+}
+
+/* Main navigation keeps its actions available when reduced to icons. */
+.sidebar-brand-name .brand-dot {
+  margin-left: 0;
+}
+.sidebar {
+  padding-top: 22px;
+}
+.sidebar-toggle {
+  position: absolute;
+  right: -12px;
+  top: 18px;
+  z-index: 30;
+  width: 24px;
+  height: 24px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--muted);
+}
+.sidebar.is-collapsed {
+  width: 72px;
+  padding: 22px 10px 0;
+}
+.sidebar.is-collapsed > .brand {
+  justify-content: center;
+  padding: 0;
+  gap: 0;
+}
+.sidebar.is-collapsed .sidebar-brand-name,
+.sidebar.is-collapsed .nav-label,
+.sidebar.is-collapsed .nav-chevron,
+.sidebar.is-collapsed .sidebar-tip,
+.sidebar.is-collapsed .profile > div,
+.sidebar.is-collapsed .workspace-switcher summary > span,
+.sidebar.is-collapsed .workspace-switcher summary > svg:last-child {
+  display: none;
+}
+.sidebar.is-collapsed nav {
+  margin-top: 0;
+}
+.sidebar.is-collapsed nav a {
+  justify-content: center;
+  padding: 13px 0;
+  gap: 0;
+}
+.sidebar.is-collapsed .workspace-switcher {
+  margin: 18px 0;
+  padding: 10px;
+}
+.sidebar.is-collapsed .workspace-switcher summary {
+  justify-content: center;
+}
+.sidebar.is-collapsed .profile {
+  margin-top: auto;
+  flex-direction: column;
+  gap: 10px;
+}
+.sidebar.is-collapsed .profile > .icon-button {
+  display: flex;
+}
+.topbar {
+  padding-right: 24px;
+  padding-left: 24px;
+}
+.page {
+  padding: 24px 24px 40px;
+}
+@media (max-width: 1200px) {
+  .page {
+    padding: 22px 20px 32px;
+  }
+}
+@media (max-width: 650px) {
+  .page {
+    padding: 20px 14px 28px;
+  }
+  .topbar {
+    padding-right: 14px;
+    padding-left: 14px;
+  }
 }
