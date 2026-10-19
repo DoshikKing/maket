@@ -1,4 +1,5 @@
 'use client';
+import { mergeDiagramState, DiagramConflict } from '@/lib/diagram-merge';
 import { useEditLease, LeaseNotice } from './collaboration';
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import Link from 'next/link';
@@ -159,7 +160,7 @@ export function EditorPage({ id }: { id: string }) {
   );
 }
 function Editor({ initial }: { initial: Diagram }) {
-  const lease = useEditLease(initial.id);
+  const lease = useEditLease(initial.id, false);
   const editable = useRef(false);
   editable.current = lease.held;
   const router = useRouter();
@@ -299,45 +300,61 @@ function Editor({ initial }: { initial: Diagram }) {
   cleanDocument.current = savedDoc;
   useEffect(() => {
     let active = true,
-      pending = false;
+      pending = false,
+      queued = false;
     const refresh = async () => {
-      if (
-        pending ||
-        window.document.hidden ||
-        savingRef.current ||
-        gesture.current ||
-        JSON.stringify(docRef.current) !== cleanDocument.current
-      )
+      if (pending) {
+        queued = true;
         return;
+      }
+      if (window.document.hidden || savingRef.current || gesture.current) return;
       pending = true;
       const expected = docRef.current;
       try {
         const d = await api<ModelDiagram>(`diagrams/${initial.id}`);
-        if (
-          !active ||
-          savingRef.current ||
-          gesture.current ||
-          docRef.current !== expected ||
-          JSON.stringify(docRef.current) !== cleanDocument.current
-        )
+        if (!active || savingRef.current || gesture.current) return;
+        if (docRef.current !== expected) {
+          queued = true;
           return;
+        }
         setName(d.name);
         if (d.revision !== revisionRef.current) {
-          const next = projectDocument(d.document);
+          const remote = projectDocument(d.document);
+          const base = JSON.parse(cleanDocument.current) as ViewDocument;
+          const next = mergeDiagramState(base, docRef.current, remote);
+          // Rebase pending undo snapshots too: undo must never revert another participant's changes.
+          setUndo((items) =>
+            items.flatMap((item) => {
+              try {
+                return [mergeDiagramState(base, item as ViewDocument, remote)];
+              } catch {
+                return [];
+              }
+            }),
+          );
+          setRedo([]);
           docRef.current = next;
           revisionRef.current = d.revision;
+          cleanDocument.current = JSON.stringify(remote);
           setDocument(next);
-          setSavedDoc(JSON.stringify(next));
+          setSavedDoc(cleanDocument.current);
           setRevision(d.revision);
-          setUndo([]);
-          setRedo([]);
+          mergeObjects(d.document.objects);
+          mergeRelations(d.document.relations ?? []);
           setBlocked(false);
         }
         await refreshObjects();
       } catch (e) {
-        if (active) setError((e as Error).message);
+        if (active) {
+          setError((e as Error).message);
+          if (e instanceof DiagramConflict) setBlocked(true);
+        }
       } finally {
         pending = false;
+        if (active && queued) {
+          queued = false;
+          void refresh();
+        }
       }
     };
     window.addEventListener('maket:workspace-changed', refresh);
@@ -349,7 +366,7 @@ function Editor({ initial }: { initial: Diagram }) {
       window.removeEventListener('maket:workspace-changed', refresh);
       window.removeEventListener('focus', refresh);
     };
-  }, [initial.id, lease.held, refreshObjects]);
+  }, [initial.id, lease.held, refreshObjects, interacting, saving]);
   const serialized = useMemo(() => JSON.stringify(document), [document]);
   const dirty = serialized !== savedDoc;
   const errors = useMemo(
@@ -385,16 +402,40 @@ function Editor({ initial }: { initial: Diagram }) {
       setSaving(true);
       setError('');
       try {
-        const result = await api<ModelDiagram>(`diagrams/${initial.id}`, 'PUT', {
-          revision: revisionRef.current,
-          document: packed,
-        });
+        const result = await api<ModelDiagram & { concurrentBase?: ModelDocument }>(
+          `diagrams/${initial.id}`,
+          'PUT',
+          {
+            revision: revisionRef.current,
+            document: packed,
+            concurrent: true,
+          },
+        );
+        const remote = projectDocument(result.document);
+        const next = mergeDiagramState(snapshot, docRef.current, remote);
+        mergeObjects(result.document.objects);
         mergeRelations(result.document.relations ?? []);
+        if (result.concurrentBase) {
+          const base = JSON.parse(cleanDocument.current) as ViewDocument;
+          const incoming = projectDocument(result.concurrentBase);
+          setUndo((items) =>
+            items.flatMap((item) => {
+              try {
+                return [mergeDiagramState(base, item as ViewDocument, incoming)];
+              } catch {
+                return [];
+              }
+            }),
+          );
+        }
+        docRef.current = next;
+        setDocument(next);
         revisionRef.current = result.revision;
         setRevision(result.revision);
-        setSavedDoc(JSON.stringify(snapshot));
+        cleanDocument.current = JSON.stringify(remote);
+        setSavedDoc(cleanDocument.current);
         setBlocked(false);
-        return JSON.stringify(docRef.current) === JSON.stringify(snapshot);
+        return JSON.stringify(docRef.current) === JSON.stringify(remote);
       } catch (e) {
         const message = (e as Error).message;
         setError(message);
@@ -497,12 +538,36 @@ function Editor({ initial }: { initial: Diagram }) {
     const nodes = moveLayer(docRef.current.nodes, id, direction);
     if (nodes !== docRef.current.nodes) change({ ...docRef.current, nodes });
   }
-  function adopt(result: ModelDiagram, record = true) {
-    const next = projectDocument(result.document);
+  function adopt(result: ModelDiagram & { concurrentBase?: ModelDocument }, record = true) {
+    const remote = projectDocument(result.document);
+    const next = mergeDiagramState(
+      JSON.parse(cleanDocument.current) as ViewDocument,
+      docRef.current,
+      remote,
+    );
     mergeObjects(result.document.objects);
     mergeRelations(result.document.relations ?? []);
-    change(next, record);
-    setSavedDoc(JSON.stringify(next));
+    if (record) {
+      const base = JSON.parse(cleanDocument.current) as ViewDocument;
+      const incoming = result.concurrentBase ? projectDocument(result.concurrentBase) : base;
+      const previous = mergeDiagramState(base, docRef.current, incoming);
+      setUndo((items) => [
+        ...items
+          .flatMap((item) => {
+            try {
+              return [mergeDiagramState(base, item as ViewDocument, incoming)];
+            } catch {
+              return [];
+            }
+          })
+          .slice(-49),
+        previous,
+      ]);
+      setRedo([]);
+    }
+    change(next, false);
+    cleanDocument.current = JSON.stringify(remote);
+    setSavedDoc(cleanDocument.current);
     revisionRef.current = result.revision;
     setRevision(result.revision);
     setBlocked(false);
@@ -619,6 +684,7 @@ function Editor({ initial }: { initial: Diagram }) {
       const before = new Set(docRef.current.nodes.map((n) => n.id));
       const result = await api<ModelDiagram>(`diagrams/${initial.id}/representations`, 'POST', {
         revision: revisionRef.current,
+        concurrent: true,
         bindingId,
         typeId: symbolId,
         objectId,

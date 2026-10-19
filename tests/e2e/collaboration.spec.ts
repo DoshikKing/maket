@@ -395,21 +395,12 @@ test('collaboration UI shares access and synchronizes a readonly diagram between
     await expect(viewer.getByText('Доступ только для просмотра', { exact: true })).not.toBeVisible({
       timeout: 15000,
     });
-    await expect
-      .poll(
-        async () =>
-          await db.workspaceLock.count({
-            where: { spaceId: area.id, targetId: d.id, userId: user.id },
-          }),
-        { timeout: 15000 },
-      )
-      .toBe(1);
+    expect(await db.workspaceLock.count({ where: { spaceId: area.id, targetId: d.id } })).toBe(0);
     await p.goto(`/diagrams/${d.id}`);
     await expect(
-      p
-        .locator('.collaboration-notice')
-        .filter({ hasText: 'Редактирует Читатель UI. Элемент временно заблокирован' }),
-    ).toBeVisible({ timeout: 15000 });
+      p.locator(`.react-flow__node[data-id="${liveDiagram.document.nodes[0].id}"]`),
+    ).toBeVisible();
+    await expect(p.locator('.collaboration-notice')).toHaveCount(0);
     await viewer.goto('/library');
     await expect
       .poll(
@@ -423,5 +414,249 @@ test('collaboration UI shares access and synchronizes a readonly diagram between
     await viewerContext.close();
     await own.dispose();
     await invited.dispose();
+  }
+});
+
+test('concurrent diagram writes merge disjoint edits, reject conflicts and respect object leases', async ({
+  request,
+  playwright,
+}) => {
+  test.setTimeout(120000);
+  await login(request, 'Автор');
+  const area = (await result(request, 'workspaces'))[0];
+  const second = await playwright.request.newContext({
+    baseURL: 'http://localhost:3000',
+    extraHTTPHeaders: { 'X-Maket-Workspace': area.id, 'X-Maket-Client': randomUUID() },
+  });
+  const user = await login(second, 'Соавтор');
+  try {
+    await result(request, 'collaboration/members', 'POST', { email: user.email, role: 'editor' });
+    let d = await result(
+      request,
+      'diagrams',
+      'POST',
+      { name: 'Одновременное редактирование' },
+      201,
+    );
+    for (let i = 0; i < 2; i++)
+      d = await result(
+        request,
+        `diagrams/${d.id}/representations`,
+        'POST',
+        {
+          revision: d.revision,
+          bindingId: d.document.bindings[0].id,
+          typeId: 'process',
+          position: { x: i * 300, y: 0 },
+        },
+        201,
+      );
+    const a = structuredClone(d.document),
+      b = structuredClone(d.document);
+    a.nodes[0].position = { x: 50, y: 100 };
+    b.nodes[1].position = { x: 500, y: 300 };
+    const responses = await Promise.all([
+      request.put(`/api/diagrams/${d.id}`, {
+        data: { revision: d.revision, document: a, concurrent: true },
+      }),
+      second.put(`/api/diagrams/${d.id}`, {
+        data: { revision: d.revision, document: b, concurrent: true },
+      }),
+    ]);
+    for (const response of responses) expect(response.status(), await response.text()).toBe(200);
+    let live = await result(request, `diagrams/${d.id}`);
+    expect(live.document.nodes.map((n: { position: unknown }) => n.position)).toEqual([
+      { x: 50, y: 100 },
+      { x: 500, y: 300 },
+    ]);
+    const left = structuredClone(live.document),
+      right = structuredClone(live.document);
+    left.nodes[0].position.x = 70;
+    right.nodes[0].position.y = 150;
+    await result(request, `diagrams/${d.id}`, 'PUT', {
+      revision: live.revision,
+      document: left,
+      concurrent: true,
+    });
+    await result(
+      second,
+      `diagrams/${d.id}`,
+      'PUT',
+      { revision: live.revision, document: right, concurrent: true },
+      409,
+    );
+    // Holding A's property card must not stop B's representation moving on the same diagram.
+    await result(second, `collaboration/locks/${live.document.nodes[0].objectId}`, 'POST', {});
+    live = await result(request, `diagrams/${d.id}`);
+    const other = structuredClone(live.document);
+    other.nodes[1].label = 'Не заблокирован';
+    await result(request, `diagrams/${d.id}`, 'PUT', {
+      revision: live.revision,
+      document: other,
+      concurrent: true,
+    });
+    const locked = structuredClone(live.document);
+    locked.nodes[0].label = 'Нельзя';
+    await result(
+      request,
+      `diagrams/${d.id}`,
+      'PUT',
+      { revision: live.revision, document: locked, concurrent: true },
+      423,
+    );
+    await result(second, `collaboration/locks/${live.document.nodes[0].objectId}`, 'DELETE', {});
+    // Stale append requests are atomic and keep both new representations.
+    live = await result(request, `diagrams/${d.id}`);
+    const append = {
+      revision: live.revision,
+      bindingId: live.document.bindings[0].id,
+      typeId: 'process',
+      position: { x: 0, y: 500 },
+      concurrent: true,
+    };
+    const appended = await Promise.all([
+      request.post(`/api/diagrams/${d.id}/representations`, { data: append }),
+      second.post(`/api/diagrams/${d.id}/representations`, { data: append }),
+    ]);
+    for (const response of appended) expect(response.status(), await response.text()).toBe(201);
+    expect((await result(request, `diagrams/${d.id}`)).document.nodes).toHaveLength(4);
+    // A concurrent connect cannot resurrect an endpoint removed by another participant.
+    live = await result(request, `diagrams/${d.id}`);
+    const removed = structuredClone(live.document),
+      connected = structuredClone(live.document);
+    removed.nodes.shift();
+    connected.edges.push({
+      id: randomUUID(),
+      bindingId: connected.bindings[0].id,
+      typeId: builtinNotation.edgeTypes[0].id,
+      source: connected.nodes[0].id,
+      target: connected.nodes[1].id,
+      sourcePort: 'out',
+      targetPort: 'in',
+      properties: {},
+    });
+    await result(request, `diagrams/${d.id}`, 'PUT', {
+      revision: live.revision,
+      document: removed,
+      concurrent: true,
+    });
+    await result(
+      second,
+      `diagrams/${d.id}`,
+      'PUT',
+      { revision: live.revision, document: connected, concurrent: true },
+      409,
+    );
+    expect((await result(request, `diagrams/${d.id}`)).document.edges).toHaveLength(0);
+  } finally {
+    await second.dispose();
+  }
+});
+
+test('two editors keep unsaved edits, receive remote changes and undo only their own action', async ({
+  request,
+  playwright,
+  browser,
+}) => {
+  test.setTimeout(120000);
+  const author = await login(request, 'Первый редактор');
+  const area = (await result(request, 'workspaces'))[0];
+  const second = await playwright.request.newContext({ baseURL: 'http://localhost:3000' });
+  const coauthor = await login(second, 'Второй редактор');
+  await result(request, 'collaboration/members', 'POST', { email: coauthor.email, role: 'editor' });
+  await db.user.updateMany({
+    where: { id: { in: [author.id, coauthor.id] } },
+    data: { settings: { theme: 'light', snapToGrid: false, autosave: false } },
+  });
+  let d = await result(request, 'diagrams', 'POST', { name: 'Два редактора' }, 201);
+  for (let i = 0; i < 2; i++)
+    d = await result(
+      request,
+      `diagrams/${d.id}/representations`,
+      'POST',
+      {
+        revision: d.revision,
+        bindingId: d.document.bindings[0].id,
+        typeId: 'process',
+        position: { x: i * 300, y: 0 },
+      },
+      201,
+    );
+  const firstContext = await browser.newContext({ storageState: await request.storageState() }),
+    secondContext = await browser.newContext({ storageState: await second.storageState() });
+  const p = await firstContext.newPage(),
+    q = await secondContext.newPage();
+  const node = (page: typeof p, i: number) =>
+    page.locator(`.react-flow__node[data-id="${d.document.nodes[i].id}"]`);
+  const edit = async (page: typeof p, i: number, label: string) => {
+    await node(page, i).locator('.node-label').dblclick();
+    await page.getByLabel('Текст объекта', { exact: true }).fill(label);
+    await page.getByLabel('Текст объекта', { exact: true }).press('Enter');
+  };
+  try {
+    await q.goto(`/api/workspaces/${area.id}/open`);
+    await Promise.all([p.goto(`/diagrams/${d.id}`), q.goto(`/diagrams/${d.id}`)]);
+    await expect(node(p, 0)).toBeVisible();
+    await expect(node(q, 1)).toBeVisible();
+    await expect(p.locator('.collaboration-notice')).toHaveCount(0);
+    await expect(q.locator('.collaboration-notice')).toHaveCount(0);
+    await edit(p, 0, 'Локальная правка А');
+    await edit(q, 1, 'Правка соавтора Б');
+    await q.getByRole('button', { name: 'Сохранить', exact: true }).click();
+    await expect(node(p, 1)).toContainText('Правка соавтора Б', { timeout: 15000 });
+    await expect(node(p, 0)).toContainText('Локальная правка А');
+    await p.getByRole('button', { name: 'Сохранить', exact: true }).click();
+    await expect(node(q, 0)).toContainText('Локальная правка А', { timeout: 15000 });
+    await p.getByRole('button', { name: 'Отменить', exact: true }).click();
+    await expect(node(p, 0)).not.toContainText('Локальная правка А');
+    await expect(node(p, 1)).toContainText('Правка соавтора Б');
+    await p.getByRole('button', { name: 'Сохранить', exact: true }).click();
+    await expect(node(q, 0)).not.toContainText('Локальная правка А', { timeout: 15000 });
+    // A stale append must undo only its own new figure, keeping the peer's intervening append.
+    let foreignNodeId = '';
+    await p.route(`**/api/diagrams/${d.id}/representations`, async (route) => {
+      const current = await result(request, `diagrams/${d.id}`);
+      const response = await second.post(`/api/diagrams/${d.id}/representations`, {
+        headers: { 'X-Maket-Workspace': area.id },
+        data: {
+          revision: current.revision,
+          concurrent: true,
+          bindingId: current.document.bindings[0].id,
+          typeId: 'process',
+          position: { x: 900, y: 500 },
+        },
+      });
+      expect(response.status(), await response.text()).toBe(201);
+      const foreign = await response.json();
+      foreignNodeId = foreign.document.nodes.at(-1).id;
+      await route.continue();
+    });
+    await p
+      .locator('.palette-item')
+      .filter({ hasText: builtinNotation.nodeTypes.find((t) => t.id === 'process')!.name })
+      .click();
+    await expect(p.locator('.react-flow__node')).toHaveCount(4, { timeout: 15000 });
+    await p.getByRole('button', { name: 'Отменить', exact: true }).click();
+    await expect(p.locator('.react-flow__node')).toHaveCount(3);
+    await expect(p.locator(`.react-flow__node[data-id="${foreignNodeId}"]`)).toBeVisible();
+    await p.getByRole('button', { name: 'Сохранить', exact: true }).click();
+    await expect
+      .poll(async () => (await result(request, `diagrams/${d.id}`)).document.nodes.length)
+      .toBe(3);
+    // An incoming edit to the same label produces a conflict, keeping the local draft visible.
+    await edit(p, 0, 'Не потерять локальную подпись');
+    await edit(q, 0, 'Сохранённая подпись соавтора');
+    await q.getByRole('button', { name: 'Сохранить', exact: true }).click();
+    await expect(p.getByText(/Конфликт совместного редактирования:/)).toBeVisible({
+      timeout: 15000,
+    });
+    await expect(node(p, 0)).toContainText('Не потерять локальную подпись');
+    expect((await result(request, `diagrams/${d.id}`)).document.nodes[0].label).toBe(
+      'Сохранённая подпись соавтора',
+    );
+  } finally {
+    await firstContext.close();
+    await secondContext.close();
+    await second.dispose();
   }
 });

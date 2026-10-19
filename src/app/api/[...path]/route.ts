@@ -1,3 +1,5 @@
+import { changedDiagramTargets } from '@/lib/diagram-merge';
+import { modelDiagramSchema } from '@/lib/model';
 import { NextRequest, NextResponse } from 'next/server';
 import { randomBytes } from 'node:crypto';
 import { publicDiagram, publicObject } from '@/lib/sharing';
@@ -756,6 +758,7 @@ async function handle(req: NextRequest, context: { params: Promise<{ path: strin
             objectId: z.string().optional(),
             properties: attributesSchema.optional(),
             position: z.object({ x: z.number().finite(), y: z.number().finite() }),
+            concurrent: z.boolean().optional(),
           })
           .parse(await body(req));
         return json(await addRepresentation(user.id, id, input.revision, input), 201);
@@ -766,6 +769,7 @@ async function handle(req: NextRequest, context: { params: Promise<{ path: strin
             revision: z.number().int().positive(),
             document: z.unknown().optional(),
             number: z.number().int().positive().optional(),
+            concurrent: z.boolean().optional(),
           })
           .parse(await body(req));
         if (action === 'restore' && !input.number) fail(400, 'Укажите номер ревизии');
@@ -776,6 +780,7 @@ async function handle(req: NextRequest, context: { params: Promise<{ path: strin
             input.revision,
             input.document,
             action === 'restore' ? input.number : undefined,
+            input.concurrent,
           ),
         );
       }
@@ -991,8 +996,33 @@ async function scopedHandle(req: NextRequest, context: { params: Promise<{ path:
             )
               fail(423, 'Блокировка истекла или снята. Получите доступ заново');
           }
+          let lockChecks = [...targets];
+          if (
+            resource === 'diagrams' &&
+            id &&
+            (input as { concurrent?: boolean } | undefined)?.concurrent
+          ) {
+            const diagram = await db.diagram.findFirst({ where: { id, modelSpaceId: spaceId } });
+            if (!diagram) fail(404, 'Диаграмма не найдена');
+            lockChecks = [id, ...(diagram.entityId ? [diagram.entityId] : [])];
+            if (req.method === 'PUT' && !action) {
+              const update = z
+                .object({ revision: z.number().int().positive(), document: modelDiagramSchema })
+                .parse(input);
+              const base = await db.diagramRevision.findUnique({
+                where: { diagramId_number: { diagramId: id, number: update.revision } },
+              });
+              if (!base) fail(409, 'Базовая версия диаграммы недоступна');
+              lockChecks.push(
+                ...changedDiagramTargets(modelDiagramSchema.parse(base.document), update.document),
+              );
+            } else if (action === 'representations') {
+              const objectId = (input as { objectId?: string }).objectId;
+              if (objectId) lockChecks.push(objectId);
+            } else lockChecks = [...targets];
+          }
           if (permission !== 'share')
-            await checkLocks(spaceId, [...targets], user.id, req.headers.get('x-maket-client'));
+            await checkLocks(spaceId, lockChecks, user.id, req.headers.get('x-maket-client'));
         }
         const result = await handle(req, context);
         if (write && result.ok)

@@ -61,7 +61,7 @@ export function CollaborationProvider({
 }
 // One tab may edit an object both through its diagram and its property card.
 // Server locks keep these leases separate, so closing a card never unlocks a diagram.
-export function useEditLease(targetId?: string) {
+export function useEditLease(targetId?: string, acquireLease = true) {
   const { state } = useCollaboration();
   const [held, setHeld] = useState(false),
     [message, setMessage] = useState('Проверяем доступ…');
@@ -78,7 +78,7 @@ export function useEditLease(targetId?: string) {
       setMessage(state ? 'Доступ только для просмотра' : 'Проверяем доступ…');
       return;
     }
-    if (!targetId) {
+    if (!targetId || !acquireLease) {
       setHeld(true);
       setMessage('');
       return;
@@ -119,7 +119,7 @@ export function useEditLease(targetId?: string) {
       window.removeEventListener('pagehide', release);
       release();
     };
-  }, [targetId, allow, attempt]);
+  }, [targetId, allow, attempt, acquireLease]);
   return { held: allow && held, message, allow, retry: () => setAttempt((v) => v + 1) };
 }
 export function LeaseNotice({

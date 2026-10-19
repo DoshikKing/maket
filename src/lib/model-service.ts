@@ -1,3 +1,4 @@
+import { mergeDiagramState, DiagramConflict } from './diagram-merge';
 import { createHash, randomUUID } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import { db } from './db';
@@ -524,6 +525,7 @@ export async function saveModelDiagram(
   expected: number,
   raw?: unknown,
   restoreNumber?: number,
+  concurrent = false,
 ) {
   const space = await ensureModel(ownerId);
   return db.$transaction(
@@ -569,6 +571,19 @@ export async function saveModelDiagram(
           bindingId,
         );
       } else next = modelDiagramSchema.parse(raw);
+      if (concurrent && restoreNumber === undefined && expected !== d.revision) {
+        const prior = await tx.diagramRevision.findUnique({
+          where: { diagramId_number: { diagramId, number: expected } },
+        });
+        if (!prior || expected > d.revision)
+          reject(409, 'Базовая версия диаграммы недоступна. Обновите данные');
+        try {
+          next = mergeDiagramState(modelDiagramSchema.parse(prior.document), next, current);
+        } catch (error) {
+          if (error instanceof DiagramConflict) reject(409, error.message);
+          throw error;
+        }
+      }
       if (restoreNumber !== undefined) {
         const knownVersions = await tx.notationVersion.findMany({
           where: {
@@ -618,6 +633,10 @@ export async function saveModelDiagram(
           present.add(o.id);
         }
       }
+      if (concurrent && expected !== d.revision && restoreNumber === undefined) {
+        const issues = modelErrors(next);
+        if (issues.length) reject(409, `Совместные изменения несовместимы: ${issues.join('; ')}`);
+      }
       next = await materializeRelations(tx, next, diagramId, current, restoreNumber !== undefined);
       const live = await liveDocument(tx, next);
       const prior = new Set(current.nodes.map((n) => `${n.id}:${n.objectId}`));
@@ -627,7 +646,7 @@ export async function saveModelDiagram(
         if (o.archived && !prior.has(`${n.id}:${n.objectId}`) && restoreNumber === undefined)
           reject(400, 'Архивный объект нельзя размещать заново');
       }
-      if (restoreNumber === undefined)
+      if (restoreNumber === undefined && !concurrent)
         for (const r of (raw as ModelDocument).relations ?? []) {
           const actual = live.relations?.find((x) => x.id === r.id);
           if (
@@ -638,20 +657,28 @@ export async function saveModelDiagram(
             reject(409, 'Связь изменена в другой вкладке. Обновите модель');
         }
       // Stale shared data must not silently change a revision snapshot. Restoration deliberately uses current objects.
-      if (restoreNumber === undefined)
+      if (restoreNumber === undefined && !concurrent)
         for (const o of next.objects) {
           const actual = live.objects.find((x) => x.id === o.id);
           if (actual && actual.revision !== o.revision)
             reject(409, 'Объект изменён в другой вкладке. Обновите модель и повторите сохранение');
         }
+      if (concurrent && expected !== d.revision) {
+        const issues = modelErrors(live);
+        if (issues.length) reject(409, `Совместные изменения несовместимы: ${issues.join('; ')}`);
+      }
       const result = await commit(
         tx,
         d,
         live,
-        expected,
+        concurrent && restoreNumber === undefined ? d.revision : expected,
         restoreNumber !== undefined ? 'restore' : 'save',
       );
-      return { ...result, document: live };
+      return {
+        ...result,
+        document: live,
+        ...(concurrent && expected !== d.revision ? { concurrentBase: current } : {}),
+      };
     },
     { timeout: 60000 },
   );
@@ -918,6 +945,7 @@ export async function addRepresentation(
     objectId?: string;
     properties?: ModelObject['attributes'];
     position: { x: number; y: number };
+    concurrent?: boolean;
   },
 ) {
   await ensureModel(ownerId);
@@ -1033,6 +1061,16 @@ export async function addRepresentationInTransaction(
       },
     ],
   });
-  const result = await commit(tx, d, document, expected, 'representation');
-  return { ...result, document };
+  const result = await commit(
+    tx,
+    d,
+    document,
+    input.concurrent ? d.revision : expected,
+    'representation',
+  );
+  return {
+    ...result,
+    document,
+    ...(input.concurrent && expected !== d.revision ? { concurrentBase: stored } : {}),
+  };
 }
