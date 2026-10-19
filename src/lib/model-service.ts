@@ -210,12 +210,12 @@ export async function ensureModel(ownerId: string) {
       const space = await workspaceInTransaction(tx, ownerId);
       await tx.modelSpace.update({ where: { id: space.id }, data: { revision: { increment: 0 } } });
       const oldest = await tx.modelSpace.findFirst({
-        where: { ownerId },
+        where: { ownerId: space.ownerId },
         orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
       });
       const allDiagrams = await tx.diagram.findMany({
         where: {
-          ownerId,
+          ownerId: space.ownerId,
           OR: [
             { modelSpaceId: space.id },
             ...(oldest?.id === space.id ? [{ modelSpaceId: null }] : []),
@@ -243,7 +243,7 @@ export async function ensureModel(ownerId: string) {
         await commit(tx, diagram, document, diagram.revision, 'migration');
       }
       const unlinked = await tx.diagram.findMany({
-        where: { ownerId, modelSpaceId: space.id, entityId: null },
+        where: { modelSpaceId: space.id, entityId: null },
       });
       for (const diagram of unlinked) {
         const entity = await createObject(tx, space.id, { kind: 'diagram', name: diagram.name });
@@ -261,7 +261,7 @@ export async function ensureModel(ownerId: string) {
           orderBy: [{ order: 'asc' }, { name: 'asc' }],
         }),
         diagrams: await tx.diagram.findMany({
-          where: { ownerId, modelSpaceId: space.id },
+          where: { modelSpaceId: space.id },
           select: { id: true, entityId: true, name: true, viewpointId: true, revision: true },
         }),
         relations: (
@@ -286,7 +286,7 @@ export async function getDiagram(ownerId: string, diagramId: string, historicalN
   const space = await ensureModel(ownerId);
   return db.$transaction(async (tx) => {
     const d = await tx.diagram.findFirst({
-      where: { id: diagramId, ownerId, modelSpaceId: space.id },
+      where: { id: diagramId, modelSpaceId: space.id },
     });
     if (!d) reject(404, 'Диаграмма не найдена');
     if (historicalNumber !== undefined) {
@@ -302,7 +302,7 @@ export async function getDiagram(ownerId: string, diagramId: string, historicalN
 export async function listDiagrams(ownerId: string) {
   const space = await ensureModel(ownerId);
   const ds = await db.diagram.findMany({
-    where: { ownerId, modelSpaceId: space.id },
+    where: { modelSpaceId: space.id },
     orderBy: { updatedAt: 'desc' },
   });
   return Promise.all(
@@ -468,7 +468,7 @@ export async function newDiagramInTransaction(
     data: {
       entityId: entity.id,
       viewpointId: input.viewpointId ?? null,
-      ownerId,
+      ownerId: (await tx.modelSpace.findUniqueOrThrow({ where: { id: space.id } })).ownerId,
       modelSpaceId: space.id,
       name: input.name,
       notationVersionId: document.bindings[0].versionId,
@@ -486,6 +486,7 @@ async function checkBindings(
   diagramId: string,
   old: ModelDocument,
   next: ModelDocument,
+  fromHistory = false,
 ) {
   for (const b of next.bindings) {
     const previous = old.bindings.find((x) => x.id === b.id);
@@ -496,7 +497,7 @@ async function checkBindings(
     }
     if (b.versionId) {
       const v = await tx.notationVersion.findFirst({
-        where: { id: b.versionId, notation: { ownerId } },
+        where: { id: b.versionId, ...(fromHistory ? {} : { notation: { ownerId } }) },
       });
       if (!v || JSON.stringify(notationSchema.parse(v.document)) !== JSON.stringify(b.document))
         reject(400, 'Неизвестная версия нотации');
@@ -528,7 +529,7 @@ export async function saveModelDiagram(
   return db.$transaction(
     async (tx) => {
       const d = await tx.diagram.findFirst({
-        where: { id: diagramId, ownerId, modelSpaceId: space.id },
+        where: { id: diagramId, modelSpaceId: space.id },
       });
       if (!d) reject(404, 'Диаграмма не найдена');
       const current = modelDiagramSchema.parse(d.document);
@@ -572,7 +573,6 @@ export async function saveModelDiagram(
         const knownVersions = await tx.notationVersion.findMany({
           where: {
             id: { in: next.bindings.flatMap((b) => (b.versionId ? [b.versionId] : [])) },
-            notation: { ownerId },
           },
           select: { id: true },
         });
@@ -586,7 +586,8 @@ export async function saveModelDiagram(
       }
       if (next.modelSpaceId !== current.modelSpaceId)
         reject(400, 'Пространство диаграммы нельзя менять');
-      await checkBindings(tx, ownerId, diagramId, current, next);
+      // History is loaded from this authorized diagram, so its notation versions may belong to another member.
+      await checkBindings(tx, ownerId, diagramId, current, next, restoreNumber !== undefined);
       if (restoreNumber !== undefined) {
         // Historical snapshots remain self-contained even after an unused object is deleted.
         const known = await tx.modelObject.findMany({
@@ -665,7 +666,7 @@ export async function attachNotation(
   const space = await ensureModel(ownerId);
   return db.$transaction(async (tx) => {
     const d = await tx.diagram.findFirst({
-      where: { id: diagramId, ownerId, modelSpaceId: space.id },
+      where: { id: diagramId, modelSpaceId: space.id },
     });
     if (!d) reject(404, 'Диаграмма не найдена');
     let document = await liveDocument(tx, modelDiagramSchema.parse(d.document));
@@ -711,7 +712,7 @@ export async function duplicateModelDiagram(ownerId: string, diagramId: string) 
   return db.$transaction(async (tx) => {
     await tx.modelSpace.update({ where: { id: space.id }, data: { revision: { increment: 0 } } });
     const original = await tx.diagram.findFirst({
-      where: { id: diagramId, ownerId, modelSpaceId: space.id },
+      where: { id: diagramId, modelSpaceId: space.id },
     });
     if (!original) reject(404, 'Диаграмма не найдена');
     const document = await liveDocument(tx, modelDiagramSchema.parse(original.document));
@@ -933,7 +934,7 @@ export async function addRepresentationInTransaction(
 ) {
   const space = await workspaceInTransaction(tx, ownerId);
   const d = await tx.diagram.findFirst({
-    where: { id: diagramId, ownerId, modelSpaceId: space.id },
+    where: { id: diagramId, modelSpaceId: space.id },
   });
   if (!d) reject(404, 'Диаграмма не найдена');
   const stored = modelDiagramSchema.parse(d.document);

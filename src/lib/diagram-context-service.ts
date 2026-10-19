@@ -57,7 +57,7 @@ export async function saveViewpoint(
 }
 export async function deleteViewpoint(ownerId: string, id: string, revision: number) {
   return transaction(ownerId, async (tx, spaceId) => {
-    if (await tx.diagram.count({ where: { viewpointId: id, ownerId, modelSpaceId: spaceId } }))
+    if (await tx.diagram.count({ where: { viewpointId: id, modelSpaceId: spaceId } }))
       reject(409, 'В ракурсе есть диаграммы. Сначала смените их ракурс');
     if (!(await tx.diagramViewpoint.deleteMany({ where: { id, spaceId, revision } })).count)
       reject(409, 'Ракурс изменён или удалён. Обновите список');
@@ -71,7 +71,7 @@ export async function assignViewpoint(
   revision: number,
 ) {
   return transaction(ownerId, async (tx, spaceId) => {
-    const diagram = await tx.diagram.findFirst({ where: { id, ownerId, modelSpaceId: spaceId } });
+    const diagram = await tx.diagram.findFirst({ where: { id, modelSpaceId: spaceId } });
     if (!diagram) reject(404, 'Диаграмма не найдена');
     if (diagram.revision !== revision) reject(409, 'Диаграмма изменена. Сначала обновите данные');
     if (
@@ -123,13 +123,13 @@ export async function createContextLink(ownerId: string, input: z.infer<typeof c
     if (!entity) reject(404, 'Активный объект не найден');
     const source = input.sourceDiagramId
       ? await tx.diagram.findFirst({
-          where: { id: input.sourceDiagramId, ownerId, modelSpaceId: spaceId },
+          where: { id: input.sourceDiagramId, modelSpaceId: spaceId },
         })
       : null;
     if (input.sourceDiagramId && !source) reject(404, 'Исходная диаграмма не найдена');
     let target = input.targetDiagramId
       ? await tx.diagram.findFirst({
-          where: { id: input.targetDiagramId, ownerId, modelSpaceId: spaceId },
+          where: { id: input.targetDiagramId, modelSpaceId: spaceId },
         })
       : null;
     if (input.newDiagram) {

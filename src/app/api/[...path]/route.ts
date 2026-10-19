@@ -5,7 +5,17 @@ import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { db } from '@/lib/db';
 import { workspaceScope } from '@/lib/workspace-scope';
-import { listWorkspaces } from '@/lib/workspace-service';
+import { listWorkspaces, currentWorkspace } from '@/lib/workspace-service';
+import {
+  workspaceAccess,
+  workspaceGate,
+  requirePermission,
+  collaborationRequest,
+  checkLocks,
+  lockTargets,
+  recordWorkspaceEvent,
+} from '@/lib/collaboration-service';
+import type { WorkspaceAction } from '@/lib/workspace-permissions';
 import {
   checkPassword,
   createSession,
@@ -72,7 +82,7 @@ class ApiError extends Error {
 function fail(status: number, message: string): never {
   throw new ApiError(status, message);
 }
-async function body(req: NextRequest) {
+async function body(req: Request, required = true) {
   if (Number(req.headers.get('content-length') ?? 0) > 2_000_000)
     fail(413, 'Файл слишком большой (максимум 2 МБ)');
   const reader = req.body?.getReader();
@@ -89,6 +99,7 @@ async function body(req: NextRequest) {
     }
     chunks.push(chunk.value);
   }
+  if (!size && !required) return undefined;
   try {
     return JSON.parse(Buffer.concat(chunks).toString('utf8'));
   } catch {
@@ -225,7 +236,9 @@ async function handle(req: NextRequest, context: { params: Promise<{ path: strin
         );
       }
       if (!id) fail(405, 'Укажите рабочую область');
-      const area = await db.modelSpace.findFirst({ where: { id, ownerId: user.id } });
+      const area = await db.modelSpace.findFirst({
+        where: { id, OR: [{ ownerId: user.id }, { members: { some: { userId: user.id } } }] },
+      });
       if (!area) fail(404, 'Рабочая область не найдена');
       if (action === 'open' && method === 'GET') {
         const response = new NextResponse(null, {
@@ -246,7 +259,7 @@ async function handle(req: NextRequest, context: { params: Promise<{ path: strin
           .object({ name: nameSchema, revision: z.number().int().positive() })
           .parse(await body(req));
         const result = await db.modelSpace.updateMany({
-          where: { id, ownerId: user.id, revision: input.revision },
+          where: { id, revision: input.revision },
           data: { name: input.name, revision: { increment: 1 } },
         });
         if (!result.count) fail(409, 'Рабочая область изменена. Обновите список');
@@ -635,7 +648,7 @@ async function handle(req: NextRequest, context: { params: Promise<{ path: strin
       if (!id) fail(405, 'Укажите идентификатор диаграммы');
       const area = await ensureModel(user.id);
       const d = await db.diagram.findFirst({
-        where: { id, ownerId: user.id, modelSpaceId: area.id },
+        where: { id, modelSpaceId: area.id },
       });
       if (!d) fail(404, 'Диаграмма не найдена');
       if (action === 'viewpoint' && method === 'PATCH') {
@@ -660,12 +673,12 @@ async function handle(req: NextRequest, context: { params: Promise<{ path: strin
           // Initialize once without replacing a link created concurrently in another tab.
           if (input.enabled && !d.shareToken && !input.rotate) {
             await db.diagram.updateMany({
-              where: { id, ownerId: user.id, shareToken: null },
+              where: { id, modelSpaceId: area.id, shareToken: null },
               data: { shareToken: randomBytes(32).toString('base64url') },
             });
           }
           const updated = await db.diagram.update({
-            where: { id, ownerId: user.id },
+            where: { id, modelSpaceId: area.id },
             data: {
               shareEnabled: input.enabled,
               ...(input.rotate ? { shareToken: randomBytes(32).toString('base64url') } : {}),
@@ -788,11 +801,221 @@ async function handle(req: NextRequest, context: { params: Promise<{ path: strin
     );
   }
 }
+const workspaceResources = new Set([
+  'collaboration',
+  'model',
+  'objects',
+  'relations',
+  'diagrams',
+  'viewpoints',
+  'context-links',
+]);
 async function scopedHandle(req: NextRequest, context: { params: Promise<{ path: string[] }> }) {
-  return workspaceScope.run(req.headers.get('x-maket-workspace') || undefined, () =>
-    handle(req, context),
-  );
+  return workspaceScope.run(req.headers.get('x-maket-workspace') || undefined, async () => {
+    const { path } = await context.params;
+    const [resource, id, action] = path;
+    if (!workspaceResources.has(resource) && !(resource === 'workspaces' && id))
+      return handle(req, context);
+    try {
+      const user = await currentUser();
+      if (!user) return json({ error: 'Войдите в аккаунт' }, 401);
+      const spaceId = resource === 'workspaces' ? id : (await currentWorkspace(user.id)).id;
+      const write = req.method !== 'GET';
+      if (write) {
+        const origin = req.headers.get('origin');
+        if (
+          (origin && origin !== new URL(process.env.APP_URL ?? req.url).origin) ||
+          req.headers.get('sec-fetch-site') === 'cross-site'
+        )
+          fail(403, 'Недопустимый источник запроса');
+        if (
+          req.method !== 'DELETE' &&
+          !req.headers.get('content-type')?.startsWith('application/json')
+        )
+          fail(415, 'Требуется application/json');
+      }
+      const input =
+        write && req.body ? await body(req.clone(), req.method !== 'DELETE') : undefined;
+      const run = async () => {
+        const access = await workspaceAccess(user.id, spaceId);
+        if (resource === 'collaboration') {
+          const result = await collaborationRequest(
+            spaceId,
+            user,
+            access,
+            path,
+            req.method,
+            input,
+            req.headers.get('x-maket-client'),
+          );
+          if (write && id !== 'locks')
+            await recordWorkspaceEvent(spaceId, user, `${req.method} collaboration/${id}`, action);
+          return json(result);
+        }
+        if (write) {
+          const permission: WorkspaceAction =
+            resource === 'workspaces'
+              ? 'members'
+              : action === 'share'
+                ? 'share'
+                : req.method === 'DELETE'
+                  ? 'delete'
+                  : !id || action === 'duplicate'
+                    ? 'create'
+                    : 'edit';
+          const targets = new Set<string>();
+          if (id && ['objects', 'relations', 'diagrams'].includes(resource))
+            for (const target of await lockTargets(spaceId, id)) targets.add(target);
+          if (id && ['context-links', 'relations'].includes(resource)) {
+            const link = await db.diagramContextLink.findFirst({ where: { id, spaceId } });
+            if (link) {
+              targets.add(link.entityId);
+              targets.add(link.targetDiagramId);
+              if (link.sourceDiagramId) targets.add(link.sourceDiagramId);
+            }
+          }
+          const collect = (value: unknown) => {
+            if (!value || typeof value !== 'object') return;
+            if (Array.isArray(value)) {
+              value.forEach(collect);
+              return;
+            }
+            for (const [key, v] of Object.entries(value)) {
+              if (
+                [
+                  'objectId',
+                  'relationId',
+                  'entityId',
+                  'sourceId',
+                  'targetId',
+                  'parentId',
+                  'sourceDiagramId',
+                  'targetDiagramId',
+                  'baseId',
+                  'copyOf',
+                ].includes(key) &&
+                typeof v === 'string' &&
+                v
+              )
+                targets.add(v);
+              if (
+                key !== 'bindings' &&
+                key !== 'notation' &&
+                key !== 'attributes' &&
+                key !== 'properties'
+              )
+                collect(v);
+            }
+          };
+          let restoredDocument: unknown;
+          if (resource === 'diagrams' && id && action === 'restore') {
+            const number = z.object({ number: z.number().int().positive() }).parse(input).number;
+            restoredDocument = (
+              await db.diagramRevision.findFirst({
+                where: { diagramId: id, number, diagram: { modelSpaceId: spaceId } },
+                select: { document: true },
+              })
+            )?.document;
+            collect(restoredDocument);
+          }
+          collect(input);
+          if (
+            access.elementIds.length &&
+            (resource === 'viewpoints' || (permission === 'create' && !targets.size))
+          )
+            fail(403, 'Действие требует доступа ко всему пространству');
+          if (resource === 'diagrams' && id && permission === 'edit') {
+            const value = (restoredDocument ? { document: restoredDocument } : input) as
+              | {
+                  objectId?: string;
+                  document?: {
+                    schemaVersion?: number;
+                    nodes?: { objectId?: string }[];
+                    edges?: { relationId?: string }[];
+                  };
+                }
+              | undefined;
+            if (action === 'representations' && !value?.objectId)
+              requirePermission(access, 'create', [...targets]);
+            if (((!action && req.method === 'PUT') || action === 'restore') && value?.document) {
+              if ('schemaVersion' in value.document && value.document.schemaVersion === 1)
+                requirePermission(access, 'create', [...targets]);
+              const objectIds = (value.document.nodes ?? []).flatMap((n) =>
+                n.objectId ? [n.objectId] : [],
+              );
+              const relationIds = (value.document.edges ?? []).flatMap((e) =>
+                e.relationId ? [e.relationId] : [],
+              );
+              const [objects, relations] = await Promise.all([
+                db.modelObject.count({ where: { spaceId, id: { in: [...new Set(objectIds)] } } }),
+                db.modelRelation.count({
+                  where: { spaceId, id: { in: [...new Set(relationIds)] } },
+                }),
+              ]);
+              if (
+                objects !== new Set(objectIds).size ||
+                relations !== new Set(relationIds).size ||
+                value.document.edges?.some((e) => !e.relationId)
+              )
+                requirePermission(access, 'create', [...targets]);
+            }
+          }
+          requirePermission(access, permission, [...targets]);
+          const claims = req.headers.get('x-maket-leases');
+          if (claims && permission !== 'share') {
+            let parsed: unknown;
+            try {
+              parsed = JSON.parse(claims);
+            } catch {
+              fail(400, 'Некорректная блокировка');
+            }
+            const roots = z
+              .array(z.object({ rootId: z.string().min(1).max(100), leaseId: z.string().uuid() }))
+              .max(20)
+              .parse(parsed);
+            const leases = await db.workspaceLock.findMany({
+              where: {
+                spaceId,
+                rootId: { in: roots.map((r) => r.rootId) },
+                userId: user.id,
+                clientId: req.headers.get('x-maket-client') ?? '',
+                expiresAt: { gt: new Date() },
+              },
+              select: { rootId: true, leaseId: true },
+            });
+            if (
+              roots.some(
+                (root) =>
+                  !leases.some((l) => l.rootId === root.rootId && l.leaseId === root.leaseId),
+              )
+            )
+              fail(423, 'Блокировка истекла или снята. Получите доступ заново');
+          }
+          if (permission !== 'share')
+            await checkLocks(spaceId, [...targets], user.id, req.headers.get('x-maket-client'));
+        }
+        const result = await handle(req, context);
+        if (write && result.ok)
+          await recordWorkspaceEvent(
+            spaceId,
+            user,
+            `${req.method} ${resource}${action ? `/${action}` : ''}`,
+            id,
+          );
+        return result;
+      };
+      return write ? await workspaceGate(spaceId, run) : await run();
+    } catch (error) {
+      if (error instanceof ApiError || error instanceof ModelError)
+        return json({ error: error.message }, error.status);
+      if (error instanceof z.ZodError)
+        return json({ error: error.issues.map((i) => i.message).join('; ') }, 400);
+      console.error('[collaboration API]', error);
+      return json({ error: 'Не удалось выполнить операцию совместной работы' }, 500);
+    }
+  });
 }
+
 export {
   scopedHandle as GET,
   scopedHandle as POST,

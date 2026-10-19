@@ -1,4 +1,5 @@
 'use client';
+import { useEditLease, LeaseNotice } from './collaboration';
 import { useEffect, useId, useState } from 'react';
 import { Trash2 } from 'lucide-react';
 import { api, date } from '@/lib/client';
@@ -30,6 +31,7 @@ export function RelationEditor({
   onClose: () => void;
   children?: React.ReactNode;
 }) {
+  const lease = useEditLease(relation?.id);
   const [name, setName] = useState(relation?.name ?? 'Новая связь'),
     [description, setDescription] = useState(relation?.description ?? ''),
     [source, setSource] = useState(relation?.sourceId ?? sourceId ?? ''),
@@ -79,205 +81,170 @@ export function RelationEditor({
         их подписи и оформление могут различаться.
       </p>
       <CopyOrigin origin={relation?.copiedFrom} />
-      <form
-        className="form-stack"
-        onSubmit={async (e) => {
-          e.preventDefault();
-          setBusy(true);
-          setError('');
-          try {
-            if (new Set(attributes.map((a) => a.key)).size !== attributes.length)
-              throw new Error('Ключи атрибутов должны быть уникальны');
-            const values = attributesSchema.parse(
-              Object.fromEntries(attributes.map((a) => [a.key, a.value])),
-            );
-            onSaved(
-              await api<ModelRelation>(
-                relation ? `relations/${relation.id}` : 'relations',
-                relation ? 'PATCH' : 'POST',
-                {
-                  name,
-                  description,
-                  attributes: values,
-                  parentId: parent || null,
-                  relationType,
-                  sourceId: source,
-                  targetId: target,
-                  ...(relation ? guard : {}),
-                },
-              ),
-            );
-            onClose();
-          } catch (err) {
-            setError((err as Error).message);
-          } finally {
-            setBusy(false);
-          }
-        }}
-      >
-        <label>
-          Контейнер в дереве
-          <select
-            aria-label="Родитель связи"
-            value={parent}
-            onChange={(e) => setParent(e.target.value)}
-          >
-            <option value="">Корень модели</option>
-            {objects
-              .filter((o) => o.id !== relation?.id && (!o.archived || o.id === parent))
-              .map((o) => (
-                <option key={o.id} value={o.id}>
-                  {o.name}
-                </option>
-              ))}
-          </select>
-          <small className="muted">
-            Только место хранения. Участники связи выбираются независимо от вложенности.
-          </small>
-        </label>
-        <label>
-          Тип связи
-          <input
-            aria-label="Тип связи"
-            list={typeListId}
-            maxLength={100}
-            value={relationType}
-            disabled={!!contextLink}
-            onChange={(e) => setRelationType(e.target.value)}
-            placeholder="Привязка или новый тип"
-          />
-          <datalist id={typeListId}>
-            {types.map((t) => (
-              <option key={t} value={t} />
-            ))}
-          </datalist>
-          <small className="muted">
-            Выберите существующий тип или введите новый. Тип не зависит от нотации.
-          </small>
-        </label>
-        {derivationKind(relationType) && (
-          <p className="muted small-text">
-            Источник — базовый объект; назначение —{' '}
-            {derivationKind(relationType) === 'instance' ? 'его реализация' : 'наследник'}. Удаление
-            или архивирование этой связи прекращает наследование атрибутов.
-          </p>
-        )}
-        <label>
-          Имя связи
-          <input
-            aria-label="Имя связи"
-            required
-            maxLength={100}
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-          />
-        </label>
-        <label>
-          Описание связи
-          <textarea
-            aria-label="Описание связи"
-            maxLength={4000}
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-          />
-        </label>
-        {(
-          [
-            ['Источник связи', source, setSource],
-            ['Назначение связи', target, setTarget],
-          ] as const
-        ).map(([label, value, setValue]) => (
-          <label key={label}>
-            {label}
+      <LeaseNotice {...lease} />
+      <fieldset className="lease-fields" disabled={!lease.held}>
+        <form
+          className="form-stack"
+          onSubmit={async (e) => {
+            e.preventDefault();
+            if (!lease.held) return;
+            setBusy(true);
+            setError('');
+            try {
+              if (new Set(attributes.map((a) => a.key)).size !== attributes.length)
+                throw new Error('Ключи атрибутов должны быть уникальны');
+              const values = attributesSchema.parse(
+                Object.fromEntries(attributes.map((a) => [a.key, a.value])),
+              );
+              onSaved(
+                await api<ModelRelation>(
+                  relation ? `relations/${relation.id}` : 'relations',
+                  relation ? 'PATCH' : 'POST',
+                  {
+                    name,
+                    description,
+                    attributes: values,
+                    parentId: parent || null,
+                    relationType,
+                    sourceId: source,
+                    targetId: target,
+                    ...(relation ? guard : {}),
+                  },
+                ),
+              );
+              onClose();
+            } catch (err) {
+              setError((err as Error).message);
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          <label>
+            Контейнер в дереве
             <select
-              aria-label={label}
-              value={value}
-              required
-              disabled={!!contextLink}
-              onChange={(e) => setValue(e.target.value)}
+              aria-label="Родитель связи"
+              value={parent}
+              onChange={(e) => setParent(e.target.value)}
             >
-              <option value="">Выберите объект</option>
+              <option value="">Корень модели</option>
               {objects
-                .filter((o) => o.id !== relation?.id && (!o.archived || o.id === value))
+                .filter((o) => o.id !== relation?.id && (!o.archived || o.id === parent))
                 .map((o) => (
                   <option key={o.id} value={o.id}>
                     {o.name}
                   </option>
                 ))}
             </select>
+            <small className="muted">
+              Только место хранения. Участники связи выбираются независимо от вложенности.
+            </small>
           </label>
-        ))}
-        {relation && (
-          <small className="muted">
-            {contextLink
-              ? 'Эта связь задаёт переход к диаграмме. Описание соответствует смыслу перехода. Для смены участников или назначения удалите переход и создайте новый.'
-              : 'Источник — исходящий участник, назначение — входящий. Участников можно менять, если у связи нет представлений на диаграммах.'}
-          </small>
-        )}
-        <div className="section-title">
-          <strong>Общие атрибуты</strong>
-          <button
-            type="button"
-            className="secondary small"
-            disabled={attributes.length >= 100}
-            onClick={() => setAttributes([...attributes, { key: '', value: '' }])}
-          >
-            Добавить атрибут
-          </button>
-        </div>
-        {attributes.map((a, i) => (
-          <div className="object-attribute" key={i}>
+          <label>
+            Тип связи
             <input
-              aria-label={`Ключ атрибута связи ${i + 1}`}
-              placeholder="Ключ"
-              value={a.key}
-              onChange={(e) =>
-                setAttributes(
-                  attributes.map((x, j) => (j === i ? { ...x, key: e.target.value } : x)),
-                )
-              }
+              aria-label="Тип связи"
+              list={typeListId}
+              maxLength={100}
+              value={relationType}
+              disabled={!!contextLink}
+              onChange={(e) => setRelationType(e.target.value)}
+              placeholder="Привязка или новый тип"
             />
-            <select
-              aria-label={`Тип атрибута связи ${i + 1}`}
-              value={typeof a.value}
-              onChange={(e) =>
-                setAttributes(
-                  attributes.map((x, j) =>
-                    j === i
-                      ? {
-                          ...x,
-                          value:
-                            e.target.value === 'boolean'
-                              ? false
-                              : e.target.value === 'number'
-                                ? 0
-                                : '',
-                        }
-                      : x,
-                  ),
-                )
-              }
+            <datalist id={typeListId}>
+              {types.map((t) => (
+                <option key={t} value={t} />
+              ))}
+            </datalist>
+            <small className="muted">
+              Выберите существующий тип или введите новый. Тип не зависит от нотации.
+            </small>
+          </label>
+          {derivationKind(relationType) && (
+            <p className="muted small-text">
+              Источник — базовый объект; назначение —{' '}
+              {derivationKind(relationType) === 'instance' ? 'его реализация' : 'наследник'}.
+              Удаление или архивирование этой связи прекращает наследование атрибутов.
+            </p>
+          )}
+          <label>
+            Имя связи
+            <input
+              aria-label="Имя связи"
+              required
+              maxLength={100}
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+            />
+          </label>
+          <label>
+            Описание связи
+            <textarea
+              aria-label="Описание связи"
+              maxLength={4000}
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+            />
+          </label>
+          {(
+            [
+              ['Источник связи', source, setSource],
+              ['Назначение связи', target, setTarget],
+            ] as const
+          ).map(([label, value, setValue]) => (
+            <label key={label}>
+              {label}
+              <select
+                aria-label={label}
+                value={value}
+                required
+                disabled={!!contextLink}
+                onChange={(e) => setValue(e.target.value)}
+              >
+                <option value="">Выберите объект</option>
+                {objects
+                  .filter((o) => o.id !== relation?.id && (!o.archived || o.id === value))
+                  .map((o) => (
+                    <option key={o.id} value={o.id}>
+                      {o.name}
+                    </option>
+                  ))}
+              </select>
+            </label>
+          ))}
+          {relation && (
+            <small className="muted">
+              {contextLink
+                ? 'Эта связь задаёт переход к диаграмме. Описание соответствует смыслу перехода. Для смены участников или назначения удалите переход и создайте новый.'
+                : 'Источник — исходящий участник, назначение — входящий. Участников можно менять, если у связи нет представлений на диаграммах.'}
+            </small>
+          )}
+          <div className="section-title">
+            <strong>Общие атрибуты</strong>
+            <button
+              type="button"
+              className="secondary small"
+              disabled={attributes.length >= 100}
+              onClick={() => setAttributes([...attributes, { key: '', value: '' }])}
             >
-              <option value="string">Текст</option>
-              <option value="number">Число</option>
-              <option value="boolean">Да / нет</option>
-            </select>
-            {typeof a.value === 'boolean' ? (
+              Добавить атрибут
+            </button>
+          </div>
+          {attributes.map((a, i) => (
+            <div className="object-attribute" key={i}>
               <input
-                aria-label={`Значение атрибута связи ${i + 1}`}
-                type="checkbox"
-                checked={a.value}
+                aria-label={`Ключ атрибута связи ${i + 1}`}
+                placeholder="Ключ"
+                value={a.key}
                 onChange={(e) =>
                   setAttributes(
-                    attributes.map((x, j) => (j === i ? { ...x, value: e.target.checked } : x)),
+                    attributes.map((x, j) => (j === i ? { ...x, key: e.target.value } : x)),
                   )
                 }
               />
-            ) : (
-              <input
-                aria-label={`Значение атрибута связи ${i + 1}`}
-                type={typeof a.value === 'number' ? 'number' : 'text'}
-                value={a.value}
+              <select
+                aria-label={`Тип атрибута связи ${i + 1}`}
+                value={typeof a.value}
                 onChange={(e) =>
                   setAttributes(
                     attributes.map((x, j) =>
@@ -285,33 +252,74 @@ export function RelationEditor({
                         ? {
                             ...x,
                             value:
-                              typeof x.value === 'number' ? Number(e.target.value) : e.target.value,
+                              e.target.value === 'boolean'
+                                ? false
+                                : e.target.value === 'number'
+                                  ? 0
+                                  : '',
                           }
                         : x,
                     ),
                   )
                 }
-              />
-            )}
-            <button
-              type="button"
-              className="secondary small"
-              aria-label={`Удалить атрибут связи ${i + 1}`}
-              onClick={() => setAttributes(attributes.filter((_, j) => j !== i))}
-            >
-              <Trash2 size={14} />
-            </button>
-          </div>
-        ))}
-        {error && (
-          <p role="alert" className="error">
-            {error}
-          </p>
-        )}
-        <button className="primary" disabled={busy}>
-          {busy ? 'Сохраняем…' : 'Сохранить связь'}
-        </button>
-      </form>
+              >
+                <option value="string">Текст</option>
+                <option value="number">Число</option>
+                <option value="boolean">Да / нет</option>
+              </select>
+              {typeof a.value === 'boolean' ? (
+                <input
+                  aria-label={`Значение атрибута связи ${i + 1}`}
+                  type="checkbox"
+                  checked={a.value}
+                  onChange={(e) =>
+                    setAttributes(
+                      attributes.map((x, j) => (j === i ? { ...x, value: e.target.checked } : x)),
+                    )
+                  }
+                />
+              ) : (
+                <input
+                  aria-label={`Значение атрибута связи ${i + 1}`}
+                  type={typeof a.value === 'number' ? 'number' : 'text'}
+                  value={a.value}
+                  onChange={(e) =>
+                    setAttributes(
+                      attributes.map((x, j) =>
+                        j === i
+                          ? {
+                              ...x,
+                              value:
+                                typeof x.value === 'number'
+                                  ? Number(e.target.value)
+                                  : e.target.value,
+                            }
+                          : x,
+                      ),
+                    )
+                  }
+                />
+              )}
+              <button
+                type="button"
+                className="secondary small"
+                aria-label={`Удалить атрибут связи ${i + 1}`}
+                onClick={() => setAttributes(attributes.filter((_, j) => j !== i))}
+              >
+                <Trash2 size={14} />
+              </button>
+            </div>
+          ))}
+          {error && (
+            <p role="alert" className="error">
+              {error}
+            </p>
+          )}
+          <button className="primary" disabled={busy}>
+            {busy ? 'Сохраняем…' : 'Сохранить связь'}
+          </button>
+        </form>
+      </fieldset>
       {children}
       {relation && (
         <div className="form-stack relation-history">
@@ -361,7 +369,7 @@ export function RelationEditor({
               </span>
               <button
                 className="secondary small"
-                disabled={busy || h.number === relation.revision}
+                disabled={!lease.held || busy || h.number === relation.revision}
                 onClick={async () => {
                   if (!confirm('Восстановить общие свойства связи?')) return;
                   setBusy(true);

@@ -28,7 +28,6 @@ export async function getStructure(
     reject(404, 'Элемент не найден');
   const diagrams = await db.diagram.findMany({
     where: {
-      ownerId,
       modelSpaceId: space.id,
       ...(entityId
         ? {
@@ -118,7 +117,7 @@ export async function getStructure(
 export async function deleteDiagram(ownerId: string, id: string) {
   const space = await ensureModel(ownerId);
   return db.$transaction(async (tx) => {
-    const d = await tx.diagram.findFirst({ where: { id, ownerId, modelSpaceId: space.id } });
+    const d = await tx.diagram.findFirst({ where: { id, modelSpaceId: space.id } });
     if (!d) reject(404, 'Диаграмма не найдена');
     if (d.modelSpaceId)
       await tx.modelSpace.update({

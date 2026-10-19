@@ -1,4 +1,5 @@
 'use client';
+import { useEditLease, LeaseNotice } from './collaboration';
 import { TreeContextMenu } from './tree-context-menu';
 import { HidePanel } from './workspace-panels';
 import { useEffect, useState, type ReactNode } from 'react';
@@ -65,6 +66,7 @@ export function ObjectEditor({
   onClose: () => void;
   onRelationsChanged?: () => void;
 }) {
+  const lease = useEditLease(object?.id);
   const [name, setName] = useState(
       object?.name ??
         (initialBase
@@ -138,209 +140,171 @@ export function ObjectEditor({
         <ShareDialog id={object.id} resource="objects" onClose={() => setSharing(false)} />
       )}
       <CopyOrigin origin={object?.copiedFrom} />
-      <form
-        className="form-stack"
-        onSubmit={async (e) => {
-          e.preventDefault();
-          setBusy(true);
-          setError('');
-          try {
-            if (new Set(attributes.map((a) => a.key)).size !== attributes.length)
-              throw new Error('Ключи атрибутов должны быть уникальны');
-            const values = attributesSchema.parse(
-              Object.fromEntries(attributes.map((a) => [a.key, a.value])),
-            );
-            const result = await api<ModelObject>(
-              object ? `objects/${object.id}` : 'objects',
-              object ? 'PATCH' : 'POST',
-              {
-                ...(!object ? { kind, ...(base ? { baseId: base, derivation } : {}) } : {}),
-                name,
-                description,
-                parentId: parent || null,
-                attributes: values,
-                ...(object ? { revision: object.revision, incarnation: object.incarnation } : {}),
-              },
-            );
-            onSaved(result);
-            if (base) onRelationsChanged?.();
-            onClose();
-          } catch (err) {
-            setError((err as Error).message);
-          } finally {
-            setBusy(false);
-          }
-        }}
-      >
-        <label>
-          Имя объекта
-          <input
-            aria-label="Имя объекта"
-            required
-            maxLength={100}
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-          />
-        </label>
-        <label>
-          Описание объекта
-          <textarea
-            aria-label="Описание объекта"
-            maxLength={4000}
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-          />
-        </label>
-        <label>
-          Родительский объект
-          <select
-            aria-label="Родительский объект"
-            value={parent}
-            onChange={(e) => setParent(e.target.value)}
-          >
-            <option value="">Корень модели</option>
-            {objects
-              .filter((o) => !forbidden.has(o.id) && (!o.archived || o.id === parent))
-              .map((o) => (
-                <option key={o.id} value={o.id}>
-                  {o.name}
-                  {o.archived ? ' (архив)' : ''}
-                </option>
-              ))}
-          </select>
-        </label>
-        {!object && kind === 'object' && (
-          <fieldset>
-            <legend>Наследование</legend>
-            <label>
-              Базовый объект
-              <select
-                aria-label="Базовый объект"
-                value={base}
-                onChange={(e) => setBase(e.target.value)}
-              >
-                <option value="">Без наследования</option>
-                {(baseObjects ?? objects)
-                  .filter((o) => !o.archived && (!o.kind || o.kind === 'object'))
-                  .map((o) => (
-                    <option key={o.id} value={o.id}>
-                      {o.name}
-                    </option>
-                  ))}
-              </select>
-            </label>
-            {base && (
+      <LeaseNotice {...lease} />
+      <fieldset className="lease-fields" disabled={!lease.held}>
+        <form
+          className="form-stack"
+          onSubmit={async (e) => {
+            e.preventDefault();
+            if (!lease.held) return;
+            setBusy(true);
+            setError('');
+            try {
+              if (new Set(attributes.map((a) => a.key)).size !== attributes.length)
+                throw new Error('Ключи атрибутов должны быть уникальны');
+              const values = attributesSchema.parse(
+                Object.fromEntries(attributes.map((a) => [a.key, a.value])),
+              );
+              const result = await api<ModelObject>(
+                object ? `objects/${object.id}` : 'objects',
+                object ? 'PATCH' : 'POST',
+                {
+                  ...(!object ? { kind, ...(base ? { baseId: base, derivation } : {}) } : {}),
+                  name,
+                  description,
+                  parentId: parent || null,
+                  attributes: values,
+                  ...(object ? { revision: object.revision, incarnation: object.incarnation } : {}),
+                },
+              );
+              onSaved(result);
+              if (base) onRelationsChanged?.();
+              onClose();
+            } catch (err) {
+              setError((err as Error).message);
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          <label>
+            Имя объекта
+            <input
+              aria-label="Имя объекта"
+              required
+              maxLength={100}
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+            />
+          </label>
+          <label>
+            Описание объекта
+            <textarea
+              aria-label="Описание объекта"
+              maxLength={4000}
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+            />
+          </label>
+          <label>
+            Родительский объект
+            <select
+              aria-label="Родительский объект"
+              value={parent}
+              onChange={(e) => setParent(e.target.value)}
+            >
+              <option value="">Корень модели</option>
+              {objects
+                .filter((o) => !forbidden.has(o.id) && (!o.archived || o.id === parent))
+                .map((o) => (
+                  <option key={o.id} value={o.id}>
+                    {o.name}
+                    {o.archived ? ' (архив)' : ''}
+                  </option>
+                ))}
+            </select>
+          </label>
+          {!object && kind === 'object' && (
+            <fieldset>
+              <legend>Наследование</legend>
               <label>
-                Вид наследования
+                Базовый объект
                 <select
-                  aria-label="Вид наследования"
-                  value={derivation}
-                  onChange={(e) => setDerivation(e.target.value as 'inheritance' | 'instance')}
+                  aria-label="Базовый объект"
+                  value={base}
+                  onChange={(e) => setBase(e.target.value)}
                 >
-                  <option value="inheritance">Наследник — наследует</option>
-                  <option value="instance">Реализация — экземпляр</option>
+                  <option value="">Без наследования</option>
+                  {(baseObjects ?? objects)
+                    .filter((o) => !o.archived && (!o.kind || o.kind === 'object'))
+                    .map((o) => (
+                      <option key={o.id} value={o.id}>
+                        {o.name}
+                      </option>
+                    ))}
                 </select>
               </label>
-            )}
-          </fieldset>
-        )}
-        {object?.baseId && (
-          <section aria-label="Наследование объекта">
-            <strong>
-              {object.derivation === 'instance' ? 'Реализация объекта' : 'Наследует от'}:{' '}
-              {(baseObjects ?? objects).find((o) => o.id === object.baseId)?.name ?? object.baseId}
-            </strong>
-            <p className="muted small-text">
-              Базовые атрибуты обновляются автоматически. Собственные значения переопределяют
-              унаследованные; удаление переопределения возвращает значение базы.
-            </p>
-            {Object.entries(object.inheritedAttributes ?? {}).map(([key, value]) => (
-              <div className="inherited-attribute" key={key}>
-                <code>{key}</code>
-                <span>{String(value)}</span>
-                <button
-                  type="button"
-                  className="secondary small"
-                  disabled={attributes.some((a) => a.key === key) || attributes.length >= 100}
-                  onClick={() => setAttributes([...attributes, { key, value }])}
-                >
-                  Переопределить {key}
-                </button>
-              </div>
-            ))}
-          </section>
-        )}
-        <div className="section-title">
-          <strong>Общие атрибуты</strong>
-          <button
-            type="button"
-            className="secondary small"
-            disabled={attributes.length >= 100}
-            onClick={() => setAttributes([...attributes, { key: '', value: '' }])}
-          >
-            Добавить атрибут
-          </button>
-        </div>
-        {attributes.map((a, i) => (
-          <div className="object-attribute" key={i}>
-            <input
-              aria-label={`Ключ атрибута ${i + 1}`}
-              placeholder="automated"
-              value={a.key}
-              maxLength={100}
-              pattern="[a-zA-Z0-9_-]+"
-              required
-              onChange={(e) =>
-                setAttributes(
-                  attributes.map((x, j) => (j === i ? { ...x, key: e.target.value } : x)),
-                )
-              }
-            />
-            <select
-              aria-label={`Тип атрибута ${i + 1}`}
-              value={typeof a.value}
-              onChange={(e) =>
-                setAttributes(
-                  attributes.map((x, j) =>
-                    j === i
-                      ? {
-                          ...x,
-                          value:
-                            e.target.value === 'boolean'
-                              ? false
-                              : e.target.value === 'number'
-                                ? 0
-                                : '',
-                        }
-                      : x,
-                  ),
-                )
-              }
+              {base && (
+                <label>
+                  Вид наследования
+                  <select
+                    aria-label="Вид наследования"
+                    value={derivation}
+                    onChange={(e) => setDerivation(e.target.value as 'inheritance' | 'instance')}
+                  >
+                    <option value="inheritance">Наследник — наследует</option>
+                    <option value="instance">Реализация — экземпляр</option>
+                  </select>
+                </label>
+              )}
+            </fieldset>
+          )}
+          {object?.baseId && (
+            <section aria-label="Наследование объекта">
+              <strong>
+                {object.derivation === 'instance' ? 'Реализация объекта' : 'Наследует от'}:{' '}
+                {(baseObjects ?? objects).find((o) => o.id === object.baseId)?.name ??
+                  object.baseId}
+              </strong>
+              <p className="muted small-text">
+                Базовые атрибуты обновляются автоматически. Собственные значения переопределяют
+                унаследованные; удаление переопределения возвращает значение базы.
+              </p>
+              {Object.entries(object.inheritedAttributes ?? {}).map(([key, value]) => (
+                <div className="inherited-attribute" key={key}>
+                  <code>{key}</code>
+                  <span>{String(value)}</span>
+                  <button
+                    type="button"
+                    className="secondary small"
+                    disabled={attributes.some((a) => a.key === key) || attributes.length >= 100}
+                    onClick={() => setAttributes([...attributes, { key, value }])}
+                  >
+                    Переопределить {key}
+                  </button>
+                </div>
+              ))}
+            </section>
+          )}
+          <div className="section-title">
+            <strong>Общие атрибуты</strong>
+            <button
+              type="button"
+              className="secondary small"
+              disabled={attributes.length >= 100}
+              onClick={() => setAttributes([...attributes, { key: '', value: '' }])}
             >
-              <option value="string">Текст</option>
-              <option value="number">Число</option>
-              <option value="boolean">Да / Нет</option>
-            </select>
-            {typeof a.value === 'boolean' ? (
-              <label className="inline-check">
-                <input
-                  aria-label={`Значение атрибута ${i + 1}`}
-                  type="checkbox"
-                  checked={a.value}
-                  onChange={(e) =>
-                    setAttributes(
-                      attributes.map((x, j) => (j === i ? { ...x, value: e.target.checked } : x)),
-                    )
-                  }
-                />
-                Да
-              </label>
-            ) : (
+              Добавить атрибут
+            </button>
+          </div>
+          {attributes.map((a, i) => (
+            <div className="object-attribute" key={i}>
               <input
-                aria-label={`Значение атрибута ${i + 1}`}
-                type={typeof a.value === 'number' ? 'number' : 'text'}
-                value={String(a.value)}
-                maxLength={2000}
+                aria-label={`Ключ атрибута ${i + 1}`}
+                placeholder="automated"
+                value={a.key}
+                maxLength={100}
+                pattern="[a-zA-Z0-9_-]+"
+                required
+                onChange={(e) =>
+                  setAttributes(
+                    attributes.map((x, j) => (j === i ? { ...x, key: e.target.value } : x)),
+                  )
+                }
+              />
+              <select
+                aria-label={`Тип атрибута ${i + 1}`}
+                value={typeof a.value}
                 onChange={(e) =>
                   setAttributes(
                     attributes.map((x, j) =>
@@ -348,33 +312,78 @@ export function ObjectEditor({
                         ? {
                             ...x,
                             value:
-                              typeof a.value === 'number' ? Number(e.target.value) : e.target.value,
+                              e.target.value === 'boolean'
+                                ? false
+                                : e.target.value === 'number'
+                                  ? 0
+                                  : '',
                           }
                         : x,
                     ),
                   )
                 }
-              />
-            )}
-            <button
-              type="button"
-              className="secondary small danger"
-              aria-label={`Удалить атрибут ${i + 1}`}
-              onClick={() => setAttributes(attributes.filter((_, j) => i !== j))}
-            >
-              ×
-            </button>
-          </div>
-        ))}
-        {error && (
-          <div className="error" role="alert">
-            {error}
-          </div>
-        )}
-        <button className="primary" disabled={busy}>
-          {busy ? 'Сохраняем…' : 'Сохранить объект'}
-        </button>
-      </form>
+              >
+                <option value="string">Текст</option>
+                <option value="number">Число</option>
+                <option value="boolean">Да / Нет</option>
+              </select>
+              {typeof a.value === 'boolean' ? (
+                <label className="inline-check">
+                  <input
+                    aria-label={`Значение атрибута ${i + 1}`}
+                    type="checkbox"
+                    checked={a.value}
+                    onChange={(e) =>
+                      setAttributes(
+                        attributes.map((x, j) => (j === i ? { ...x, value: e.target.checked } : x)),
+                      )
+                    }
+                  />
+                  Да
+                </label>
+              ) : (
+                <input
+                  aria-label={`Значение атрибута ${i + 1}`}
+                  type={typeof a.value === 'number' ? 'number' : 'text'}
+                  value={String(a.value)}
+                  maxLength={2000}
+                  onChange={(e) =>
+                    setAttributes(
+                      attributes.map((x, j) =>
+                        j === i
+                          ? {
+                              ...x,
+                              value:
+                                typeof a.value === 'number'
+                                  ? Number(e.target.value)
+                                  : e.target.value,
+                            }
+                          : x,
+                      ),
+                    )
+                  }
+                />
+              )}
+              <button
+                type="button"
+                className="secondary small danger"
+                aria-label={`Удалить атрибут ${i + 1}`}
+                onClick={() => setAttributes(attributes.filter((_, j) => i !== j))}
+              >
+                ×
+              </button>
+            </div>
+          ))}
+          {error && (
+            <div className="error" role="alert">
+              {error}
+            </div>
+          )}
+          <button className="primary" disabled={busy}>
+            {busy ? 'Сохраняем…' : 'Сохранить объект'}
+          </button>
+        </form>
+      </fieldset>
       {object && <EntityRelations entityId={object.id} onChanged={onRelationsChanged} />}
       {object && (
         <div className="object-history">
@@ -423,7 +432,7 @@ export function ObjectEditor({
               </span>
               <button
                 className="secondary small"
-                disabled={r.number === object.revision || busy}
+                disabled={!lease.held || r.number === object.revision || busy}
                 onClick={async () => {
                   if (
                     !confirm(

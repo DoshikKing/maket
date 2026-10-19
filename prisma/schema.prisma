@@ -19,6 +19,7 @@ model User {
   diagrams Diagram[]
   notations Notation[]
   modelSpaces ModelSpace[]
+  memberships WorkspaceMember[]
 }
 model Session {
   id String @id
@@ -101,6 +102,11 @@ model RateLimit {
 }
 
 model ModelSpace {
+  members WorkspaceMember[]
+  roles WorkspaceRole[]
+  locks WorkspaceLock[]
+  events WorkspaceEvent[]
+  collaborationRevision Int @default(0)
   viewpoints DiagramViewpoint[]
   contextLinks DiagramContextLink[]
   id String @id @default(cuid())
@@ -234,4 +240,49 @@ model DiagramContextLink {
   @@unique([entityId, sourceDiagramId, targetDiagramId, kind])
   @@index([spaceId, entityId])
   @@index([targetDiagramId, kind])
+}
+
+model WorkspaceMember {
+  spaceId String
+  userId String
+  role String @default("viewer")
+  space ModelSpace @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  @@id([spaceId, userId])
+  @@index([userId])
+}
+model WorkspaceRole {
+  id String @id @default(cuid())
+  spaceId String
+  space ModelSpace @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  name String
+  actions Json
+  elementIds Json @default("[]")
+  revision Int @default(1)
+  @@index([spaceId])
+}
+model WorkspaceLock {
+  spaceId String
+  targetId String
+  rootId String
+  leaseId String
+  space ModelSpace @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  userId String
+  clientId String
+  userName String
+  expiresAt DateTime
+  @@id([spaceId, targetId, rootId])
+  @@index([expiresAt])
+}
+model WorkspaceEvent {
+  id String @id @default(cuid())
+  spaceId String
+  space ModelSpace @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  userId String
+  userName String
+  action String
+  targetId String?
+  createdAt DateTime @default(now())
+  @@index([spaceId, createdAt])
 }

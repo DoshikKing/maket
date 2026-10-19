@@ -1,11 +1,13 @@
 import type { Prisma } from '@prisma/client';
 import { db } from './db';
 import { reject } from './model-errors';
-import { requestedWorkspaceId } from './workspace-scope';
+import { workspaceScope, requestedWorkspaceId } from './workspace-scope';
 export async function workspaceInTransaction(tx: Prisma.TransactionClient, ownerId: string) {
   const id = requestedWorkspaceId();
   if (id) {
-    const space = await tx.modelSpace.findFirst({ where: { id, ownerId } });
+    const space = await tx.modelSpace.findFirst({
+      where: { id, OR: [{ ownerId }, { members: { some: { userId: ownerId } } }] },
+    });
     if (!space) reject(404, 'Рабочая область не найдена');
     return space;
   }
@@ -28,9 +30,9 @@ export async function currentWorkspace(ownerId: string) {
   return db.$transaction((tx) => workspaceInTransaction(tx, ownerId));
 }
 export async function listWorkspaces(ownerId: string) {
-  await currentWorkspace(ownerId);
+  await workspaceScope.run(undefined, () => currentWorkspace(ownerId));
   return db.modelSpace.findMany({
-    where: { ownerId },
+    where: { OR: [{ ownerId }, { members: { some: { userId: ownerId } } }] },
     select: { id: true, name: true, revision: true },
     orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
   });

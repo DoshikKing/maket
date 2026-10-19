@@ -79,6 +79,11 @@ export function SolutionGraphPage({
   const [space, setSpace] = useState<Space | null>(null),
     [error, setError] = useState(''),
     [loading, setLoading] = useState(true);
+  useEffect(() => {
+    const refresh = () => void load();
+    window.addEventListener('maket:workspace-changed', refresh);
+    return () => window.removeEventListener('maket:workspace-changed', refresh);
+  }, []);
   async function load() {
     setLoading(true);
     try {

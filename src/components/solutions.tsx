@@ -63,6 +63,11 @@ export function SolutionsPage() {
     [diagramName, setDiagramName] = useState('Новая диаграмма'),
     [newViewpointId, setNewViewpointId] = useState(''),
     [notationIds, setNotationIds] = useState<string[]>(['builtin']);
+  useEffect(() => {
+    const refresh = () => void load();
+    window.addEventListener('maket:workspace-changed', refresh);
+    return () => window.removeEventListener('maket:workspace-changed', refresh);
+  }, []);
   async function load() {
     try {
       const [s, n] = await Promise.all([

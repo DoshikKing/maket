@@ -120,7 +120,12 @@ export function ShareDialog({
           Сгенерировать новую
         </button>
       )}
-      {sharing && !sharing.enabled && <p className="muted">Доступ по ссылке отключён.</p>}
+      {busy && (
+        <p className="muted" role="status">
+          Сохраняем доступ…
+        </p>
+      )}
+      {!busy && sharing && !sharing.enabled && <p className="muted">Доступ по ссылке отключён.</p>}
       {copied && <p role="status">{copied}</p>}
       {error && (
         <p role="alert" className="error">

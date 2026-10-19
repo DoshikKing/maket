@@ -1,4 +1,5 @@
 'use client';
+import { useEditLease, LeaseNotice } from './collaboration';
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -158,6 +159,9 @@ export function EditorPage({ id }: { id: string }) {
   );
 }
 function Editor({ initial }: { initial: Diagram }) {
+  const lease = useEditLease(initial.id);
+  const editable = useRef(false);
+  editable.current = lease.held;
   const router = useRouter();
   const { panels, setPanels } = useWorkspacePanels();
   const { user } = useUser(),
@@ -291,6 +295,61 @@ function Editor({ initial }: { initial: Diagram }) {
       window.removeEventListener('focus', refresh);
     };
   }, [refreshObjects]);
+  const cleanDocument = useRef(savedDoc);
+  cleanDocument.current = savedDoc;
+  useEffect(() => {
+    let active = true,
+      pending = false;
+    const refresh = async () => {
+      if (
+        pending ||
+        window.document.hidden ||
+        savingRef.current ||
+        gesture.current ||
+        JSON.stringify(docRef.current) !== cleanDocument.current
+      )
+        return;
+      pending = true;
+      const expected = docRef.current;
+      try {
+        const d = await api<ModelDiagram>(`diagrams/${initial.id}`);
+        if (
+          !active ||
+          savingRef.current ||
+          gesture.current ||
+          docRef.current !== expected ||
+          JSON.stringify(docRef.current) !== cleanDocument.current
+        )
+          return;
+        setName(d.name);
+        if (d.revision !== revisionRef.current) {
+          const next = projectDocument(d.document);
+          docRef.current = next;
+          revisionRef.current = d.revision;
+          setDocument(next);
+          setSavedDoc(JSON.stringify(next));
+          setRevision(d.revision);
+          setUndo([]);
+          setRedo([]);
+          setBlocked(false);
+        }
+        await refreshObjects();
+      } catch (e) {
+        if (active) setError((e as Error).message);
+      } finally {
+        pending = false;
+      }
+    };
+    window.addEventListener('maket:workspace-changed', refresh);
+    window.addEventListener('focus', refresh);
+    // Also refresh after gaining a lease: another editor may have saved while this tab was asleep.
+    void refresh();
+    return () => {
+      active = false;
+      window.removeEventListener('maket:workspace-changed', refresh);
+      window.removeEventListener('focus', refresh);
+    };
+  }, [initial.id, lease.held, refreshObjects]);
   const serialized = useMemo(() => JSON.stringify(document), [document]);
   const dirty = serialized !== savedDoc;
   const errors = useMemo(
@@ -298,6 +357,7 @@ function Editor({ initial }: { initial: Diagram }) {
     [document, objects, relations],
   );
   const change = useCallback((next: DiagramDocument, record = true) => {
+    if (!editable.current) return;
     if (JSON.stringify(next) === JSON.stringify(docRef.current)) return;
     if (record && !gesture.current) {
       const previous = structuredClone(docRef.current);
@@ -310,7 +370,8 @@ function Editor({ initial }: { initial: Diagram }) {
   }, []);
   const save = useCallback(
     async (retry = false): Promise<boolean> => {
-      if (gesture.current || savingRef.current || (blocked && !retry)) return false;
+      if (!editable.current || gesture.current || savingRef.current || (blocked && !retry))
+        return false;
       await objectWrites.current;
       if (gesture.current || savingRef.current) return false;
       const snapshot = docRef.current;
@@ -1292,6 +1353,7 @@ function Editor({ initial }: { initial: Diagram }) {
             </small>
           </div>
         </div>
+        <LeaseNotice {...lease} />
         <div className="editor-save-state">
           {saving ? (
             'Сохраняем…'
@@ -1810,6 +1872,9 @@ function Editor({ initial }: { initial: Diagram }) {
         >
           <NodeActionsContext.Provider value={nodeActions}>
             <ReactFlow<CanvasNode>
+              nodesDraggable={lease.held}
+              nodesConnectable={lease.held}
+              edgesReconnectable={lease.held}
               nodes={nodes}
               edges={edges}
               nodeTypes={canvasNodeTypes}
@@ -1921,7 +1986,9 @@ function Editor({ initial }: { initial: Diagram }) {
               }
               snapToGrid={user.settings.snapToGrid}
               snapGrid={[20, 20]}
-              deleteKeyCode={commandBusy || objectSaving ? null : ['Backspace', 'Delete']}
+              deleteKeyCode={
+                !lease.held || commandBusy || objectSaving ? null : ['Backspace', 'Delete']
+              }
               minZoom={0.2}
               maxZoom={2}
             >

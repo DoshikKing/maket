@@ -1,16 +1,29 @@
+let clientId: string | undefined;
+export const activeEditLeases = new Map<string, string>();
+export function collaborationClientId() {
+  return (clientId ??= crypto.randomUUID());
+}
 export async function api<T = unknown>(path: string, method = 'GET', body?: unknown): Promise<T> {
   const headers: Record<string, string> = {};
   if (body !== undefined) headers['Content-Type'] = 'application/json';
   const workspace =
     typeof document === 'undefined' ? undefined : document.documentElement.dataset.workspace;
-  if (workspace) headers['X-Maket-Workspace'] = workspace;
+  if (workspace) {
+    headers['X-Maket-Workspace'] = workspace;
+    headers['X-Maket-Client'] = collaborationClientId();
+    if (activeEditLeases.size)
+      headers['X-Maket-Leases'] = JSON.stringify(
+        [...activeEditLeases].map(([rootId, leaseId]) => ({ rootId, leaseId })),
+      );
+  }
   const response = await fetch(`/api/${path}`, {
     method,
+    keepalive: method === 'DELETE' && path.startsWith('collaboration/locks/'),
     headers,
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const data = await response.json();
-  if (!response.ok) throw new Error(data.error ?? 'Ошибка запроса');
+  if (!response.ok) throw new ApiError(response.status, data.error ?? 'Ошибка запроса');
   return data;
 }
 export function download(name: string, data: unknown) {
@@ -38,3 +51,12 @@ export const date = (value: string) =>
     hour: '2-digit',
     minute: '2-digit',
   });
+
+export class ApiError extends Error {
+  constructor(
+    public status: number,
+    message: string,
+  ) {
+    super(message);
+  }
+}

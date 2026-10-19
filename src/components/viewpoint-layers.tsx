@@ -366,6 +366,11 @@ export function ViewpointLayersPage({ diagramId }: { diagramId?: string }) {
   const [space, setSpace] = useState<LayerStructure | null>(null),
     [error, setError] = useState(''),
     [busy, setBusy] = useState(false);
+  useEffect(() => {
+    const refresh = () => void load();
+    window.addEventListener('maket:workspace-changed', refresh);
+    return () => window.removeEventListener('maket:workspace-changed', refresh);
+  }, []);
   async function load() {
     setBusy(true);
     try {

@@ -66,6 +66,11 @@ export function LibraryPage() {
     [busy, setBusy] = useState(false);
   const router = useRouter(),
     file = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    const refresh = () => void load();
+    window.addEventListener('maket:workspace-changed', refresh);
+    return () => window.removeEventListener('maket:workspace-changed', refresh);
+  }, []);
   async function load() {
     try {
       const [d, n, v] = await Promise.all([
