@@ -179,7 +179,7 @@ export function AuthScreen({ mode, token }: { mode: Mode; token?: string }) {
               <Link href="/login">← Вернуться ко входу</Link>
             </p>
           )}
-          <div className="auth-note">Ваши диаграммы доступны только вам.</div>
+          <div className="auth-note">Вы управляете доступом к своим моделям.</div>
         </div>
       </section>
     </main>

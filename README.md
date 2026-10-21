@@ -202,3 +202,7 @@ API создания: `POST /api/objects` с `name`, `baseId`, `derivation: "inh
 Перед обновлением выполните `npm run db:generate` и `npm run db:migrate`. Проверка совместной работы: `npm run test:e2e -- tests/e2e/collaboration.spec.ts` (для установленного Chromium задайте `PLAYWRIGHT_CHROMIUM_EXECUTABLE`).
 
 Для API совместное сохранение включается полем `concurrent: true` в `PUT /api/diagrams/:id` вместе с `revision` базовой версии и `document`. Без этого поля действует прежняя строгая проверка ревизии. То же поле у `POST /api/diagrams/:id/representations` разрешает атомарное добавление на актуальную диаграмму при устаревшем номере версии. Изменения БД для этого обновления не требуются.
+
+## Дизайн интерфейса
+
+Общие принципы оформления, поведение элементов, доступность и проверка снимков описаны в [документе по интерфейсу](docs/interface-design.md).

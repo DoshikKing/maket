@@ -468,6 +468,13 @@ export function SolutionsPage() {
   return (
     <main className="page solutions-page">
       <div className="page-heading">
+        <div>
+          <div className="eyebrow">ОТ РЕШЕНИЯ К ДЕТАЛЯМ</div>
+          <h1>Решения</h1>
+          <p className="muted">Единая модель, проекты, диаграммы и ракурсы.</p>
+        </div>
+      </div>
+      <div className="solution-actions button-row">
         {space && (
           <Link
             className="secondary"
@@ -487,11 +494,6 @@ export function SolutionsPage() {
           <GitBranch size={16} />
           Менеджер связей
         </button>
-        <div>
-          <div className="eyebrow">ОТ РЕШЕНИЯ К ДЕТАЛЯМ</div>
-          <h1>Решения</h1>
-          <p className="muted">Единая модель, проекты, диаграммы и ракурсы.</p>
-        </div>
         <button className="secondary" onClick={() => void load()}>
           <RefreshCw size={16} /> Обновить
         </button>

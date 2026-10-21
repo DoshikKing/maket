@@ -71,26 +71,51 @@ export function SettingsPage() {
             <SlidersHorizontal size={20} />
             Редактор и оформление
           </h2>
-          <label>
-            Тема
-            <select aria-label="Тема" name="theme" defaultValue={user.settings.theme}>
-              <option value="light">Светлая</option>
-              <option value="dark">Тёмная</option>
-            </select>
-          </label>
+          <fieldset className="appearance-picker">
+            <legend>Оформление</legend>
+            {(['light', 'dark'] as const).map((theme) => (
+              <label className="appearance-option" key={theme}>
+                <input
+                  type="radio"
+                  name="theme"
+                  value={theme}
+                  defaultChecked={user.settings.theme === theme}
+                />
+                <span className={`appearance-preview ${theme}`} aria-hidden="true">
+                  <span className="appearance-preview-sidebar" />
+                  <span className="appearance-preview-content">
+                    <i />
+                    <i />
+                    <i />
+                  </span>
+                </span>
+                <span>{theme === 'light' ? 'Светлая' : 'Тёмная'}</span>
+              </label>
+            ))}
+          </fieldset>
           <label className="toggle-row">
             <span>
               <strong>Привязка к сетке</strong>
               <small>Элементы выравниваются по шагу 20 px</small>
             </span>
-            <input type="checkbox" name="snapToGrid" defaultChecked={user.settings.snapToGrid} />
+            <input
+              type="checkbox"
+              role="switch"
+              name="snapToGrid"
+              defaultChecked={user.settings.snapToGrid}
+            />
           </label>
           <label className="toggle-row">
             <span>
               <strong>Автосохранение</strong>
               <small>Сохранять изменения после паузы в редактировании</small>
             </span>
-            <input type="checkbox" name="autosave" defaultChecked={user.settings.autosave} />
+            <input
+              type="checkbox"
+              role="switch"
+              name="autosave"
+              defaultChecked={user.settings.autosave}
+            />
           </label>
         </section>
         <button className="primary" disabled={busy}>

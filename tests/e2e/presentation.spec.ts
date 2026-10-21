@@ -214,6 +214,8 @@ test('notation modal stays mounted while editing, custom shape is saved and rend
   await page.getByRole('button', { name: 'Создать нотацию', exact: true }).click();
   const dialog = page.locator('dialog[open]');
   await expect(dialog).toBeVisible();
+  // Compare settled geometry: entry motion intentionally scales the dialog briefly.
+  await dialog.evaluate((el) => Promise.all(el.getAnimations().map((a) => a.finished)));
   const before = (await dialog.boundingBox())!;
   await dialog.evaluate((el) => {
     (window as any).__dialog = el;

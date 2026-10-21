@@ -16,7 +16,11 @@ export function Modal({
   const titleId = useId();
   useLayoutEffect(() => {
     const d = ref.current;
-    if (d && !d.open) d.showModal();
+    if (d && !d.open) {
+      d.showModal();
+      // React's autoFocus runs before a native dialog is open. Focus explicit targets afterwards.
+      d.querySelector<HTMLElement>('[data-autofocus]')?.focus();
+    }
     return () => d?.close();
   }, []);
   return (

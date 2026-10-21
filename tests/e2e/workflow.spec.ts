@@ -329,12 +329,12 @@ test('browser: custom notation through JSON, diagram import and persistent dark 
   await expect(page).toHaveURL(/\/diagrams\//);
   await expect(page.locator('.node-label')).toHaveText('Каталог');
   await page.getByRole('link', { name: 'Настройки', exact: true }).click();
-  await page.getByLabel('Тема', { exact: true }).selectOption('dark');
+  await page.getByRole('radio', { name: 'Тёмная', exact: true }).check();
   await page.getByRole('button', { name: 'Сохранить настройки' }).click();
   await expect(page.locator('.workspace')).toHaveClass(/dark/);
   await page.reload();
   await expect(page.locator('.workspace')).toHaveClass(/dark/);
-  await page.getByLabel('Тема', { exact: true }).selectOption('light');
+  await page.getByRole('radio', { name: 'Светлая', exact: true }).check();
   await page.getByRole('button', { name: 'Сохранить настройки' }).click();
   await expect(page.locator('.workspace')).not.toHaveClass(/dark/);
   await page.getByRole('link', { name: 'Библиотека', exact: true }).click();

@@ -9,7 +9,6 @@ import {
   Settings,
   LogOut,
   ChevronRight,
-  Sparkles,
   PanelLeftClose,
   PanelLeftOpen,
 } from 'lucide-react';
@@ -80,6 +79,9 @@ export function Workspace({
   return (
     <UserContext.Provider value={{ user, setUser, workspaceId }}>
       <CollaborationProvider workspaceId={workspaceId}>
+        <a className="skip-link" href="#workspace-content">
+          К содержимому
+        </a>
         <div className={`workspace ${user.settings.theme === 'dark' ? 'dark' : ''}`}>
           <aside className={`sidebar ${collapsed ? 'is-collapsed' : ''}`} aria-label="Главное меню">
             <button
@@ -113,6 +115,9 @@ export function Workspace({
             <nav id="workspace-navigation" aria-label="Разделы приложения">
               {links.map(({ href, label, icon: Icon }) => (
                 <Link
+                  aria-current={
+                    pathname === href || (href === '/solutions' && editor) ? 'page' : undefined
+                  }
                   aria-label={label}
                   title={label}
                   key={href}
@@ -125,12 +130,6 @@ export function Workspace({
                 </Link>
               ))}
             </nav>
-            <div className="sidebar-tip">
-              <Sparkles size={21} />
-              <strong>Ваши идеи, ваши правила</strong>
-              <p>Создайте свою нотацию и моделируйте по-своему.</p>
-              <Link href="/notations">Открыть нотации →</Link>
-            </div>
             <div className="profile">
               <span className="avatar">{user.name.slice(0, 1).toUpperCase()}</span>
               <div>
@@ -156,7 +155,11 @@ export function Workspace({
             </div>
             {error && <div className="error">{error}</div>}
           </aside>
-          <div className={`workspace-main ${editor ? 'editor-main' : ''}`}>
+          <div
+            id="workspace-content"
+            tabIndex={-1}
+            className={`workspace-main ${editor ? 'editor-main' : ''}`}
+          >
             <header className="topbar">
               <span>
                 Рабочее пространство <ChevronRight size={13} />{' '}

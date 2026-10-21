@@ -171,31 +171,33 @@ export function LibraryPage() {
           {error}
         </div>
       )}
-      <section className="welcome-banner">
-        <div>
-          <span className="tag">ПРОСТРАНСТВО ДЛЯ БОЛЬШИХ ИДЕЙ</span>
-          <h2>Сложное становится понятным</h2>
-          <p>Начните с одного элемента. Соедините мысли в целую картину.</p>
-          <button className="text-button" onClick={() => setCreate(true)}>
-            Создать первую связь <ArrowUpRight size={16} />
-          </button>
-        </div>
-        <div className="banner-visual" aria-hidden="true">
-          <div className="mini-node">
-            <Workflow size={22} />
+      {!loading && items.length === 0 && (
+        <section className="welcome-banner">
+          <div>
+            <span className="tag">ПРОСТРАНСТВО ДЛЯ БОЛЬШИХ ИДЕЙ</span>
+            <h2>Сложное становится понятным</h2>
+            <p>Начните с одного элемента. Соедините мысли в целую картину.</p>
+            <button className="text-button" onClick={() => setCreate(true)}>
+              Начать моделирование <ArrowUpRight size={16} />
+            </button>
           </div>
-          <span />
-          <div className="mini-node mid">
-            <GitBranch size={24} />
+          <div className="banner-visual" aria-hidden="true">
+            <div className="mini-node">
+              <Workflow size={22} />
+            </div>
+            <span />
+            <div className="mini-node mid">
+              <GitBranch size={24} />
+            </div>
+            <span />
+            <div className="mini-node">
+              <Layers size={22} />
+            </div>
+            <i className="visual-dot d1" />
+            <i className="visual-dot d2" />
           </div>
-          <span />
-          <div className="mini-node">
-            <Layers size={22} />
-          </div>
-          <i className="visual-dot d1" />
-          <i className="visual-dot d2" />
-        </div>
-      </section>
+        </section>
+      )}
       {items.length > 0 && (
         <section className="recent">
           <div className="section-title">
@@ -346,6 +348,7 @@ export function LibraryPage() {
                 maxLength={100}
                 placeholder="Например, процесс оформления заказа"
                 autoFocus
+                data-autofocus
               />
             </label>
             <label>
