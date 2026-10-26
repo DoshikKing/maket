@@ -1,4 +1,5 @@
 import { requestOrigin } from '@/lib/request-origin';
+import { hasSafeJsonDepth } from '@/lib/json-depth';
 import { appPath } from '@/lib/base-path';
 import { matchesInvitationCode } from '@/lib/invitation';
 import { changedDiagramTargets } from '@/lib/diagram-merge';
@@ -75,8 +76,20 @@ const credentials = z.object({
     .transform((v) => v.toLowerCase()),
   password: z.string().min(10).max(128),
 });
-const json = (data: unknown, status = 200) =>
-  NextResponse.json(data, { status, headers: { 'Cache-Control': 'no-store' } });
+// Diagram rows returned by reads and writes contain capability tokens. Only /share may expose a link.
+const json = (data: unknown, status = 200) => {
+  const clean = (value: unknown) => {
+    if (value && typeof value === 'object' && 'shareToken' in value) {
+      const { shareToken: _token, ...rest } = value;
+      return rest;
+    }
+    return value;
+  };
+  return NextResponse.json(Array.isArray(data) ? data.map(clean) : clean(data), {
+    status,
+    headers: { 'Cache-Control': 'no-store' },
+  });
+};
 class ApiError extends Error {
   constructor(
     public status: number,
@@ -106,11 +119,14 @@ async function body(req: Request, required = true) {
     chunks.push(chunk.value);
   }
   if (!size && !required) return undefined;
+  let parsed: unknown;
   try {
-    return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    parsed = JSON.parse(Buffer.concat(chunks).toString('utf8'));
   } catch {
     fail(400, 'Невалидный JSON');
   }
+  if (!hasSafeJsonDepth(parsed)) fail(400, 'Слишком большая вложенность JSON');
+  return parsed;
 }
 const asJson = (value: unknown) => value as Prisma.InputJsonValue;
 async function handle(req: NextRequest, context: { params: Promise<{ path: string[] }> }) {
@@ -173,12 +189,18 @@ async function handle(req: NextRequest, context: { params: Promise<{ path: strin
       }
       if (id === 'login' && method === 'POST') {
         const input = credentials.parse(await body(req));
-        if (await limited(`login:${input.email}`, 15))
+        const address =
+          req.headers.get('x-forwarded-for')?.split(',')[0].trim().slice(0, 100) || 'unknown';
+        if (
+          (await limited(`login:address:${address}`, 60)) ||
+          (await limited(`login:${input.email}`, 15))
+        )
           fail(429, 'Слишком много попыток. Повторите через 15 минут');
         const u = await db.user.findUnique({ where: { email: input.email } });
         const valid = await checkPassword(
           input.password,
-          u?.passwordHash ?? (await hashPassword('dummy-password-to-check')),
+          // One scrypt for both existing and unknown accounts; no extra hash revealing existence.
+          u?.passwordHash ?? `${'0'.repeat(32)}:${'0'.repeat(128)}`,
         );
         if (!u || !valid) fail(401, 'Неверная почта или пароль');
         if (!u.emailVerified)
@@ -186,7 +208,7 @@ async function handle(req: NextRequest, context: { params: Promise<{ path: strin
             403,
             'Аккаунт не активирован. Завершите регистрацию по коду приглашения с прежним паролем.',
           );
-        await createSession(u.id, requestOrigin(req).startsWith('https://'));
+        await createSession(u.id, requestOrigin(req).startsWith('https://'), u.passwordHash);
         return json({ ok: true });
       }
       if (id === 'resend' && method === 'POST')
@@ -198,6 +220,9 @@ async function handle(req: NextRequest, context: { params: Promise<{ path: strin
         )
           fail(503, 'Восстановление по почте не настроено. Обратитесь к администратору.');
         const { email } = credentials.pick({ email: true }).parse(await body(req));
+        const address =
+          req.headers.get('x-forwarded-for')?.split(',')[0].trim().slice(0, 100) || 'unknown';
+        if (await limited(`recover:address:${address}`, 30)) fail(429, 'Слишком много запросов');
         if (await limited(`${id}:${email}`, 5)) fail(429, 'Слишком много запросов');
         const u = await db.user.findUnique({ where: { email } });
         if (u) await sendAuthEmail(u.id, email, 'reset');
@@ -381,14 +406,17 @@ async function handle(req: NextRequest, context: { params: Promise<{ path: strin
       if (await limited(`password:${user.id}`, 10)) fail(429, 'Слишком много попыток');
       if (!(await checkPassword(input.currentPassword, user.passwordHash)))
         fail(400, 'Текущий пароль неверен');
-      await db.$transaction([
-        db.user.update({
-          where: { id: user.id },
-          data: { passwordHash: await hashPassword(input.password) },
-        }),
-        db.session.deleteMany({ where: { userId: user.id } }),
-      ]);
-      await createSession(user.id, requestOrigin(req).startsWith('https://'));
+      const passwordHash = await hashPassword(input.password);
+      await db.$transaction(async (tx) => {
+        const changed = await tx.user.updateMany({
+          where: { id: user.id, passwordHash: user.passwordHash },
+          data: { passwordHash },
+        });
+        if (!changed.count) fail(409, 'Пароль уже изменён. Войдите повторно');
+        await tx.session.deleteMany({ where: { userId: user.id } });
+        await tx.authToken.deleteMany({ where: { userId: user.id, kind: 'reset' } });
+      });
+      await createSession(user.id, requestOrigin(req).startsWith('https://'), passwordHash);
       return json({ ok: true });
     }
     if (resource === 'notations') {
@@ -868,6 +896,8 @@ async function scopedHandle(req: NextRequest, context: { params: Promise<{ path:
         write && req.body ? await body(req.clone(), req.method !== 'DELETE') : undefined;
       const run = async () => {
         const access = await workspaceAccess(user.id, spaceId);
+        if (action === 'share' && id && ['objects', 'diagrams'].includes(resource))
+          requirePermission(access, 'share', await lockTargets(spaceId, id));
         if (resource === 'collaboration') {
           const result = await collaborationRequest(
             spaceId,
@@ -948,6 +978,30 @@ async function scopedHandle(req: NextRequest, context: { params: Promise<{ path:
             )?.document;
             collect(restoredDocument);
           }
+          if (id && action === 'restore' && ['objects', 'relations'].includes(resource)) {
+            const { number } = z.object({ number: z.number().int().positive() }).parse(input);
+            const historical =
+              resource === 'objects'
+                ? await db.modelObjectRevision.findFirst({
+                    where: { objectId: id, number, object: { spaceId } },
+                    select: { snapshot: true },
+                  })
+                : await db.modelRelationRevision.findFirst({
+                    where: { relationId: id, number, relation: { spaceId } },
+                    select: { snapshot: true },
+                  });
+            collect(historical?.snapshot);
+          }
+          // Deleting a diagram also deletes its context relations; protect those implicit writes.
+          if (resource === 'diagrams' && id && req.method === 'DELETE') {
+            const links = await db.diagramContextLink.findMany({
+              where: { spaceId, OR: [{ sourceDiagramId: id }, { targetDiagramId: id }] },
+            });
+            for (const link of links) {
+              targets.add(link.id);
+              collect(link);
+            }
+          }
           collect(input);
           if (
             access.elementIds.length &&
@@ -962,6 +1016,8 @@ async function scopedHandle(req: NextRequest, context: { params: Promise<{ path:
                     schemaVersion?: number;
                     nodes?: { objectId?: string }[];
                     edges?: { relationId?: string }[];
+                    objects?: { id: string }[];
+                    relations?: { id: string }[];
                   };
                 }
               | undefined;
@@ -970,12 +1026,18 @@ async function scopedHandle(req: NextRequest, context: { params: Promise<{ path:
             if (((!action && req.method === 'PUT') || action === 'restore') && value?.document) {
               if ('schemaVersion' in value.document && value.document.schemaVersion === 1)
                 requirePermission(access, 'create', [...targets]);
-              const objectIds = (value.document.nodes ?? []).flatMap((n) =>
-                n.objectId ? [n.objectId] : [],
-              );
-              const relationIds = (value.document.edges ?? []).flatMap((e) =>
-                e.relationId ? [e.relationId] : [],
-              );
+              const objectIds = [
+                ...(value.document.nodes ?? []).flatMap((n) => (n.objectId ? [n.objectId] : [])),
+                ...(action === 'restore' ? (value.document.objects ?? []).map((o) => o.id) : []),
+              ];
+              const relationIds = [
+                ...(value.document.edges ?? []).flatMap((e) =>
+                  e.relationId ? [e.relationId] : [],
+                ),
+                ...(action === 'restore' ? (value.document.relations ?? []).map((r) => r.id) : []),
+              ];
+              if (action === 'restore')
+                for (const target of [...objectIds, ...relationIds]) targets.add(target);
               const [objects, relations] = await Promise.all([
                 db.modelObject.count({ where: { spaceId, id: { in: [...new Set(objectIds)] } } }),
                 db.modelRelation.count({

@@ -212,3 +212,7 @@ API создания: `POST /api/objects` с `name`, `baseId`, `derivation: "inh
 Production-образ, PostgreSQL, автоматические миграции, `APP_URL` через `.env.production`, резервное копирование и обновление: [инструкция развёртывания](docs/deployment.md). Стандартные блок-схема, BPMN и UML доступны автоматически. Локальный `compose.yaml` запускает только PostgreSQL.
 
 Для `/maket` задайте `APP_URL=/maket` и используйте [фрагмент Nginx](deploy/nginx/maket.conf). Параметры БД задаются отдельными `POSTGRES_*`; вручную собирать URL подключения не нужно.
+
+## Безопасность
+
+Результаты проверки, исправления и условия безопасного развёртывания: [аудит безопасности](docs/security-audit.md).

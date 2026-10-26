@@ -3,6 +3,7 @@ import { randomBytes, scrypt as scryptCallback, timingSafeEqual, createHash } fr
 import { promisify } from 'node:util';
 import { cookies } from 'next/headers';
 import { db } from './db';
+import { reject } from './model-errors';
 const scrypt = promisify(scryptCallback);
 export const tokenHash = (token: string) => createHash('sha256').update(token).digest('hex');
 export async function hashPassword(password: string) {
@@ -25,10 +26,17 @@ export async function currentUser() {
   });
   return session && session.expiresAt > new Date() ? session.user : null;
 }
-export async function createSession(userId: string, secure: boolean) {
+export async function createSession(userId: string, secure: boolean, passwordHash: string) {
   const token = randomBytes(32).toString('hex');
-  await db.session.create({
-    data: { id: tokenHash(token), userId, expiresAt: new Date(Date.now() + 7 * 86400000) },
+  await db.$transaction(async (tx) => {
+    // Serialize issuance with password changes/resets so an old password cannot open a new session.
+    const [user] = await tx.$queryRaw<{ passwordHash: string }[]>`
+      SELECT "passwordHash" FROM "User" WHERE "id" = ${userId} FOR UPDATE`;
+    if (!user || user.passwordHash !== passwordHash)
+      reject(401, 'Пароль изменён. Войдите повторно');
+    await tx.session.create({
+      data: { id: tokenHash(token), userId, expiresAt: new Date(Date.now() + 7 * 86400000) },
+    });
   });
   (await cookies()).set('maket_session', token, {
     httpOnly: true,

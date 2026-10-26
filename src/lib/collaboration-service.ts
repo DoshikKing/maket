@@ -7,6 +7,7 @@ import { currentWorkspace } from './workspace-service';
 import { reject } from './model-errors';
 import {
   builtinRoles,
+  canManageRole,
   permitted,
   workspaceActions,
   type WorkspaceAccess,
@@ -109,6 +110,19 @@ const memberInput = z.object({
     .transform((s) => s.toLowerCase()),
   role: z.string().min(1).max(100),
 });
+async function managedRole(spaceId: string, id: string) {
+  if (Object.hasOwn(builtinRoles, id)) return { actions: builtinRoles[id].actions, elementIds: [] };
+  const role = await db.workspaceRole.findFirst({ where: { id, spaceId } });
+  if (!role) reject(400, 'Роль не найдена');
+  return {
+    actions: z.array(z.enum(workspaceActions)).parse(role.actions),
+    elementIds: z.array(z.string()).parse(role.elementIds),
+  };
+}
+function requireManageRole(access: WorkspaceAccess, role: Parameters<typeof canManageRole>[1]) {
+  if (!canManageRole(access, role))
+    reject(403, 'Нельзя управлять ролью с правами, превышающими ваши');
+}
 export async function lockTargets(spaceId: string, targetId: string): Promise<string[]> {
   const diagram = await db.diagram.findFirst({
     where: { id: targetId, modelSpaceId: spaceId },
@@ -192,11 +206,7 @@ export async function collaborationRequest(
     }
     if (method === 'POST' || method === 'PATCH') {
       const data = memberInput.parse(input);
-      if (
-        !Object.hasOwn(builtinRoles, data.role) &&
-        !(await db.workspaceRole.findFirst({ where: { id: data.role, spaceId } }))
-      )
-        reject(400, 'Роль не найдена');
+      requireManageRole(access, await managedRole(spaceId, data.role));
       const target = await db.user.findUnique({
         where: { email: data.email },
         select: { id: true, emailVerified: true },
@@ -205,6 +215,10 @@ export async function collaborationRequest(
         reject(404, 'Зарегистрированный пользователь с подтверждённой почтой не найден');
       const space = await db.modelSpace.findUniqueOrThrow({ where: { id: spaceId } });
       if (target.id === space.ownerId) reject(400, 'Права владельца нельзя изменить');
+      const existing = await db.workspaceMember.findUnique({
+        where: { spaceId_userId: { spaceId, userId: target.id } },
+      });
+      if (existing) requireManageRole(access, await managedRole(spaceId, existing.role));
       await db.workspaceMember.upsert({
         where: { spaceId_userId: { spaceId, userId: target.id } },
         create: { spaceId, userId: target.id, role: data.role },
@@ -214,6 +228,10 @@ export async function collaborationRequest(
       return { ok: true };
     }
     if (method === 'DELETE' && id) {
+      const existing = await db.workspaceMember.findUnique({
+        where: { spaceId_userId: { spaceId, userId: id } },
+      });
+      if (existing) requireManageRole(access, await managedRole(spaceId, existing.role));
       await db.workspaceMember.deleteMany({ where: { spaceId, userId: id } });
       await db.workspaceLock.deleteMany({ where: { spaceId, userId: id } });
       return { ok: true };
@@ -226,6 +244,8 @@ export async function collaborationRequest(
     requirePermission(access, 'roles');
     if (method === 'POST' || method === 'PATCH') {
       const data = roleInput.parse(input);
+      requireManageRole(access, data);
+      if (id) requireManageRole(access, await managedRole(spaceId, id));
       if (
         data.elementIds.length &&
         data.actions.some((a) => ['members', 'roles', 'unlock'].includes(a))
@@ -275,6 +295,7 @@ export async function collaborationRequest(
       return { ok: true };
     }
     if (method === 'DELETE' && id) {
+      requireManageRole(access, await managedRole(spaceId, id));
       if (await db.workspaceMember.count({ where: { spaceId, role: id } }))
         reject(409, 'Сначала назначьте участникам другую роль');
       await db.workspaceRole.deleteMany({ where: { id, spaceId } });

@@ -36,3 +36,16 @@ export function permitted(access: WorkspaceAccess, action: WorkspaceAction, ids:
         ids.every((id) => access.elementIds.includes(id))))
   );
 }
+// Managing members/roles must never grant authority the actor does not hold.
+export function canManageRole(
+  access: WorkspaceAccess,
+  role: { actions: WorkspaceAction[]; elementIds: string[] },
+) {
+  return (
+    access.owner ||
+    (role.actions.every((action) => access.actions.includes(action)) &&
+      (!access.elementIds.length ||
+        (role.elementIds.length > 0 &&
+          role.elementIds.every((id) => access.elementIds.includes(id)))))
+  );
+}
