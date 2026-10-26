@@ -1,3 +1,4 @@
+import { matchesInvitationCode } from '@/lib/invitation';
 import { changedDiagramTargets } from '@/lib/diagram-merge';
 import { modelDiagramSchema } from '@/lib/model';
 import { NextRequest, NextResponse } from 'next/server';
@@ -136,26 +137,37 @@ async function handle(req: NextRequest, context: { params: Promise<{ path: strin
         return json({ ok: true });
       }
       if (id === 'register' && method === 'POST') {
-        const input = credentials.extend({ name: nameSchema }).parse(await body(req));
-        if (await limited(`register:${input.email}`, 5))
+        const input = credentials
+          .extend({ name: nameSchema, inviteCode: z.string().trim().min(1).max(128) })
+          .parse(await body(req));
+        const address =
+          req.headers.get('x-forwarded-for')?.split(',')[0].trim().slice(0, 100) || 'unknown';
+        if (
+          (await limited(`register:address:${address}`, 30)) ||
+          (await limited(`register:${input.email}`, 5))
+        )
           fail(429, 'Слишком много запросов. Повторите через 15 минут');
-        if (process.env.NODE_ENV === 'production' && !process.env.MAIL_WEBHOOK_URL)
-          fail(503, 'Сервис почты не настроен');
-        const existing = await db.user.findUnique({ where: { email: input.email } });
-        if (!existing) {
-          const u = await db.user.create({
-            data: {
-              email: input.email,
-              name: input.name,
-              passwordHash: await hashPassword(input.password),
-            },
-          });
-          await sendAuthEmail(u.id, u.email, 'verify');
-        }
-        return json({
-          message:
-            'Если адрес доступен для регистрации, отправлено письмо с подтверждением. В локальной разработке ссылка находится в консоли сервера.',
+        if (!process.env.MAKET_INVITE_CODE)
+          fail(503, 'Регистрация недоступна. Обратитесь к администратору.');
+        if (!matchesInvitationCode(input.inviteCode, process.env.MAKET_INVITE_CODE))
+          fail(403, 'Неверный код приглашения');
+        const user = await db.user.upsert({
+          where: { email: input.email },
+          create: {
+            email: input.email,
+            name: input.name,
+            passwordHash: await hashPassword(input.password),
+            emailVerified: true,
+          },
+          update: {},
         });
+        // Pending accounts from the old email flow can activate only with their original password.
+        if (!user.emailVerified && (await checkPassword(input.password, user.passwordHash)))
+          await db.user.updateMany({
+            where: { id: user.id, passwordHash: user.passwordHash, emailVerified: false },
+            data: { emailVerified: true },
+          });
+        return json({ message: 'Регистрация завершена. Войдите с вашим email и паролем.' });
       }
       if (id === 'login' && method === 'POST') {
         const input = credentials.parse(await body(req));
@@ -167,16 +179,23 @@ async function handle(req: NextRequest, context: { params: Promise<{ path: strin
           u?.passwordHash ?? (await hashPassword('dummy-password-to-check')),
         );
         if (!u || !valid) fail(401, 'Неверная почта или пароль');
-        if (!u.emailVerified) fail(403, 'Подтвердите почту перед входом');
+        if (!u.emailVerified)
+          fail(
+            403,
+            'Аккаунт не активирован. Завершите регистрацию по коду приглашения с прежним паролем.',
+          );
         await createSession(u.id);
         return json({ ok: true });
       }
-      if ((id === 'recover' || id === 'resend') && method === 'POST') {
+      if (id === 'resend' && method === 'POST')
+        fail(410, 'Подтверждение почты отключено. Используйте код приглашения.');
+      if (id === 'recover' && method === 'POST') {
+        if (process.env.NODE_ENV === 'production' && !process.env.MAIL_WEBHOOK_URL)
+          fail(503, 'Восстановление по почте не настроено. Обратитесь к администратору.');
         const { email } = credentials.pick({ email: true }).parse(await body(req));
         if (await limited(`${id}:${email}`, 5)) fail(429, 'Слишком много запросов');
         const u = await db.user.findUnique({ where: { email } });
-        if (u && (id === 'recover' || !u.emailVerified))
-          await sendAuthEmail(u.id, email, id === 'recover' ? 'reset' : 'verify');
+        if (u) await sendAuthEmail(u.id, email, 'reset');
         return json({
           message:
             'Если аккаунт существует, письмо отправлено. В локальной разработке ссылка находится в консоли сервера.',

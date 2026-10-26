@@ -5,9 +5,9 @@
   "scripts": {
     "postinstall": "npm run db:generate",
     "predev": "npm run db:generate",
-    "dev": "next dev --hostname 0.0.0.0",
+    "dev": "node scripts/start-app.mjs node_modules/next/dist/bin/next dev --hostname 0.0.0.0",
     "build": "npm run db:generate && next build",
-    "start": "next start --hostname 0.0.0.0",
+    "start": "node scripts/start-app.mjs node_modules/next/dist/bin/next start --hostname 0.0.0.0",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "db:generate": "node scripts/generate-client.mjs",

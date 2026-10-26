@@ -35,9 +35,9 @@ COPY --from=builder --chown=node:node /app/node_modules/@prisma/debug ./node_mod
 COPY --from=builder --chown=node:node /app/node_modules/postgres-array ./node_modules/postgres-array
 COPY --from=builder --chown=node:node /app/node_modules/zod ./node_modules/zod
 COPY --from=builder --chown=node:node /app/prisma/migrations ./prisma/migrations
-COPY --from=builder --chown=node:node /app/scripts/migrate.mjs /app/scripts/create-test-user.mjs ./scripts/
+COPY --from=builder --chown=node:node /app/scripts/migrate.mjs /app/scripts/create-test-user.mjs /app/scripts/start-app.mjs ./scripts/
 USER node
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
     CMD ["node", "-e", "fetch('http://127.0.0.1:3000/api/health',{signal:AbortSignal.timeout(4000)}).then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
-CMD ["node", "server.js"]
+CMD ["node", "scripts/start-app.mjs"]

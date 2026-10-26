@@ -5,14 +5,22 @@ import { useRouter } from 'next/navigation';
 import { ArrowRight, Workflow, Hexagon, GitBranch, Layers } from 'lucide-react';
 import { api } from '@/lib/client';
 type Mode = 'login' | 'register' | 'recover' | 'reset' | 'verify';
-export function AuthScreen({ mode, token }: { mode: Mode; token?: string }) {
+export function AuthScreen({
+  mode,
+  token,
+  recoveryAvailable = true,
+}: {
+  mode: Mode;
+  token?: string;
+  recoveryAvailable?: boolean;
+}) {
   const router = useRouter();
   const [error, setError] = useState(''),
     [message, setMessage] = useState(''),
     [busy, setBusy] = useState(false);
   const title = {
     login: 'С возвращением',
-    register: 'Создайте своё пространство',
+    register: 'Регистрация по приглашению',
     recover: 'Восстановление пароля',
     reset: 'Новый пароль',
     verify: 'Подтвердите почту',
@@ -86,7 +94,7 @@ export function AuthScreen({ mode, token }: { mode: Mode; token?: string }) {
             {mode === 'login'
               ? 'Войдите, чтобы продолжить работу над идеями.'
               : mode === 'register'
-                ? 'Начните с первого шага — остальные связи появятся.'
+                ? 'Получите код у администратора. Подтверждение почты не потребуется.'
                 : mode === 'verify'
                   ? 'Нажмите кнопку, чтобы подтвердить адрес из письма.'
                   : 'Мы поможем восстановить доступ к вашим диаграммам.'}
@@ -98,6 +106,10 @@ export function AuthScreen({ mode, token }: { mode: Mode; token?: string }) {
                 Перейти ко входу →
               </Link>
             </div>
+          ) : mode === 'recover' && !recoveryAvailable ? (
+            <p role="status">
+              Восстановление по почте не настроено. Обратитесь к администратору приложения.
+            </p>
           ) : (
             <form onSubmit={submit} className="form-stack">
               {mode === 'register' && (
@@ -139,7 +151,20 @@ export function AuthScreen({ mode, token }: { mode: Mode; token?: string }) {
                   />
                 </label>
               )}
-              {mode === 'login' && (
+              {mode === 'register' && (
+                <label>
+                  Код приглашения
+                  <input
+                    name="inviteCode"
+                    type="password"
+                    autoComplete="off"
+                    required
+                    maxLength={128}
+                    placeholder="Получите код у администратора"
+                  />
+                </label>
+              )}
+              {mode === 'login' && recoveryAvailable && (
                 <Link className="text-link align-right" href="/recover">
                   Забыли пароль?
                 </Link>
@@ -171,7 +196,6 @@ export function AuthScreen({ mode, token }: { mode: Mode; token?: string }) {
               <p className="auth-bottom">
                 Ещё нет аккаунта? <Link href="/register">Зарегистрироваться</Link>
               </p>
-              <Resend />
             </>
           )}
           {mode !== 'login' && (
@@ -183,34 +207,5 @@ export function AuthScreen({ mode, token }: { mode: Mode; token?: string }) {
         </div>
       </section>
     </main>
-  );
-}
-function Resend() {
-  const [open, setOpen] = useState(false),
-    [message, setMessage] = useState('');
-  return (
-    <div className="resend">
-      <button className="text-button" onClick={() => setOpen(!open)}>
-        Не пришло письмо с подтверждением?
-      </button>
-      {open && (
-        <form
-          onSubmit={async (e) => {
-            e.preventDefault();
-            try {
-              const email = new FormData(e.currentTarget).get('email');
-              const result = await api<{ message: string }>('auth/resend', 'POST', { email });
-              setMessage(result.message);
-            } catch (e) {
-              setMessage((e as Error).message);
-            }
-          }}
-        >
-          <input type="email" name="email" required placeholder="Ваша почта" />
-          <button className="secondary">Отправить повторно</button>
-          <p className="muted">{message}</p>
-        </form>
-      )}
-    </div>
   );
 }

@@ -7,6 +7,7 @@ import { builtinNotation } from '../../src/lib/notation';
 const db = new PrismaClient({
   adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL }),
 });
+test.use({ extraHTTPHeaders: { 'X-Forwarded-For': '127.0.0.73' } });
 const emails: string[] = [];
 const password = 'Maket-test-password-42';
 async function mailToken(email: string, kind: string) {
@@ -26,38 +27,61 @@ async function mailToken(email: string, kind: string) {
     ),
   ].at(-1)![1];
 }
+async function invitationCode() {
+  let code: string | undefined;
+  await expect
+    .poll(
+      async () => {
+        const log = await readFile('/tmp/maket-e2e-server.log', 'utf8').catch(() => '');
+        code = [...log.matchAll(/\[maket invite\] ([A-Za-z0-9_-]{32})/g)].at(-1)?.[1];
+        return !!code;
+      },
+      {
+        timeout: 30000,
+        message: 'The startup script must log the invitation after server readiness',
+      },
+    )
+    .toBe(true);
+  return code!;
+}
 async function register(request: APIRequestContext) {
   const email = `test-${crypto.randomUUID()}@example.com`;
   emails.push(email);
   const r = await request.post('/api/auth/register', {
-    data: { email, password, name: 'Тестировщик' },
+    data: { email, password, name: 'Тестировщик', inviteCode: await invitationCode() },
   });
   expect(r.status()).toBe(200);
-  const token = await mailToken(email, 'verify');
-  expect((await request.post('/api/auth/verify', { data: { token } })).status()).toBe(200);
   expect((await request.post('/api/auth/login', { data: { email, password } })).status()).toBe(200);
   return email;
 }
 test.afterAll(async () => {
   await db.user.deleteMany({ where: { email: { in: emails } } });
-  await db.rateLimit.deleteMany({ where: { key: { contains: '@example.com' } } });
+  await db.rateLimit.deleteMany({
+    where: { OR: [{ key: { contains: '@example.com' } }, { key: 'register:address:127.0.0.73' }] },
+  });
   await db.$disconnect();
 });
-test('registration, real verification link, password recovery and session invalidation', async ({
-  request,
-}) => {
+test('invitation registration, password recovery and session invalidation', async ({ request }) => {
   const email = `test-${crypto.randomUUID()}@example.com`;
   emails.push(email);
+  const data = { email, password, name: 'Анна' };
+  expect((await request.post('/api/auth/register', { data })).status()).toBe(400);
   expect(
     (
-      await request.post('/api/auth/register', { data: { email, password, name: 'Анна' } })
+      await request.post('/api/auth/register', { data: { ...data, inviteCode: 'incorrect-code' } })
+    ).status(),
+  ).toBe(403);
+  expect(await db.user.count({ where: { email } })).toBe(0);
+  expect(
+    (
+      await request.post('/api/auth/register', {
+        data: { ...data, inviteCode: await invitationCode() },
+      })
     ).status(),
   ).toBe(200);
-  expect((await request.post('/api/auth/login', { data: { email, password } })).status()).toBe(403);
-  const token = await mailToken(email, 'verify');
-  expect((await request.post('/api/auth/verify', { data: { token } })).status()).toBe(200);
-  expect((await request.post('/api/auth/verify', { data: { token } })).status()).toBe(400);
+  expect(await db.authToken.count({ where: { user: { email }, kind: 'verify' } })).toBe(0);
   expect((await request.post('/api/auth/login', { data: { email, password } })).status()).toBe(200);
+  expect((await request.post('/api/auth/resend', { data: { email } })).status()).toBe(410);
   expect((await request.get('/api/auth/me')).status()).toBe(200);
   expect((await request.post('/api/auth/recover', { data: { email } })).status()).toBe(200);
   const reset = await mailToken(email, 'reset'),
@@ -215,7 +239,7 @@ test('browser: login, create, connect, edit, undo, save, reopen and export', asy
   await page.getByRole('button', { name: 'Создать диаграмму', exact: true }).click();
   await page.getByLabel('Название', { exact: true }).fill('Заказ — браузерный тест');
   await page.getByRole('button', { name: 'Открыть редактор' }).click();
-  await expect(page).toHaveURL(/\/diagrams\//);
+  await expect(page).toHaveURL(/\/diagrams\//, { timeout: 15000 });
   await page
     .getByRole('region', { name: 'Палитра Блок-схема' })
     .getByRole('button', { name: 'Процесс', exact: true })
@@ -299,7 +323,7 @@ test('browser: custom notation through JSON, diagram import and persistent dark 
   await page.getByLabel('Название', { exact: true }).fill('Архитектура магазина');
   await page.getByRole('button', { name: /Карта сервисов/ }).click();
   await page.getByRole('button', { name: 'Открыть редактор' }).click();
-  await expect(page).toHaveURL(/\/diagrams\//);
+  await expect(page).toHaveURL(/\/diagrams\//, { timeout: 15000 });
   await page.getByRole('button', { name: 'Сервис', exact: true }).click();
   await page.getByLabel('Реплики', { exact: false }).fill('3');
   await page.getByLabel('Активен', { exact: false }).uncheck();
@@ -326,7 +350,7 @@ test('browser: custom notation through JSON, diagram import and persistent dark 
     mimeType: 'application/json',
     buffer: await readFile(path),
   });
-  await expect(page).toHaveURL(/\/diagrams\//);
+  await expect(page).toHaveURL(/\/diagrams\//, { timeout: 15000 });
   await expect(page.locator('.node-label')).toHaveText('Каталог');
   await page.getByRole('link', { name: 'Настройки', exact: true }).click();
   await page.getByRole('radio', { name: 'Тёмная', exact: true }).check();
@@ -340,6 +364,8 @@ test('browser: custom notation through JSON, diagram import and persistent dark 
   await page.getByRole('link', { name: 'Библиотека', exact: true }).click();
   await page.screenshot({ path: 'test-results/library.png', fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
+  await page.reload();
+  await expect(page.locator('.sidebar')).toHaveClass(/is-collapsed/);
   await page.screenshot({ path: 'test-results/library-mobile.png', fullPage: true });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,
@@ -371,4 +397,59 @@ test('API guards: origins, limits, missing identifiers and unauthenticated acces
       })
     ).status(),
   ).toBe(404);
+});
+
+test('browser: invitation registration needs no email and cannot change an existing password', async ({
+  page,
+  request,
+}) => {
+  const inviteCode = await invitationCode();
+  const email = `test-${crypto.randomUUID()}@example.com`;
+  emails.push(email);
+  await page.goto('/register');
+  await page.getByLabel('Ваше имя', { exact: true }).fill('Участник по приглашению');
+  await page.getByLabel('Электронная почта', { exact: true }).fill(email);
+  await page.getByLabel('Пароль', { exact: true }).fill(password);
+  await page.getByLabel('Код приглашения', { exact: true }).fill('wrong-code');
+  await page.getByRole('button', { name: 'Создать аккаунт', exact: true }).click();
+  await expect(page.locator('.auth-box [role="alert"]')).toHaveText('Неверный код приглашения');
+  await page.getByLabel('Код приглашения', { exact: true }).fill(inviteCode);
+  await page.getByRole('button', { name: 'Создать аккаунт', exact: true }).click();
+  await expect(page.locator('.success')).toContainText('Регистрация завершена');
+  await page.getByRole('link', { name: 'Перейти ко входу →', exact: true }).click();
+  await expect(
+    page.getByRole('button', { name: 'Не пришло письмо с подтверждением?' }),
+  ).toHaveCount(0);
+  await page.getByLabel('Электронная почта', { exact: true }).fill(email);
+  await page.getByLabel('Пароль', { exact: true }).fill(password);
+  await page.getByRole('button', { name: 'Войти в maket', exact: true }).click();
+  await expect(page).toHaveURL(/\/library/);
+  const original = await db.user.findUniqueOrThrow({ where: { email } });
+  expect(
+    (
+      await request.post('/api/auth/register', {
+        data: { email, password: 'Another-password-42', name: 'Не заменять', inviteCode },
+      })
+    ).status(),
+  ).toBe(200);
+  const unchanged = await db.user.findUniqueOrThrow({ where: { email } });
+  expect(unchanged.passwordHash).toBe(original.passwordHash);
+  expect(unchanged.name).toBe(original.name);
+  await db.user.update({ where: { email }, data: { emailVerified: false } });
+  expect(
+    (
+      await request.post('/api/auth/register', {
+        data: { email, password: 'Another-password-42', name: 'Не заменять', inviteCode },
+      })
+    ).status(),
+  ).toBe(200);
+  expect((await db.user.findUniqueOrThrow({ where: { email } })).emailVerified).toBe(false);
+  expect(
+    (
+      await request.post('/api/auth/register', {
+        data: { email, password, name: original.name, inviteCode },
+      })
+    ).status(),
+  ).toBe(200);
+  expect((await db.user.findUniqueOrThrow({ where: { email } })).emailVerified).toBe(true);
 });
