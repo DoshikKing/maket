@@ -28,7 +28,8 @@ import {
   sendAuthEmail,
   tokenHash,
 } from '@/lib/auth';
-import { builtinNotation, notationSchema } from '@/lib/notation';
+import { notationSchema } from '@/lib/notation';
+import { standardNotations } from '@/lib/standard-notations';
 import { getStructure, deleteDiagram } from '@/lib/structure-service';
 import { attributesSchema, entityKindSchema } from '@/lib/model';
 import {
@@ -374,13 +375,13 @@ async function handle(req: NextRequest, context: { params: Promise<{ path: strin
           orderBy: { createdAt: 'desc' },
         });
         return json([
-          {
-            id: 'builtin',
-            name: builtinNotation.name,
+          ...Object.entries(standardNotations).map(([id, document]) => ({
+            id,
+            name: document.name,
             builtin: true,
             versionId: null,
-            document: builtinNotation,
-          },
+            document,
+          })),
           ...list.map((n) => ({
             id: n.id,
             name: n.name,

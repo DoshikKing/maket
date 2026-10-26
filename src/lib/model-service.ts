@@ -1,15 +1,10 @@
+import { standardNotation, standardNotations } from './standard-notations';
 import { mergeDiagramState, DiagramConflict } from './diagram-merge';
 import { createHash, randomUUID } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import { db } from './db';
 import { workspaceInTransaction } from './workspace-service';
-import {
-  builtinNotation,
-  diagramSchema,
-  diagramErrors,
-  notationSchema,
-  type DiagramDocument,
-} from './notation';
+import { diagramSchema, diagramErrors, notationSchema, type DiagramDocument } from './notation';
 import {
   modelDiagramSchema,
   resolveInheritance,
@@ -320,7 +315,8 @@ async function notationBinding(
   ownerId: string,
   notationId: string,
 ): Promise<NotationBinding> {
-  if (notationId === 'builtin') return { id: uuid(), versionId: null, document: builtinNotation };
+  const standard = standardNotation(notationId);
+  if (standard) return { id: uuid(), versionId: null, document: standard };
   const n = await tx.notation.findFirst({
     where: { id: notationId, ownerId },
     include: { versions: { orderBy: { number: 'desc' }, take: 1 } },
@@ -502,7 +498,11 @@ async function checkBindings(
       });
       if (!v || JSON.stringify(notationSchema.parse(v.document)) !== JSON.stringify(b.document))
         reject(400, 'Неизвестная версия нотации');
-    } else if (JSON.stringify(b.document) !== JSON.stringify(builtinNotation)) {
+    } else if (
+      !Object.values(standardNotations).some(
+        (n) => JSON.stringify(b.document) === JSON.stringify(n),
+      )
+    ) {
       const revisions = await tx.diagramRevision.findMany({
         where: { diagramId },
         select: { document: true },

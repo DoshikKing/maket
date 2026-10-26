@@ -1,0 +1,65 @@
+name: maket-production
+
+x-app-environment: &app-environment
+  DATABASE_URL: postgresql://maket:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env.production}@db:5432/maket?schema=public
+  APP_URL: ${APP_URL:?Set APP_URL to the public origin}
+  MAIL_WEBHOOK_URL: ${MAIL_WEBHOOK_URL:-}
+  MAIL_WEBHOOK_TOKEN: ${MAIL_WEBHOOK_TOKEN:-}
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: '10m'
+    max-file: '3'
+
+services:
+  db:
+    image: postgres:17-bookworm
+    environment:
+      POSTGRES_USER: maket
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env.production}
+      POSTGRES_DB: maket
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U maket -d maket']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+    logging: *logging
+
+  migrate:
+    image: maket-app:local
+    build: .
+    command: ['node', 'scripts/migrate.mjs']
+    environment: *app-environment
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      disable: true
+    restart: 'no'
+    logging: *logging
+
+  app:
+    image: maket-app:local
+    build: .
+    environment: *app-environment
+    ports:
+      - '${APP_BIND:-127.0.0.1}:${APP_PORT:-3000}:3000'
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+    logging: *logging
+
+volumes:
+  postgres_data:

@@ -4952,3 +4952,56 @@ test('browser: 2.5D foreground objects occlude later-created rear objects and re
   await page.mouse.move(10, 10);
   await page.screenshot({ path: '/tmp/maket-2.5d-occlusion.png' });
 });
+
+test('standard notations are available without seeding and survive multi-notation history restoration', async ({
+  request,
+  page,
+}) => {
+  await login(request, page);
+  const notations = await (await request.get('/api/notations')).json();
+  expect(notations.filter((n: any) => n.builtin).map((n: any) => n.name)).toEqual([
+    'Блок-схема',
+    'BPMN',
+    'UML',
+  ]);
+  await page.goto('/notations');
+  await expect(page.locator('.notation-card')).toHaveCount(3);
+  await expect(page.getByRole('heading', { name: 'BPMN', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'UML', exact: true })).toBeVisible();
+  const response = await request.post('/api/diagrams', {
+    data: { name: 'Стандартные нотации', notationIds: ['builtin', 'builtin-bpmn', 'builtin-uml'] },
+  });
+  expect(response.status()).toBe(201);
+  const diagram = await response.json();
+  expect(diagram.document.bindings.map((b: any) => b.document.id)).toEqual([
+    'flowchart',
+    'bpmn',
+    'uml',
+  ]);
+  let placed = await place(
+    request,
+    diagram,
+    undefined,
+    diagram.document.bindings[1].id,
+    'serviceTask',
+  );
+  placed = await place(request, placed, undefined, diagram.document.bindings[2].id, 'class');
+  expect(placed.document.nodes).toHaveLength(2);
+  const empty = await request.post('/api/diagrams', {
+    data: { name: 'История стандартов', notationIds: ['builtin-bpmn', 'builtin-uml'] },
+  });
+  expect(empty.status()).toBe(201);
+  const d = await empty.json();
+  const removed = await request.post(`/api/diagrams/${d.id}/notations`, {
+    data: { revision: d.revision, removeBindingId: d.document.bindings[1].id },
+  });
+  expect(removed.status()).toBe(200);
+  const restored = await request.post(`/api/diagrams/${d.id}/restore`, {
+    data: { revision: (await removed.json()).revision, number: 1 },
+  });
+  expect(restored.status()).toBe(200);
+  expect((await restored.json()).document.bindings.map((b: any) => b.document.id)).toEqual([
+    'bpmn',
+    'uml',
+  ]);
+});

@@ -1,0 +1,116 @@
+# Развёртывание на сервере через Docker Compose
+
+Нужны Docker Engine с BuildKit и Docker Compose v2. Production-стек отделён от локального `compose.yaml`: `compose.prod.yaml` запускает PostgreSQL 17, одноразовый сервис миграций и Next.js standalone. Приложение работает от пользователя `node`, без root. Node.js и npm на сервере устанавливать не нужно.
+
+## Первый запуск
+
+```bash
+git clone https://github.com/DoshikKing/maket.git
+cd maket
+cp .env.production.example .env.production
+chmod 600 .env.production
+openssl rand -hex 32
+```
+
+Откройте `.env.production` в редакторе и заполните:
+
+- `POSTGRES_PASSWORD`: сгенерированный hex-пароль. Он подставляется в URL PostgreSQL, поэтому используйте символы `0–9a–f` без дополнительного кодирования.
+- `APP_URL`: корневой публичный адрес, например `https://maket.example.com`, без завершающего `/` и без подпути. Это runtime-настройка: для смены домена пересборка образа не нужна. Она задаёт адрес ссылок подтверждения/восстановления, разрешённый origin запросов и HTTPS-флаг cookie. Размещение в подпапке `/maket` не поддерживается.
+- `MAIL_WEBHOOK_URL` и `MAIL_WEBHOOK_TOKEN`: HTTPS-сервис доставки почты. Контракт: POST JSON `{ "to", "subject", "text" }`, `Authorization: Bearer <token>`, успешный ответ 2xx. Без почты существующие аккаунты могут входить, но регистрация и восстановление пароля недоступны.
+- `APP_BIND` / `APP_PORT`: адрес и порт на сервере. По умолчанию `127.0.0.1:3000` для HTTPS-прокси на этом же сервере. PostgreSQL наружу не публикуется.
+
+Запускать из корня репозитория:
+
+```bash
+docker compose --env-file .env.production -f compose.prod.yaml up -d --build
+docker compose --env-file .env.production -f compose.prod.yaml ps -a
+```
+
+Compose сначала ждёт готовности БД, применяет SQL-миграции и только после их успешного завершения запускает приложение. Сервис `migrate` со статусом `Exited (0)` — нормальное состояние. Ошибка миграции блокирует запуск приложения; журнал:
+
+```bash
+docker compose --env-file .env.production -f compose.prod.yaml logs --tail=100 migrate app
+curl --fail http://127.0.0.1:3000/api/health
+```
+
+`/api/health` возвращает 200 при доступной БД, 503 при недоступной; подробности и секреты не раскрываются. Healthcheck помечает состояние контейнера, а `restart: unless-stopped` перезапускает завершившийся процесс. Состояние unhealthy само по себе не перезапускает контейнер — подключите мониторинг к этому endpoint.
+
+Настройте HTTPS reverse proxy на `http://127.0.0.1:3000`. Передавайте исходные `Host`, `X-Forwarded-Host`, `X-Forwarded-Proto` и IP клиента. Для импорта диаграмм задайте лимит тела запроса не меньше 10 MB. Внешний адрес прокси должен совпадать с `APP_URL`. Если прокси находится в другом контейнере, подключите его к сети приложения и направьте запросы на `app:3000` вместо localhost.
+
+Сборка не требует доступа к БД и не получает `.env.production`: файлы окружения исключены через `.dockerignore`. Постоянные данные находятся в Docker volume `maket-production_postgres_data`, а не внутри контейнера приложения.
+
+## Первый аккаунт без почтового сервиса
+
+При необходимости создать аккаунт с уже подтверждённой почтой используйте существующий CLI. В Bash пароль вводится скрыто и передаётся через stdin:
+
+```bash
+read -r -s -p 'Пароль аккаунта: ' MAKET_USER_PASSWORD
+printf '\n'
+printf '%s' "$MAKET_USER_PASSWORD" | docker compose --env-file .env.production -f compose.prod.yaml \
+  run --rm -T app node scripts/create-test-user.mjs --email admin@example.com --name 'Администратор' --password-stdin
+unset MAKET_USER_PASSWORD
+```
+
+Замените email на свой. Пароль — 10–128 символов. Пользователь получает собственную рабочую область; существующие аккаунты и их пароли команда не меняет. Для обычной регистрации и восстановления доступа всё равно настройте почту.
+
+## Стандартные нотации
+
+Блок-схема, BPMN и UML доступны всем пользователям автоматически при открытии раздела «Нотации» и выборе нотаций новой диаграммы. Отдельная ручная загрузка и seed-команда не нужны. Это общие неизменяемые шаблоны: для редактирования создайте копию. Их также можно экспортировать в JSON и импортировать как пользовательские нотации.
+
+BPMN включает события, задачи, подпроцессы, шлюзы, участников, данные и три типа связей; UML — классы, интерфейсы, перечисления, акторов, варианты использования, компоненты, пакеты, узлы и шесть типов связей. Наборы используют механизм нотаций maket и его формы; импорт BPMN XML и UML XMI не добавляется. Старые диаграммы сохраняют собственные снимки нотаций, пользовательские нотации не заменяются.
+
+## Обновление
+
+Сначала сделайте резервную копию. Затем:
+
+```bash
+git pull --ff-only
+docker compose --env-file .env.production -f compose.prod.yaml build
+docker compose --env-file .env.production -f compose.prod.yaml stop app
+docker compose --env-file .env.production -f compose.prod.yaml run --rm migrate
+docker compose --env-file .env.production -f compose.prod.yaml up -d
+```
+
+Продолжайте к `up` только при успешной миграции. Повторное применение проверяет историю и пропускает уже применённые SQL-файлы. Обновление сохраняет volume БД. Для изменения только `APP_URL`, почты или привязки порта измените `.env.production` и выполните `up -d`: Compose пересоздаст контейнеры с новым окружением. `restart` не перечитывает `.env`.
+
+Пароль PostgreSQL фиксируется при первом создании volume. Изменение `POSTGRES_PASSWORD` в файле не меняет пароль существующей БД; его нужно менять согласованно в самой БД.
+
+## Резервная копия и восстановление
+
+```bash
+mkdir -p backups
+chmod 700 backups
+docker compose --env-file .env.production -f compose.prod.yaml exec -T db \
+  pg_dump -U maket -d maket -Fc > backups/maket.dump
+```
+
+Скопируйте backup с сервера в отдельное хранилище. Каталог `backups/` исключён из Git и Docker-контекста. Для восстановления выбранной копии (заменяет текущие данные):
+
+```bash
+docker compose --env-file .env.production -f compose.prod.yaml stop app
+docker compose --env-file .env.production -f compose.prod.yaml exec -T db \
+  pg_restore --exit-on-error --clean --if-exists -U maket -d maket < backups/maket.dump
+docker compose --env-file .env.production -f compose.prod.yaml up -d
+```
+
+Остановка без удаления данных:
+
+```bash
+docker compose --env-file .env.production -f compose.prod.yaml down
+```
+
+Не используйте `down -v` для рабочего стека: эта команда удаляет volume с БД.
+
+## Существующая внешняя PostgreSQL
+
+Для контейнера, подключённого к уже управляемой БД, Compose не обязателен:
+
+```bash
+docker build -t maket-app:local .
+# В отдельном защищённом .env.external укажите DATABASE_URL, APP_URL и параметры почты.
+docker run --rm --env-file .env.external maket-app:local node scripts/migrate.mjs
+docker run -d --name maket-app --restart unless-stopped --init \
+  --env-file .env.external -p 127.0.0.1:3000:3000 maket-app:local
+```
+
+Если внешняя БД требует TLS, задайте его в `DATABASE_URL` и настройте доверенный CA согласно требованиям сервера БД.
