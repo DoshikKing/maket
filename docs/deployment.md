@@ -14,9 +14,11 @@ openssl rand -hex 32
 
 Откройте `.env.production` в редакторе и заполните:
 
-- `POSTGRES_PASSWORD`: сгенерированный hex-пароль. Он подставляется в URL PostgreSQL, поэтому используйте символы `0–9a–f` без дополнительного кодирования.
-- `APP_URL`: корневой публичный адрес, например `https://maket.example.com`, без завершающего `/` и без подпути. Это runtime-настройка: для смены домена пересборка образа не нужна. Она задаёт адрес ссылок подтверждения/восстановления, разрешённый origin запросов и HTTPS-флаг cookie. Размещение в подпапке `/maket` не поддерживается.
-- `MAIL_WEBHOOK_URL` и `MAIL_WEBHOOK_TOKEN`: HTTPS-сервис доставки почты. Контракт: POST JSON `{ "to", "subject", "text" }`, `Authorization: Bearer <token>`, успешный ответ 2xx. Для регистрации почта не нужна: используется код приглашения из логов контейнера. Без почты восстановление пароля недоступно.
+- `POSTGRES_HOST`, `POSTGRES_PORT`: адрес и порт PostgreSQL. В этом Compose — `db` и `5432`.
+- `POSTGRES_USER`, `POSTGRES_PASSWORD`: логин и пароль. Строка подключения формируется внутри приложения, специальные символы пароля кодируются автоматически. В `.env` заключайте пароль с `$`, `#` или пробелами в одинарные кавычки.
+- `POSTGRES_DB`, `POSTGRES_SCHEMA`: база и схема; по умолчанию `maket` / `public`. Для схемы используйте строчные латинские буквы, цифры и `_` (до 63 символов). Миграции создают выбранную схему, ORM и raw SQL используют её одинаково.
+- `APP_URL`: **только подпуть** — `/maket` или пустое значение для корня домена. Домен и протокол берутся из заголовков доверенного reverse proxy. Изменение подпути требует `up -d --build`: Next.js встраивает его в маршруты и JS при сборке. Смена домена пересборки не требует.
+- `MAIL_WEBHOOK_URL` и `MAIL_WEBHOOK_TOKEN`: Необязательный HTTPS-сервис доставки почты. Контракт: POST JSON `{ "to", "subject", "text" }`, `Authorization: Bearer <token>`, успешный ответ 2xx. Для восстановления также задайте `PUBLIC_ORIGIN` — канонический HTTPS origin, например `https://example.com`, без подпути. Это защищает ссылки сброса от подмены входящего Host. При регистрации без почты все три поля оставьте пустыми. Для регистрации почта не нужна: используется код приглашения из логов контейнера. Без почты восстановление пароля недоступно.
 - `APP_BIND` / `APP_PORT`: адрес и порт на сервере. По умолчанию `127.0.0.1:3000` для HTTPS-прокси на этом же сервере. PostgreSQL наружу не публикуется.
 
 Запускать из корня репозитория:
@@ -30,14 +32,36 @@ Compose сначала ждёт готовности БД, применяет SQ
 
 ```bash
 docker compose --env-file .env.production -f compose.prod.yaml logs --tail=100 migrate app
-curl --fail http://127.0.0.1:3000/api/health
+curl --fail http://127.0.0.1:3000/maket/api/health
 ```
 
 `/api/health` возвращает 200 при доступной БД, 503 при недоступной; подробности и секреты не раскрываются. Healthcheck помечает состояние контейнера, а `restart: unless-stopped` перезапускает завершившийся процесс. Состояние unhealthy само по себе не перезапускает контейнер — подключите мониторинг к этому endpoint.
 
-Настройте HTTPS reverse proxy на `http://127.0.0.1:3000`. Передавайте исходные `Host`, `X-Forwarded-Host`, `X-Forwarded-Proto` и IP клиента. Для импорта диаграмм задайте лимит тела запроса не меньше 10 MB. Внешний адрес прокси должен совпадать с `APP_URL`. Если прокси находится в другом контейнере, подключите его к сети приложения и направьте запросы на `app:3000` вместо localhost.
+Настройте HTTPS reverse proxy на `http://127.0.0.1:3000`. Передавайте исходные `Host`, `X-Forwarded-Host`, `X-Forwarded-Proto` и IP клиента. Для импорта диаграмм задайте лимит тела запроса не меньше 10 MB. Подпуть прокси должен совпадать с `APP_URL`; для `/maket` используйте фрагмент ниже. При пустом `APP_URL` endpoint готовности находится на `/api/health`. Если прокси находится в другом контейнере, подключите его к сети приложения и направьте запросы на `app:3000` вместо localhost.
 
 Сборка не требует доступа к БД и не получает `.env.production`: файлы окружения исключены через `.dockerignore`. Постоянные данные находятся в Docker volume `maket-production_postgres_data`, а не внутри контейнера приложения.
+
+## Nginx под `/maket`
+
+В `.env.production` задайте `APP_URL=/maket`. Строка подключения PostgreSQL и полный URL сайта больше не нужны.
+
+Добавьте внутрь существующего HTTPS-блока `server { ... }`:
+
+```nginx
+include /opt/maket/deploy/nginx/maket.conf;
+```
+
+Замените `/opt/maket` путём к вашему репозиторию. [Готовый фрагмент](../deploy/nginx/maket.conf) проксирует `/maket/` и перенаправляет `/maket` на `/maket/`. В `proxy_pass` намеренно нет завершающего `/`: префикс передаётся приложению целиком, `rewrite` и `sub_filter` не нужны. Для Nginx в Docker замените upstream `127.0.0.1:3000` на `app:3000` в общей сети.
+
+```bash
+docker compose --env-file .env.production -f compose.prod.yaml up -d --build --wait
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+После этого открывайте `https://ваш-домен/maket/`. Этот же префикс используется для API, ресурсов Next.js, публичных ссылок, регистрации и проверок готовности. При смене `APP_URL` пересоберите образ; при локальной разработке перезапустите `npm run dev`.
+
+Для обновления старой `.env`: удалите `DATABASE_URL`, заполните поля `POSTGRES_*`, а прежний полный `APP_URL` замените подпутём или пустой строкой. Сохраните прежние имя базы, пользователя, пароль и схему: смена `POSTGRES_SCHEMA` выбирает другое пространство таблиц, а не переносит существующие данные. Старый `DATABASE_URL` поддерживается только для обратной совместимости и в новых шаблонах не используется.
 
 ## Регистрация по приглашению
 
@@ -92,7 +116,7 @@ docker compose --env-file .env.production -f compose.prod.yaml run --rm migrate
 docker compose --env-file .env.production -f compose.prod.yaml up -d
 ```
 
-Продолжайте к `up` только при успешной миграции. Повторное применение проверяет историю и пропускает уже применённые SQL-файлы. Обновление сохраняет volume БД. Для изменения только `APP_URL`, почты или привязки порта измените `.env.production` и выполните `up -d`: Compose пересоздаст контейнеры с новым окружением. `restart` не перечитывает `.env`.
+Продолжайте к `up` только при успешной миграции. Повторное применение проверяет историю и пропускает уже применённые SQL-файлы. Обновление сохраняет volume БД. Для изменения почты или привязки HTTP-порта измените `.env.production` и выполните `up -d`: Compose пересоздаст контейнеры с новым окружением. `restart` не перечитывает `.env`. Для изменения `APP_URL` дополнительно требуется пересборка образа.
 
 Пароль PostgreSQL фиксируется при первом создании volume. Изменение `POSTGRES_PASSWORD` в файле не меняет пароль существующей БД; его нужно менять согласованно в самой БД.
 
@@ -102,7 +126,7 @@ docker compose --env-file .env.production -f compose.prod.yaml up -d
 mkdir -p backups
 chmod 700 backups
 docker compose --env-file .env.production -f compose.prod.yaml exec -T db \
-  pg_dump -U maket -d maket -Fc > backups/maket.dump
+  sh -c 'pg_dump -p "$POSTGRES_PORT" -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' > backups/maket.dump
 ```
 
 Скопируйте backup с сервера в отдельное хранилище. Каталог `backups/` исключён из Git и Docker-контекста. Для восстановления выбранной копии (заменяет текущие данные):
@@ -110,7 +134,7 @@ docker compose --env-file .env.production -f compose.prod.yaml exec -T db \
 ```bash
 docker compose --env-file .env.production -f compose.prod.yaml stop app
 docker compose --env-file .env.production -f compose.prod.yaml exec -T db \
-  pg_restore --exit-on-error --clean --if-exists -U maket -d maket < backups/maket.dump
+  sh -c 'pg_restore --exit-on-error --clean --if-exists -p "$POSTGRES_PORT" -U "$POSTGRES_USER" -d "$POSTGRES_DB"' < backups/maket.dump
 docker compose --env-file .env.production -f compose.prod.yaml up -d
 ```
 
@@ -128,10 +152,11 @@ docker compose --env-file .env.production -f compose.prod.yaml down
 
 ```bash
 docker build -t maket-app:local .
-# В отдельном защищённом .env.external укажите DATABASE_URL, APP_URL и параметры почты.
+# В защищённом .env.external укажите POSTGRES_*, APP_URL и необязательные параметры почты.
+# При подпути добавьте к docker build: --build-arg APP_URL=/maket
 docker run --rm --env-file .env.external maket-app:local node scripts/migrate.mjs
 docker run -d --name maket-app --restart unless-stopped --init \
   --env-file .env.external -p 127.0.0.1:3000:3000 maket-app:local
 ```
 
-Если внешняя БД требует TLS, задайте его в `DATABASE_URL` и настройте доверенный CA согласно требованиям сервера БД.
+Если внешняя БД требует TLS, используйте `PGSSLMODE=verify-full` и настройте доверенный CA согласно требованиям сервера БД.

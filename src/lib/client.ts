@@ -1,3 +1,4 @@
+import { appPath } from './base-path';
 let clientId: string | undefined;
 export const activeEditLeases = new Map<string, string>();
 export function collaborationClientId() {
@@ -16,7 +17,7 @@ export async function api<T = unknown>(path: string, method = 'GET', body?: unkn
         [...activeEditLeases].map(([rootId, leaseId]) => ({ rootId, leaseId })),
       );
   }
-  const response = await fetch(`/api/${path}`, {
+  const response = await fetch(appPath(`/api/${path}`), {
     method,
     keepalive: method === 'DELETE' && path.startsWith('collaboration/locks/'),
     headers,

@@ -1,8 +1,19 @@
 name: maket-production
 
+x-app-build: &app-build
+  context: .
+  args:
+    APP_URL: ${APP_URL:-}
+
 x-app-environment: &app-environment
-  DATABASE_URL: postgresql://maket:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env.production}@db:5432/maket?schema=public
-  APP_URL: ${APP_URL:?Set APP_URL to the public origin}
+  POSTGRES_HOST: ${POSTGRES_HOST:-db}
+  POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+  POSTGRES_USER: ${POSTGRES_USER:-maket}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env.production}
+  POSTGRES_DB: ${POSTGRES_DB:-maket}
+  POSTGRES_SCHEMA: ${POSTGRES_SCHEMA:-public}
+  APP_URL: ${APP_URL:-}
+  PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-}
   MAIL_WEBHOOK_URL: ${MAIL_WEBHOOK_URL:-}
   MAIL_WEBHOOK_TOKEN: ${MAIL_WEBHOOK_TOKEN:-}
 
@@ -16,13 +27,19 @@ services:
   db:
     image: postgres:17-bookworm
     environment:
-      POSTGRES_USER: maket
+      POSTGRES_USER: ${POSTGRES_USER:-maket}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env.production}
-      POSTGRES_DB: maket
+      POSTGRES_DB: ${POSTGRES_DB:-maket}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+    command: ['postgres', '-p', '${POSTGRES_PORT:-5432}']
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U maket -d maket']
+      test:
+        [
+          'CMD-SHELL',
+          'pg_isready -p "$${POSTGRES_PORT}" -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"',
+        ]
       interval: 5s
       timeout: 5s
       retries: 20
@@ -31,7 +48,7 @@ services:
 
   migrate:
     image: maket-app:local
-    build: .
+    build: *app-build
     command: ['node', 'scripts/migrate.mjs']
     environment: *app-environment
     depends_on:
@@ -44,7 +61,7 @@ services:
 
   app:
     image: maket-app:local
-    build: .
+    build: *app-build
     environment: *app-environment
     ports:
       - '${APP_BIND:-127.0.0.1}:${APP_PORT:-3000}:3000'

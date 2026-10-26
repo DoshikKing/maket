@@ -1,3 +1,4 @@
+import { appPath } from './base-path';
 import { randomBytes, scrypt as scryptCallback, timingSafeEqual, createHash } from 'node:crypto';
 import { promisify } from 'node:util';
 import { cookies } from 'next/headers';
@@ -24,7 +25,7 @@ export async function currentUser() {
   });
   return session && session.expiresAt > new Date() ? session.user : null;
 }
-export async function createSession(userId: string) {
+export async function createSession(userId: string, secure: boolean) {
   const token = randomBytes(32).toString('hex');
   await db.session.create({
     data: { id: tokenHash(token), userId, expiresAt: new Date(Date.now() + 7 * 86400000) },
@@ -32,7 +33,7 @@ export async function createSession(userId: string) {
   (await cookies()).set('maket_session', token, {
     httpOnly: true,
     sameSite: 'lax',
-    secure: process.env.APP_URL?.startsWith('https://') ?? false,
+    secure,
     path: '/',
     maxAge: 7 * 86400,
   });
@@ -45,6 +46,7 @@ export async function logout() {
   jar.delete('maket_workspace');
 }
 export async function sendAuthEmail(userId: string, email: string, kind: 'verify' | 'reset') {
+  const origin = process.env.PUBLIC_ORIGIN || 'http://localhost:3000';
   const raw = randomBytes(32).toString('hex');
   const id = tokenHash(raw);
   await db.authToken.create({
@@ -55,7 +57,7 @@ export async function sendAuthEmail(userId: string, email: string, kind: 'verify
       expiresAt: new Date(Date.now() + (kind === 'verify' ? 86400000 : 3600000)),
     },
   });
-  const url = `${process.env.APP_URL ?? 'http://localhost:3000'}/${kind}?token=${raw}`;
+  const url = `${new URL(origin).origin}${appPath(`/${kind}`)}?token=${raw}`;
   if (process.env.MAIL_WEBHOOK_URL) {
     if (!process.env.MAIL_WEBHOOK_URL.startsWith('https://'))
       throw new Error('Mail webhook must use HTTPS');

@@ -1,12 +1,15 @@
 import 'dotenv/config';
 import pg from 'pg';
+import { databaseConfig } from './database-config.mjs';
 import { readdir, readFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 // Apply reviewed SQL migrations atomically. Independent of Prisma's native engine downloads.
-const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
+const { connectionString, schema } = databaseConfig();
+const client = new pg.Client({ connectionString });
 try {
   await client.connect();
   await client.query('SELECT pg_advisory_lock(718219401)');
+  await client.query(`CREATE SCHEMA IF NOT EXISTS "${schema}"`);
   await client.query(
     'CREATE TABLE IF NOT EXISTS "_maket_migrations" (name TEXT PRIMARY KEY, checksum TEXT NOT NULL, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW())',
   );

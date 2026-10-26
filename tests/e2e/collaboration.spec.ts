@@ -1,11 +1,13 @@
+import { databaseConfig } from '../../scripts/database-config.mjs';
 import 'dotenv/config';
 import { test, expect, type APIRequestContext } from '@playwright/test';
 import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { randomBytes, randomUUID, scryptSync } from 'node:crypto';
 import { builtinNotation } from '../../src/lib/notation';
+const { connectionString, schema } = databaseConfig();
 const db = new PrismaClient({
-  adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL }),
+  adapter: new PrismaPg({ connectionString }, { schema }),
 });
 const emails: string[] = [];
 async function login(request: APIRequestContext, name: string) {

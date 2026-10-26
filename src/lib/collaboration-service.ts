@@ -1,3 +1,4 @@
+import { databaseConfig } from '../../scripts/database-config.mjs';
 import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { z } from 'zod';
@@ -13,11 +14,12 @@ import {
 } from './workspace-permissions';
 
 // Separate pool: waiting for the workspace gate must not exhaust the application's pool.
+const { connectionString, schema } = databaseConfig();
 const globalGate = globalThis as unknown as { collaborationGate?: PrismaClient };
 const gate =
   globalGate.collaborationGate ??
   new PrismaClient({
-    adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL, max: 4 }),
+    adapter: new PrismaPg({ connectionString, max: 4 }, { schema }),
   });
 if (process.env.NODE_ENV !== 'production') globalGate.collaborationGate = gate;
 export async function workspaceGate<T>(spaceId: string, run: () => Promise<T>): Promise<T> {

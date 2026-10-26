@@ -1,4 +1,5 @@
 'use client';
+import { appPath } from '@/lib/base-path';
 import { useEditLease, LeaseNotice } from './collaboration';
 import { useEffect, useId, useState } from 'react';
 import { Trash2 } from 'lucide-react';
@@ -341,7 +342,8 @@ export function RelationEditor({
               {usages.length ? (
                 usages.map((u) => (
                   <li key={u.diagram.id}>
-                    <a href={`/diagrams/${u.diagram.id}`}>{u.diagram.name}</a> · {u.count} стрелок
+                    <a href={appPath(`/diagrams/${u.diagram.id}`)}>{u.diagram.name}</a> · {u.count}{' '}
+                    стрелок
                   </li>
                 ))
               ) : (

@@ -1,4 +1,5 @@
 'use client';
+import { appPath } from '@/lib/base-path';
 import { useState } from 'react';
 import { Check, ChevronDown, Plus, Workflow } from 'lucide-react';
 import { api } from '@/lib/client';
@@ -48,7 +49,7 @@ export function WorkspaceSwitcher({
             {items.map((item) => (
               <a
                 key={item.id}
-                href={`/api/workspaces/${item.id}/open`}
+                href={appPath(`/api/workspaces/${item.id}/open`)}
                 aria-current={item.id === currentId ? 'true' : undefined}
               >
                 {item.name}
@@ -83,7 +84,7 @@ export function WorkspaceSwitcher({
           {created ? (
             <>
               <p>«{created.name}» готова к работе. В ней пока нет объектов и диаграмм.</p>
-              <a className="primary" href={`/api/workspaces/${created.id}/open`}>
+              <a className="primary" href={appPath(`/api/workspaces/${created.id}/open`)}>
                 Открыть рабочую область
               </a>
             </>

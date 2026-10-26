@@ -1,4 +1,5 @@
 'use client';
+import { appPath } from '@/lib/base-path';
 import { useEditLease, LeaseNotice } from './collaboration';
 import { TreeContextMenu } from './tree-context-menu';
 import { HidePanel } from './workspace-panels';
@@ -403,7 +404,7 @@ export function ObjectEditor({
             <div className="form-stack">
               {usages.length ? (
                 usages.map((u) => (
-                  <a key={u.diagram.id} href={`/diagrams/${u.diagram.id}`}>
+                  <a key={u.diagram.id} href={appPath(`/diagrams/${u.diagram.id}`)}>
                     {u.diagram.name} · {u.count} представлений
                   </a>
                 ))
@@ -929,7 +930,7 @@ export function ObjectTree({
                 title={`${o.name} · Родитель: ${entities.find((p) => p.id === o.parentId)?.name ?? 'Корень пространства'}`}
                 onClick={() => {
                   const d = diagrams.find((d) => d.entityId === o.id);
-                  if (d) window.location.assign(`/solutions?diagram=${d.id}`);
+                  if (d) window.location.assign(appPath(`/solutions?diagram=${d.id}`));
                   else if (relationIds.has(o.id)) onRelationLocate?.(o.id);
                   else onLocate(o.id);
                 }}

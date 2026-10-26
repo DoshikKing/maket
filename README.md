@@ -32,7 +32,7 @@
 ```bash
 npm ci
 cp .env.example .env
-# Если PostgreSQL уже работает, укажите его DATABASE_URL и пропустите Compose.
+# Если PostgreSQL уже работает, заполните POSTGRES_HOST/PORT/USER/PASSWORD/DB/SCHEMA и пропустите Compose.
 docker compose up -d --wait
 npm run db:generate
 npm run db:migrate
@@ -74,7 +74,7 @@ unset TEST_USER_PASSWORD
 
 Пароль должен содержать 10–128 символов. Почта нового пользователя сразу подтверждена, вход — через обычную форму. Пароль хранится как scrypt-хеш и не выводится скриптом. Повторный запуск не меняет существующий аккаунт, его пароль или статус подтверждения.
 
-Для автоматизации можно передать пароль через `TEST_USER_PASSWORD` или стандартный ввод с `--password-stdin`. Без аргументов используется `test@example.com`; email и имя также можно задать через `TEST_USER_EMAIL` и `TEST_USER_NAME`. Команда работает с БД из `DATABASE_URL` / `.env`. Справка: `npm run user:create-test -- --help`.
+Для автоматизации можно передать пароль через `TEST_USER_PASSWORD` или стандартный ввод с `--password-stdin`. Без аргументов используется `test@example.com`; email и имя также можно задать через `TEST_USER_EMAIL` и `TEST_USER_NAME`. Команда работает с БД из полей `POSTGRES_*` в `.env`. Справка: `npm run user:create-test -- --help`.
 
 ## Проверки
 
@@ -98,8 +98,8 @@ PLAYWRIGHT_CHROMIUM_EXECUTABLE=/usr/bin/chromium npm run test:e2e
 
 Регистрация работает по коду приглашения из логов приложения, без отправки писем. Для восстановления пароля через почту дополнительно задайте:
 
-- `DATABASE_URL`: строка подключения PostgreSQL, с TLS при удалённом подключении;
-- `APP_URL`: публичный HTTPS origin приложения без завершающего `/`;
+- `PUBLIC_ORIGIN`: канонический HTTPS origin для ссылок восстановления, без подпути;
+- `APP_URL`: только подпуть (`/maket` или пустое значение), не URL сайта;
 - `MAIL_WEBHOOK_URL`: HTTPS endpoint вашего почтового сервиса;
 - `MAIL_WEBHOOK_TOKEN`: секрет авторизации сервиса.
 
@@ -209,4 +209,6 @@ API создания: `POST /api/objects` с `name`, `baseId`, `derivation: "inh
 
 ## Docker на сервере
 
-Production-образ, PostgreSQL, автоматические миграции, `APP_URL` через `.env.production`, резервное копирование и обновление: [инструкция развёртывания](docs/deployment.md). Стандартные блок-схема, BPMN и UML доступны автоматически. Локальный `compose.yaml` остаётся без изменений.
+Production-образ, PostgreSQL, автоматические миграции, `APP_URL` через `.env.production`, резервное копирование и обновление: [инструкция развёртывания](docs/deployment.md). Стандартные блок-схема, BPMN и UML доступны автоматически. Локальный `compose.yaml` запускает только PostgreSQL.
+
+Для `/maket` задайте `APP_URL=/maket` и используйте [фрагмент Nginx](deploy/nginx/maket.conf). Параметры БД задаются отдельными `POSTGRES_*`; вручную собирать URL подключения не нужно.

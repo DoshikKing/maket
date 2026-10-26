@@ -1,3 +1,5 @@
+import { requestOrigin } from '@/lib/request-origin';
+import { appPath } from '@/lib/base-path';
 import { matchesInvitationCode } from '@/lib/invitation';
 import { changedDiagramTargets } from '@/lib/diagram-merge';
 import { modelDiagramSchema } from '@/lib/model';
@@ -117,7 +119,7 @@ async function handle(req: NextRequest, context: { params: Promise<{ path: strin
     const [resource, id, action] = path;
     const method = req.method;
     if (method !== 'GET') {
-      const expected = new URL(process.env.APP_URL ?? req.url).origin;
+      const expected = requestOrigin(req);
       const origin = req.headers.get('origin');
       if (origin && origin !== expected) fail(403, 'Недопустимый источник запроса');
       if (req.headers.get('sec-fetch-site') === 'cross-site')
@@ -184,13 +186,16 @@ async function handle(req: NextRequest, context: { params: Promise<{ path: strin
             403,
             'Аккаунт не активирован. Завершите регистрацию по коду приглашения с прежним паролем.',
           );
-        await createSession(u.id);
+        await createSession(u.id, requestOrigin(req).startsWith('https://'));
         return json({ ok: true });
       }
       if (id === 'resend' && method === 'POST')
         fail(410, 'Подтверждение почты отключено. Используйте код приглашения.');
       if (id === 'recover' && method === 'POST') {
-        if (process.env.NODE_ENV === 'production' && !process.env.MAIL_WEBHOOK_URL)
+        if (
+          process.env.NODE_ENV === 'production' &&
+          (!process.env.MAIL_WEBHOOK_URL || !process.env.PUBLIC_ORIGIN)
+        )
           fail(503, 'Восстановление по почте не настроено. Обратитесь к администратору.');
         const { email } = credentials.pick({ email: true }).parse(await body(req));
         if (await limited(`${id}:${email}`, 5)) fail(429, 'Слишком много запросов');
@@ -265,12 +270,12 @@ async function handle(req: NextRequest, context: { params: Promise<{ path: strin
       if (action === 'open' && method === 'GET') {
         const response = new NextResponse(null, {
           status: 303,
-          headers: { Location: '/solutions' },
+          headers: { Location: appPath('/solutions') },
         });
         response.cookies.set('maket_workspace', area.id, {
           httpOnly: true,
           sameSite: 'lax',
-          secure: process.env.APP_URL?.startsWith('https://') ?? false,
+          secure: requestOrigin(req).startsWith('https://'),
           path: '/',
           maxAge: 365 * 86400,
         });
@@ -383,7 +388,7 @@ async function handle(req: NextRequest, context: { params: Promise<{ path: strin
         }),
         db.session.deleteMany({ where: { userId: user.id } }),
       ]);
-      await createSession(user.id);
+      await createSession(user.id, requestOrigin(req).startsWith('https://'));
       return json({ ok: true });
     }
     if (resource === 'notations') {
@@ -562,7 +567,7 @@ async function handle(req: NextRequest, context: { params: Promise<{ path: strin
       if (action === 'share') {
         const sharing = (value: typeof object) => ({
           enabled: value.shareEnabled,
-          path: value.shareToken ? `/view/object/${value.id}/${value.shareToken}` : null,
+          path: value.shareToken ? appPath(`/view/object/${value.id}/${value.shareToken}`) : null,
         });
         if (method === 'GET') return json(sharing(object));
         if (method === 'POST') {
@@ -686,7 +691,7 @@ async function handle(req: NextRequest, context: { params: Promise<{ path: strin
         if (method === 'GET')
           return json({
             enabled: d.shareEnabled,
-            path: d.shareToken ? `/view/${d.shareToken}` : null,
+            path: d.shareToken ? appPath(`/view/${d.shareToken}`) : null,
           });
         if (method === 'POST') {
           const input = z
@@ -708,7 +713,7 @@ async function handle(req: NextRequest, context: { params: Promise<{ path: strin
           });
           return json({
             enabled: updated.shareEnabled,
-            path: updated.shareToken ? `/view/${updated.shareToken}` : null,
+            path: updated.shareToken ? appPath(`/view/${updated.shareToken}`) : null,
           });
         }
         fail(405, 'Метод не поддерживается');
@@ -849,7 +854,7 @@ async function scopedHandle(req: NextRequest, context: { params: Promise<{ path:
       if (write) {
         const origin = req.headers.get('origin');
         if (
-          (origin && origin !== new URL(process.env.APP_URL ?? req.url).origin) ||
+          (origin && origin !== requestOrigin(req)) ||
           req.headers.get('sec-fetch-site') === 'cross-site'
         )
           fail(403, 'Недопустимый источник запроса');

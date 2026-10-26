@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { databaseConfig } from './database-config.mjs';
 import { randomBytes, randomUUID, scrypt as scryptCallback } from 'node:crypto';
 import { promisify, parseArgs } from 'node:util';
 import { PrismaClient } from '@prisma/client';
@@ -13,7 +14,7 @@ npm run user:create-test -- --email test@example.com --name "Тестовый п
 Минимум 10, максимум 128 символов. Пароль не выводится в журнал.
 Email по умолчанию: test@example.com; можно задать TEST_USER_EMAIL.
 Имя по умолчанию: Тестовый пользователь; можно задать TEST_USER_NAME.
-Используется DATABASE_URL из окружения или .env.
+Используются POSTGRES_HOST/PORT/USER/PASSWORD/DB/SCHEMA из окружения или .env.
 Существующий аккаунт не изменяется, включая пароль и статус подтверждения.`;
 
 let db;
@@ -64,12 +65,12 @@ try {
         'Проверьте email, имя (1–100 символов) и пароль (10–128 символов). Задайте TEST_USER_PASSWORD или --password-stdin.',
       );
     }
-    if (!process.env.DATABASE_URL) throw new Error('Задайте DATABASE_URL в окружении или .env.');
+    const { connectionString, schema } = databaseConfig();
     const salt = randomBytes(16).toString('hex');
     // Same scrypt parameters and salt:hash format as src/lib/auth.ts.
     const hash = await promisify(scryptCallback)(input.data.password, salt, 64);
     db = new PrismaClient({
-      adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL }),
+      adapter: new PrismaPg({ connectionString }, { schema }),
     });
     const id = randomUUID();
     const user = await db.user.upsert({

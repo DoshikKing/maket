@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import { randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { setTimeout } from 'node:timers/promises';
@@ -29,10 +30,13 @@ const portIndex = process.argv.indexOf('--port');
 const port = portIndex >= 0 ? process.argv[portIndex + 1] : process.env.PORT || '3000';
 while (!stopping) {
   try {
-    const response = await fetch(`http://127.0.0.1:${port}/api/health`, {
-      signal: AbortSignal.timeout(2000),
-      headers: { 'X-Maket-Startup': startupId },
-    });
+    const response = await fetch(
+      `http://127.0.0.1:${port}${process.env.APP_URL || ''}/api/health`,
+      {
+        signal: AbortSignal.timeout(2000),
+        headers: { 'X-Maket-Startup': startupId },
+      },
+    );
     if (response.ok && response.headers.get('X-Maket-Startup') === startupId && !stopping) {
       console.info(`[maket invite] ${inviteCode}`);
       break;

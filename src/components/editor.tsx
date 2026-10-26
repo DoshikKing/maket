@@ -1,4 +1,5 @@
 'use client';
+import { appPath } from '@/lib/base-path';
 import { mergeDiagramState, DiagramConflict } from '@/lib/diagram-merge';
 import { useEditLease, LeaseNotice } from './collaboration';
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
@@ -1648,7 +1649,7 @@ function Editor({ initial }: { initial: Diagram }) {
               void flush().then((ok) => {
                 if (ok)
                   window.location.assign(
-                    `/solutions?diagram=${diagramId}&element=${encodeURIComponent(id)}`,
+                    appPath(`/solutions?diagram=${diagramId}&element=${encodeURIComponent(id)}`),
                   );
               });
               return;
