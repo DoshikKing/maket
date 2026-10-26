@@ -263,3 +263,51 @@ export function layerOffsets(heights: number[]) {
     return offset;
   });
 }
+
+export type ObjectFootprint = {
+  id: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  layer?: number;
+};
+// The camera looks towards +x and -y. Compare footprints, not screen centres:
+// a long background object can have its centre below a small foreground object.
+export function objectPaintOrder(objects: ObjectFootprint[]) {
+  const sorted = [...objects].sort(
+    (a, b) =>
+      (a.layer ?? 0) - (b.layer ?? 0) ||
+      a.y + a.height / 2 - a.x - a.width / 2 - (b.y + b.height / 2 - b.x - b.width / 2) ||
+      a.id.localeCompare(b.id),
+  );
+  const behind = new Map(sorted.map((a) => [a.id, new Set<string>()]));
+  const bounds = (a: ObjectFootprint) => ({
+    left: a.x + a.y,
+    right: a.x + a.y + a.width + a.height,
+    top: (a.y - a.x - a.width) / 4 - OBJECT_DEPTH,
+    bottom: (a.y + a.height - a.x) / 4,
+  });
+  // ponytail: pairwise occlusion suits the current object limit; use spatial buckets for thousands of objects.
+  for (let i = 0; i < sorted.length; i++) {
+    const a = sorted[i],
+      pa = bounds(a);
+    for (const b of sorted.slice(i + 1)) {
+      const pb = bounds(b);
+      if (pa.right <= pb.left || pb.right <= pa.left || pa.bottom <= pb.top || pb.bottom <= pa.top)
+        continue;
+      const aBehind = a.x >= b.x + b.width || a.y + a.height <= b.y;
+      const bBehind = b.x >= a.x + a.width || b.y + b.height <= a.y;
+      if (aBehind !== bBehind) behind.get(aBehind ? b.id : a.id)!.add(aBehind ? a.id : b.id);
+    }
+  }
+  const order: string[] = [];
+  while (sorted.length) {
+    // Intersecting/cyclic footprints have no single physical paint order; retain the stable layer/depth order.
+    const index = sorted.findIndex((a) => behind.get(a.id)!.size === 0);
+    const [next] = sorted.splice(index < 0 ? 0 : index, 1);
+    order.push(next.id);
+    for (const dependencies of behind.values()) dependencies.delete(next.id);
+  }
+  return order;
+}

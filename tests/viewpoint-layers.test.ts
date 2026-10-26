@@ -7,6 +7,7 @@ import {
   UNASSIGNED_LAYER,
   diagramLayerLayout,
   objectPrism,
+  objectPaintOrder,
   OBJECT_DEPTH,
 } from '../src/lib/viewpoint-layers';
 import type { Structure } from '../src/lib/structure';
@@ -254,4 +255,19 @@ it('keeps every layer below the full bounds of the previous layer', () => {
   for (let i = 1; i < heights.length; i++)
     expect(offsets[i]).toBeGreaterThan(offsets[i - 1] + heights[i - 1]);
   expect(layerOffsets(heights)).toEqual(offsets);
+});
+
+it('paints intersecting projections back-to-front independently of creation order and object size', () => {
+  const front = { id: 'front', x: 0, y: 300, width: 180, height: 80 };
+  const back = { id: 'back', x: 200, y: 0, width: 20, height: 1000 };
+  // The long rear object's centre is closer on screen, but its whole footprint is behind the front object.
+  expect(objectPaintOrder([front, back])).toEqual(['back', 'front']);
+  expect(objectPaintOrder([back, front])).toEqual(['back', 'front']);
+  const behindY = { id: 'behind-y', x: -500, y: 0, width: 20, height: 20 };
+  const aheadY = { id: 'ahead-y', x: -600, y: 40, width: 1000, height: 20 };
+  expect(objectPaintOrder([aheadY, behindY])).toEqual(['behind-y', 'ahead-y']);
+  const overlapping = { ...front, id: 'overlapping', layer: 2 };
+  expect(objectPaintOrder([overlapping, front])).toEqual(['front', 'overlapping']);
+  const chain = [front, back, { ...front, id: 'nearest', x: -200 }];
+  expect(objectPaintOrder(chain)).toEqual(objectPaintOrder([...chain].reverse()));
 });

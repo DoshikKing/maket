@@ -27,6 +27,8 @@ import {
   layerConnectionRoute,
   diagramLayerLayout,
   objectPrism,
+  objectPaintOrder,
+  type ObjectFootprint,
   OBJECT_DEPTH,
   DIAGRAM_DEPTH,
   type DiagramLayerLayout,
@@ -484,11 +486,15 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
     const active = graph.groups.flatMap((group, i) => (empty || group.diagrams.length ? [i] : []));
     const positions = layerOffsets(active.map((i) => plans[i].layout.height));
     const offsets = new Map(active.map((i, n) => [graph.groups[i].id, positions[n]]));
+    // Reserve enough depth slots for every object, including large imported diagrams.
+    const stride = [...layouts.values()].reduce((count, tile) => count + tile.nodes.length, 4);
+    const layerBases = new Map<string, number>();
     for (const [index, group] of graph.groups.entries()) {
       const { layout } = plans[index],
         planeId = `layer:${group.id}`;
       const layerTop = offsets.get(group.id) ?? 0,
-        base = (graph.groups.length - index) * 10;
+        base = (graph.groups.length - index) * stride;
+      layerBases.set(group.id, base);
       planes.set(group.id, {
         origin: layerTop + layout.surfaceWidth / 4 + 25,
         depth: layout.depth,
@@ -522,7 +528,7 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
         position: { x: layout.planeWidth + 85, y: layerTop },
         draggable: false,
         selectable: false,
-        zIndex: 10000,
+        zIndex: (graph.groups.length + 1) * stride,
         width: 300,
         height: 80,
         data: {
@@ -533,6 +539,7 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
         },
         style: { width: 300, height: 80 },
       });
+      const footprints: ObjectFootprint[] = [];
       group.diagrams.forEach((diagram, i) => {
         if (!items.includes(diagram)) return;
         const nodeId = `diagram:${diagram.id}`;
@@ -560,6 +567,15 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
           objects.set(entityId, instances);
           const u = item.node.position.x - tile.minX,
             v = item.node.position.y - tile.minY;
+          const originY = position.y + tile.width / 4;
+          footprints.push({
+            id,
+            x: position.x / 2 - 2 * originY + u,
+            y: position.x / 2 + 2 * originY + v,
+            width: item.appearance.width,
+            height: item.appearance.height,
+            layer: item.node.layer,
+          });
           nodes.push({
             id,
             type: 'object',
@@ -585,6 +601,11 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
           });
         });
       });
+      const ranks = new Map(objectPaintOrder(footprints).map((id, rank) => [id, base + 3 + rank]));
+      for (const node of nodes) {
+        const rank = ranks.get(node.id);
+        if (rank !== undefined) node.zIndex = rank;
+      }
     }
     const endpoint = (c: LayerConnection, side: 'source' | 'target') => {
       const location = locations.get(c[side]);
@@ -703,7 +724,12 @@ function Scene({ space, diagramId }: { space: LayerStructure; diagramId?: string
           labelStyle: { fill: 'var(--text)', fontSize: 11 },
           labelBgStyle: { fill: 'var(--panel)' },
           labelBgPadding: [6, 4],
-          zIndex: Math.max(byId.get(source)!.zIndex!, byId.get(target)!.zIndex!) - 1,
+          // Connections sit above diagram surfaces but below all object prisms on the layer.
+          zIndex:
+            Math.max(
+              layerBases.get(locations.get(c.source)!.layerId)!,
+              layerBases.get(locations.get(c.target)!.layerId)!,
+            ) + 2,
           selected:
             selection?.kind === 'connection' && connections.some((c) => c.id === selection.id),
         } as LayerEdge,

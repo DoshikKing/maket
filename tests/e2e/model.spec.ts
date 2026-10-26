@@ -4873,3 +4873,82 @@ test('object sharing: ID links, readonly properties, inherited updates and persi
     await anonymous.dispose();
   }
 });
+
+test('browser: 2.5D foreground objects occlude later-created rear objects and remain in depth order when selected', async ({
+  page,
+  request,
+}) => {
+  await login(request, page);
+  let d = await create(request, 'Перекрытия 2.5D');
+  d = await place(request, d, (await object(request, 'Ближний объект')).id);
+  d = await place(request, d, (await object(request, 'Дальний объект')).id);
+  const frontId = d.document.nodes[0].id,
+    backId = d.document.nodes[1].id;
+  d = await save(request, d, {
+    ...d.document,
+    nodes: d.document.nodes.map((n, i) => ({
+      ...n,
+      position: { x: i * 200, y: 180 },
+      size: { width: 180, height: 80 },
+    })),
+  });
+  await page.goto('/solutions?layers=1');
+  const front = page.locator(`[data-layer-object="${frontId}"]`),
+    back = page.locator(`[data-layer-object="${backId}"]`);
+  const zoom = () =>
+    page
+      .locator('.viewpoint-layers-canvas .react-flow__viewport')
+      .evaluate((el) => Number((el as HTMLElement).style.transform.match(/scale\(([^)]+)\)/)![1]));
+  while ((await zoom()) < 0.85) await page.locator('.react-flow__controls-zoomin').click();
+  await expect(front).toBeVisible();
+  await front.dispatchEvent('click');
+  await page
+    .getByRole('region', { name: 'Выбранный объект слоя' })
+    .getByRole('button', { name: 'Фокусировать объект' })
+    .click();
+  await expect
+    .poll(async () => {
+      const box = (await front.boundingBox())!,
+        canvas = (await page.locator('.viewpoint-layers-canvas').boundingBox())!;
+      return box.x > canvas.x && box.x + box.width < canvas.x + canvas.width;
+    })
+    .toBe(true);
+  const depth = async () => [
+    Number(await front.locator('..').evaluate((el) => getComputedStyle(el).zIndex)),
+    Number(await back.locator('..').evaluate((el) => getComputedStyle(el).zIndex)),
+  ];
+  const order = await depth();
+  expect(order[0]).toBeGreaterThan(order[1]);
+  const overlap = await page.evaluate(
+    ({ frontId, backId }) => {
+      const front = document.querySelector(`[data-layer-object="${frontId}"]`)!;
+      const box = front.getBoundingClientRect();
+      for (let y = Math.max(0, box.top); y < Math.min(innerHeight, box.bottom); y += 2) {
+        for (let x = Math.max(0, box.left); x < Math.min(innerWidth, box.right); x += 2) {
+          const ids = document.elementsFromPoint(x, y).flatMap((el) => {
+            const id = el.closest('[data-layer-object]')?.getAttribute('data-layer-object');
+            return id ? [id] : [];
+          });
+          if (ids.includes(frontId) && ids.includes(backId)) return { x, y, top: ids[0] };
+        }
+      }
+      return null;
+    },
+    { frontId, backId },
+  );
+  expect(overlap).not.toBeNull();
+  expect(overlap!.top).toBe(frontId);
+  await page.mouse.click(overlap!.x, overlap!.y);
+  await expect(front).toHaveClass(/is-selected/);
+  expect(await depth()).toEqual(order);
+  await back.dispatchEvent('click');
+  await expect(back).toHaveClass(/is-selected/);
+  expect(await depth()).toEqual(order);
+  await page.getByRole('button', { name: 'Сбросить выделение', exact: true }).click();
+  await page.locator('.react-flow__controls-zoomin').click();
+  expect(await depth()).toEqual(order);
+  await page.locator('.react-flow__controls-zoomout').click();
+  expect(await depth()).toEqual(order);
+  await page.mouse.move(10, 10);
+  await page.screenshot({ path: '/tmp/maket-2.5d-occlusion.png' });
+});
