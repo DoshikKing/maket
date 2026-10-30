@@ -2,6 +2,8 @@
 
 Нужны Docker Engine с BuildKit и Docker Compose v2. Production-стек отделён от локального `compose.yaml`: `compose.prod.yaml` запускает PostgreSQL 17, одноразовый сервис миграций и Next.js standalone. Приложение работает от пользователя `node`, без root. Node.js и npm на сервере устанавливать не нужно.
 
+Dockerfile использует встроенный frontend современного BuildKit и не скачивает отдельный `docker/dockerfile` через директиву `syntax`. Если сборка сообщает `TLS handshake timeout` при обращении к `auth.docker.io`, это проблема соединения Docker daemon с Docker Hub. Для базовых образов Node.js и PostgreSQL доступ к registry всё равно нужен; проверьте соединение командой `docker pull node:24-bookworm-slim` и настройки прокси Docker daemon. Отключать проверку TLS не требуется.
+
 ## Первый запуск
 
 ```bash

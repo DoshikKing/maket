@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1
 FROM node:24-bookworm-slim AS dependencies
 WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
