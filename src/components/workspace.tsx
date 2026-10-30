@@ -11,6 +11,7 @@ import {
   ChevronRight,
   PanelLeftClose,
   PanelLeftOpen,
+  BookOpen,
 } from 'lucide-react';
 import { api } from '@/lib/client';
 import { CollaborationProvider, WorkspaceAccessButton } from './collaboration';
@@ -129,6 +130,16 @@ export function Workspace({
                   {pathname === href && <ChevronRight size={15} className="nav-chevron" />}
                 </Link>
               ))}
+              <Link
+                href="/wiki"
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="Вики и справка (откроется в новой вкладке)"
+                title="Вики и справка — новая вкладка"
+              >
+                <BookOpen size={19} />
+                <span className="nav-label">Вики и справка</span>
+              </Link>
             </nav>
             <div className="profile">
               <span className="avatar">{user.name.slice(0, 1).toUpperCase()}</span>
