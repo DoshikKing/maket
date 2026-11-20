@@ -28,9 +28,10 @@ export async function api<T = unknown>(path: string, method = 'GET', body?: unkn
   return data;
 }
 export function download(name: string, data: unknown) {
-  const url = URL.createObjectURL(
-    new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }),
-  );
+  downloadBlob(name, new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
+}
+export function downloadBlob(name: string, blob: Blob) {
+  const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
   a.download = name;
