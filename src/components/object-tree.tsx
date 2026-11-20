@@ -1144,7 +1144,7 @@ export function ObjectTree({
       <input
         aria-label="Поиск объектов"
         className="object-search"
-        placeholder="Найти объект…"
+        placeholder="Название или ID объекта…"
         value={query}
         onChange={(e) => setQuery(e.target.value)}
       />

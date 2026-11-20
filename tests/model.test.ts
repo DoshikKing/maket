@@ -567,6 +567,7 @@ it('finds participant ancestors for relation search and exits cyclic relation pa
     { ...object, id: 'root', name: 'Корень' },
     { ...object, id: 'a', parentId: 'root', name: 'Участник' },
     { ...object, id: 'unrelated', name: 'Другой объект' },
+    { ...object, id: 'technical_AbC123', parentId: 'a', name: 'Глубокий объект' },
   ];
   const relations = [
     {
@@ -589,6 +590,18 @@ it('finds participant ancestors for relation search and exits cyclic relation pa
   expect(treeObjectPath('r1', objects, relations)).toEqual(['root', 'a', 'r2', 'r1']);
   expect(visibleTreeEntities('Искомая связь', objects, relations)).toEqual(
     new Set(['r1', 'r2', 'a', 'root']),
+  );
+  expect(visibleTreeEntities(' R1 ', objects, relations)).toEqual(
+    new Set(['r1', 'r2', 'a', 'root']),
+  );
+  expect(visibleTreeEntities('UNREL', objects, relations)).toEqual(new Set(['unrelated']));
+  for (const query of ['technical_AbC123', ' abc123 '])
+    expect(visibleTreeEntities(query, objects, relations)).toEqual(
+      new Set(['technical_AbC123', 'a', 'root']),
+    );
+  expect(visibleTreeEntities('missing-id', objects, relations)).toEqual(new Set());
+  expect(visibleTreeEntities('', objects, relations)).toEqual(
+    new Set(['root', 'a', 'unrelated', 'technical_AbC123', 'r1', 'r2']),
   );
   expect(treeObjectPath('r1', [], relations)).toEqual([]);
 });

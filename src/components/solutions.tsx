@@ -534,7 +534,7 @@ export function SolutionsPage() {
               </div>
               <input
                 aria-label="Поиск в решениях"
-                placeholder="Поиск в модели…"
+                placeholder="Название или ID элемента…"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
               />

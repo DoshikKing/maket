@@ -70,13 +70,14 @@ export function visibleTreeEntities(
   objects: ModelObject[],
   relations: ModelRelation[],
 ): Set<string> {
+  const search = query.trim().toLowerCase();
   const entities = new Map([...objects, ...relations].map((o) => [o.id, o]));
   const visible = new Set(
     [...entities.values()]
-      .filter((o) => o.name.toLowerCase().includes(query.toLowerCase()))
+      .filter((o) => o.name.toLowerCase().includes(search) || o.id.toLowerCase().includes(search))
       .map((o) => o.id),
   );
-  if (!query) return visible;
+  if (!search) return visible;
   const links = new Map(relations.map((r) => [r.id, r]));
   const pending = [...visible];
   while (pending.length) {
