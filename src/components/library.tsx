@@ -16,6 +16,7 @@ import {
   Layers,
 } from 'lucide-react';
 import { api, date, readJson } from '@/lib/client';
+import { importDrawio } from '@/lib/drawio-import';
 import { DiagramDocument } from '@/lib/notation';
 import {
   portableDiagramSchema,
@@ -59,6 +60,8 @@ export function LibraryPage() {
     [notations, setNotations] = useState<NotationItem[]>([]),
     [loading, setLoading] = useState(true),
     [error, setError] = useState(''),
+    [importWarnings, setImportWarnings] = useState<string[]>([]),
+    [importFolderId, setImportFolderId] = useState<string>(),
     [query, setQuery] = useState(''),
     [sort, setSort] = useState('recent'),
     [create, setCreate] = useState(false),
@@ -133,14 +136,34 @@ export function LibraryPage() {
           <input
             ref={file}
             type="file"
-            accept=".json"
+            accept=".json,.drawio,.xml"
             hidden
             onChange={async (e) => {
               const f = e.target.files?.[0];
               e.target.value = '';
               if (!f) return;
               setError('');
+              setImportWarnings([]);
+              setImportFolderId(undefined);
+              setBusy(true);
               try {
+                if (/\.(drawio|xml)$/i.test(f.name)) {
+                  const imported = await importDrawio(f);
+                  const result = await api<{ folder: { id: string }; diagrams: { id: string }[] }>(
+                    'diagram-imports',
+                    'POST',
+                    {
+                      folderName: imported.folderName,
+                      pages: imported.pages,
+                    },
+                  );
+                  if (imported.warnings.length) {
+                    setImportWarnings(imported.warnings);
+                    setImportFolderId(result.folder.id);
+                    await load();
+                  } else router.push(`/solutions?parent=${result.folder.id}`);
+                  return;
+                }
                 const raw = await readJson(f);
                 const document = portableDiagramSchema.parse(raw.document ?? raw);
                 const d = await api<Item>('diagrams', 'POST', {
@@ -153,10 +176,12 @@ export function LibraryPage() {
                 router.push(`/diagrams/${d.id}`);
               } catch (e) {
                 setError((e as Error).message);
+              } finally {
+                setBusy(false);
               }
             }}
           />
-          <button className="secondary" onClick={() => file.current?.click()}>
+          <button className="secondary" disabled={busy} onClick={() => file.current?.click()}>
             <Upload size={17} />
             Импорт
           </button>
@@ -169,6 +194,23 @@ export function LibraryPage() {
       {error && (
         <div className="error" role="alert">
           {error}
+        </div>
+      )}
+      {importWarnings.length > 0 && (
+        <div className="welcome-banner" role="status">
+          <div>
+            <strong>Импорт завершён</strong>
+            <ul>
+              {importWarnings.map((warning) => (
+                <li key={warning}>{warning}</li>
+              ))}
+            </ul>
+            {importFolderId && (
+              <Link className="text-link" href={`/solutions?parent=${importFolderId}`}>
+                Открыть папку импорта
+              </Link>
+            )}
+          </div>
         </div>
       )}
       {!loading && items.length === 0 && (

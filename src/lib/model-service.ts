@@ -348,6 +348,8 @@ export async function newDiagramInTransaction(
   ownerId: string,
   space: { id: string },
   input: Parameters<typeof newDiagram>[1],
+  importRootId?: string,
+  sharedImportIds?: Map<string, string>,
 ) {
   await tx.modelSpace.update({ where: { id: space.id }, data: { revision: { increment: 0 } } });
   if (
@@ -367,19 +369,32 @@ export async function newDiagramInTransaction(
     else {
       const imported = modelDiagramSchema.parse(input.document);
       valid(imported);
-      const relationIds = new Map((imported.relations ?? []).map((r) => [r.id, uuid()]));
+      const relationIds = new Map(
+        (imported.relations ?? []).map((r) => [r.id, sharedImportIds?.get(r.id) ?? uuid()]),
+      );
       const ids = new Map([
-        ...imported.objects.map((o) => [o.id, uuid()] as const),
+        ...imported.objects.map((o) => [o.id, sharedImportIds?.get(o.id) ?? uuid()] as const),
         ...relationIds,
       ]);
       const bindings = new Map(imported.bindings.map((b) => [b.id, uuid()]));
       const objects: ModelObject[] = [];
       for (const o of imported.objects) {
+        const existingId = sharedImportIds?.get(o.id);
+        if (existingId) {
+          objects.push(
+            snapshot(
+              await tx.modelObject.findFirstOrThrow({
+                where: { id: existingId, spaceId: space.id },
+              }),
+            ),
+          );
+          continue;
+        }
         objects.push(
           await createObject(tx, space.id, {
             id: ids.get(o.id),
             kind: o.kind === 'diagram' ? 'folder' : o.kind,
-            parentId: o.parentId ? ids.get(o.parentId) : null,
+            parentId: o.parentId ? ids.get(o.parentId) : (importRootId ?? null),
             name: o.name,
             description: o.description,
             attributes: o.attributes,
@@ -387,6 +402,7 @@ export async function newDiagramInTransaction(
             copiedFrom: { id: o.id, name: o.name },
           }),
         );
+        sharedImportIds?.set(o.id, ids.get(o.id)!);
       }
       const pending = [...(imported.relations ?? [])];
       const relations = [];
@@ -395,6 +411,20 @@ export async function newDiagramInTransaction(
         const i = pending.findIndex((r) => present.has(r.sourceId) && present.has(r.targetId));
         if (i < 0) reject(400, 'Цикл между участниками импортируемых связей');
         const [r] = pending.splice(i, 1);
+        const existingId = sharedImportIds?.get(r.id);
+        if (existingId) {
+          const existing = await tx.modelRelation.findFirstOrThrow({
+            where: { id: existingId, spaceId: space.id },
+          });
+          if (
+            existing.sourceId !== ids.get(r.sourceId) ||
+            existing.targetId !== ids.get(r.targetId)
+          )
+            reject(400, 'Участники одной связи отличаются между страницами импорта');
+          relations.push(relationSnapshot(existing));
+          present.add(r.id);
+          continue;
+        }
         relations.push(
           await createRelation(
             tx,
@@ -404,12 +434,13 @@ export async function newDiagramInTransaction(
               id: ids.get(r.id)!,
               sourceId: ids.get(r.sourceId)!,
               targetId: ids.get(r.targetId)!,
-              parentId: r.parentId ? ids.get(r.parentId) : null,
+              parentId: r.parentId ? ids.get(r.parentId) : (importRootId ?? null),
               copiedFrom: { id: r.id, name: r.name },
             },
             true,
           ),
         );
+        sharedImportIds?.set(r.id, ids.get(r.id)!);
         present.add(r.id);
       }
       document = {
@@ -476,6 +507,33 @@ export async function newDiagramInTransaction(
   await indexes(tx, d.id, document);
   await tx.modelSpace.update({ where: { id: space.id }, data: { revision: { increment: 1 } } });
   return { ...d, document };
+}
+export async function importDiagramFolder(
+  ownerId: string,
+  name: string,
+  pages: { name: string; document: ModelDocument }[],
+) {
+  const space = await ensureModel(ownerId);
+  return db.$transaction(
+    async (tx) => {
+      const folder = await createObject(tx, space.id, { kind: 'folder', name, parentId: null });
+      const diagrams = [];
+      const importedIds = new Map<string, string>();
+      for (const page of pages)
+        diagrams.push(
+          await newDiagramInTransaction(
+            tx,
+            ownerId,
+            space,
+            { ...page, parentId: folder.id },
+            folder.id,
+            importedIds,
+          ),
+        );
+      return { folder, diagrams: diagrams.map((d) => ({ id: d.id, name: d.name })) };
+    },
+    { timeout: 60000 },
+  );
 }
 async function checkBindings(
   tx: Tx,

@@ -42,6 +42,7 @@ import {
   getDiagram,
   listDiagrams,
   newDiagram,
+  importDiagramFolder,
   saveModelDiagram,
   duplicateModelDiagram,
   attachNotation,
@@ -679,6 +680,23 @@ async function handle(req: NextRequest, context: { params: Promise<{ path: strin
         );
       }
     }
+    if (resource === 'diagram-imports' && !id && method === 'POST') {
+      const input = z
+        .object({
+          folderName: nameSchema,
+          pages: z
+            .array(
+              z.object({
+                name: nameSchema,
+                document: modelDiagramSchema,
+              }),
+            )
+            .min(1)
+            .max(20),
+        })
+        .parse(await body(req));
+      return json(await importDiagramFolder(user.id, input.folderName, input.pages), 201);
+    }
     if (resource === 'diagrams') {
       if (method === 'GET' && !id) return json(await listDiagrams(user.id));
       if (method === 'POST' && !id) {
@@ -860,6 +878,7 @@ async function handle(req: NextRequest, context: { params: Promise<{ path: strin
   }
 }
 const workspaceResources = new Set([
+  'diagram-imports',
   'collaboration',
   'model',
   'objects',
@@ -1002,10 +1021,12 @@ async function scopedHandle(req: NextRequest, context: { params: Promise<{ path:
               collect(link);
             }
           }
-          collect(input);
+          if (resource !== 'diagram-imports') collect(input);
           if (
             access.elementIds.length &&
-            (resource === 'viewpoints' || (permission === 'create' && !targets.size))
+            (resource === 'viewpoints' ||
+              resource === 'diagram-imports' ||
+              (permission === 'create' && !targets.size))
           )
             fail(403, 'Действие требует доступа ко всему пространству');
           if (resource === 'diagrams' && id && permission === 'edit') {
