@@ -107,6 +107,7 @@ async function startRuntime({
     database: 'postgres',
     connectionTimeoutMillis: 5000,
   };
+  let databaseMessages = '';
   const database = new EmbeddedPostgres({
     databaseDir: dbDir,
     user: 'maket',
@@ -120,8 +121,11 @@ async function startRuntime({
       '--builtin-locale=C.UTF-8',
       '--locale=C',
     ],
-    postgresFlags: ['-h', '127.0.0.1', '-k', ''],
-    onLog: log,
+    postgresFlags: ['-h', '127.0.0.1', '-c', 'unix_socket_directories='],
+    onLog: (message) => {
+      databaseMessages = (databaseMessages + message).slice(-2000);
+      log(message);
+    },
     onError: (value) => log(String(value)),
   });
   let ready = false;
