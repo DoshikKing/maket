@@ -6,6 +6,15 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
+if (process.env.GITHUB_ACTIONS === 'true') {
+  process.on('uncaughtExceptionMonitor', (error) => {
+    const message = String(error?.stack ?? error)
+      .replace(/%/g, '%25')
+      .replace(/\r/g, '%0D')
+      .replace(/\n/g, '%0A');
+    console.error(`::error title=Desktop smoke::${message}`);
+  });
+}
 const require = createRequire(import.meta.url),
   { startRuntime, portableDirectory, childEnvironment } = require('./runtime.cjs');
 const version = require('./package.json').version;
