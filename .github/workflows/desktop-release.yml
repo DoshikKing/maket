@@ -43,7 +43,9 @@ jobs:
         run: node -e 'const v=require("./desktop/package.json").version;if(process.env.GITHUB_REF_NAME!==`desktop-v${v}`)throw new Error("Tag must match desktop/package.json version")'
       - run: npm ci
       - run: npm ci --prefix desktop
-      - run: npm test
+      - name: Web model unit tests (POSIX launcher)
+        if: runner.os == 'Linux'
+        run: npm test
       - run: npm --prefix desktop run build
       - run: npm --prefix desktop run smoke
       - run: npm --prefix desktop run dist

@@ -65,8 +65,8 @@ Workflow `.github/workflows/desktop-release.yml` собирает Windows, Linux
 Для нового выпуска измените версию в `desktop/package.json`, обновите `desktop/package-lock.json` и `desktop/RELEASE_NOTES.md`, закоммитьте и отправьте тег, совпадающий с версией:
 
 ```sh
-git tag desktop-v0.1.0
-git push origin desktop-v0.1.0
+git tag desktop-v0.1.1
+git push origin desktop-v0.1.1
 ```
 
 Ручной запуск workflow без тега создаёт Actions artifacts и не публикует релиз. Обновления устанавливаются пользователем; автоматического скачивания и замены приложения нет.

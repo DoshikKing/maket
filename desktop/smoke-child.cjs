@@ -1,5 +1,9 @@
 const { startRuntime } = require('./runtime.cjs');
-startRuntime({ dataDir: process.argv[2], serverDir: process.argv[3], version: '0.1.0' })
+startRuntime({
+  dataDir: process.argv[2],
+  serverDir: process.argv[3],
+  version: require('./package.json').version,
+})
   .then((runtime) => {
     process.send({ ready: true });
     process.on('message', async () => {

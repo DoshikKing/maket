@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
 const require = createRequire(import.meta.url),
   { startRuntime, portableDirectory, childEnvironment } = require('./runtime.cjs');
+const version = require('./package.json').version;
 const root = fileURLToPath(new URL('.', import.meta.url)),
   serverDir = path.join(root, '.build', 'server');
 const dataDir = await mkdtemp(path.join(tmpdir(), 'maket desktop test-'));
@@ -56,7 +57,7 @@ try {
   // A running web deployment's environment must never select the desktop database.
   const old = process.env.DATABASE_URL;
   process.env.DATABASE_URL = 'postgresql://invalid:invalid@127.0.0.1:1/do-not-use';
-  runtime = await startRuntime({ dataDir, serverDir, version: '0.1.0', log, onFailure });
+  runtime = await startRuntime({ dataDir, serverDir, version, log, onFailure });
   if (old === undefined) delete process.env.DATABASE_URL;
   else process.env.DATABASE_URL = old;
   assert.equal((await fetch(`${runtime.origin}/api/model`)).status, 403);
@@ -189,7 +190,7 @@ try {
   const settings = JSON.parse(await readFile(path.join(dataDir, 'desktop.json'), 'utf8'));
   settings.appVersion = '0.0.0';
   await writeFile(path.join(dataDir, 'desktop.json'), JSON.stringify(settings));
-  runtime = await startRuntime({ dataDir, serverDir, version: '0.1.0', log, onFailure });
+  runtime = await startRuntime({ dataDir, serverDir, version, log, onFailure });
   assert.equal(runtime.origin, origin, 'MCP endpoint remains stable after restart');
   assert.ok(
     (await api('model')).objects.some(
@@ -235,7 +236,7 @@ try {
     }
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
-  runtime = await startRuntime({ dataDir, serverDir, version: '0.1.0', log, onFailure });
+  runtime = await startRuntime({ dataDir, serverDir, version, log, onFailure });
   assert.ok(
     (await api('model')).objects.some((o) => o.id === object.id),
     'data survives an abrupt parent termination',
@@ -245,7 +246,7 @@ try {
   runtime = await startRuntime({
     dataDir,
     serverDir,
-    version: '0.1.0',
+    version,
     log,
     onFailure: (error) => log(error.message),
   });
@@ -261,7 +262,7 @@ try {
       t.unref();
     }),
   ]);
-  runtime = await startRuntime({ dataDir, serverDir, version: '0.1.0', log, onFailure });
+  runtime = await startRuntime({ dataDir, serverDir, version, log, onFailure });
   assert.ok(
     (await api('model')).objects.some((o) => o.id === object.id),
     'committed data survives database termination',
@@ -273,7 +274,7 @@ try {
   newer.appVersion = '99.0.0';
   await writeFile(path.join(dataDir, 'desktop.json'), JSON.stringify(newer));
   await assert.rejects(
-    startRuntime({ dataDir, serverDir, version: '0.1.0', log, onFailure }),
+    startRuntime({ dataDir, serverDir, version, log, onFailure }),
     /более новой версии/,
   );
   assert.equal(await readFile(path.join(dataDir, 'postgres', 'PG_VERSION'), 'utf8'), before);
