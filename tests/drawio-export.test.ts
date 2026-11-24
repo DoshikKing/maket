@@ -71,3 +71,25 @@ it('keeps object endpoint identities for newly drawn unsaved relations without i
   expect(edge).toContain('maket_target_id="original"');
   expect(edge).not.toContain('maket_relation_id=');
 });
+
+it('preserves common edge/shape stacking order in SVG and draw.io exports', async () => {
+  const { createElement } = await import('react');
+  const { layeredElements } = await import('../src/components/layered-elements');
+  const fixture = drawioFixture();
+  const d = projectDocument(fixture.document);
+  d.edges[0].layer = 100;
+  d.nodes[0].layer = -10;
+  const ordered = layeredElements(d, [
+    ...d.edges.map((e) => createElement('g', { key: e.id })),
+    ...d.nodes.map((n) => createElement('g', { key: n.id })),
+  ]);
+  expect(ordered[0].key).toBe(d.nodes[0].id);
+  expect(ordered.at(-1)?.key).toBe(d.edges[0].id);
+  const xml = await drawioXml(fixture.name, d, fixture.objects);
+  expect(xml.indexOf(`id="node_${d.nodes[0].id}"`)).toBeLessThan(
+    xml.indexOf(`id="edge_${d.edges[0].id}"`),
+  );
+  expect(xml.lastIndexOf('<object ')).toBe(
+    xml.indexOf(`id="edge_${d.edges[0].id}"`) - '<object '.length,
+  );
+});

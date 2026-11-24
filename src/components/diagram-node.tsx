@@ -27,10 +27,11 @@ export type ShapeData = {
 };
 export type ShapeNode = Node<ShapeData, 'notation'>;
 export const NodeActionsContext = createContext<{
+  editable: boolean;
   begin: (kind: 'resize' | 'text') => void;
   end: () => void;
   label: (id: string, text: string) => void;
-}>({ begin: () => {}, end: () => {}, label: () => {} });
+}>({ editable: false, begin: () => {}, end: () => {}, label: () => {} });
 export const DiagramNodeView = memo(function DiagramNodeView({
   id,
   data,
@@ -71,7 +72,7 @@ export const DiagramNodeView = memo(function DiagramNodeView({
         )
           return;
         e.stopPropagation();
-        if (active.current) return;
+        if (!actions.editable || active.current) return;
         active.current = true;
         setDraft(title);
         setEditing(true);
@@ -79,7 +80,7 @@ export const DiagramNodeView = memo(function DiagramNodeView({
       }}
     >
       <NodeResizer
-        isVisible={!!selected && !editing}
+        isVisible={actions.editable && !!selected && !editing}
         minWidth={40}
         minHeight={30}
         maxWidth={2000}

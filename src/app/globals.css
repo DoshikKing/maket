@@ -4365,3 +4365,54 @@ body {
   border: 1px solid var(--border);
   border-radius: 12px;
 }
+
+.editor-mode {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+}
+.editor-mode button {
+  border: 0;
+  white-space: nowrap;
+}
+.editor-mode button[aria-pressed='true'] {
+  background: var(--accent);
+  color: white;
+  opacity: 1;
+}
+.tree-context-menu kbd {
+  margin-left: auto;
+  padding-left: 14px;
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.shortcut-settings {
+  display: grid;
+  gap: 10px;
+}
+.shortcut-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(130px, 180px) auto;
+  align-items: center;
+  gap: 8px;
+}
+.shortcut-row input {
+  min-width: 0;
+  cursor: pointer;
+}
+@media (max-width: 650px) {
+  .shortcut-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .shortcut-row > span {
+    grid-column: 1 / -1;
+  }
+}
+.is-view .react-flow__handle {
+  visibility: hidden;
+  pointer-events: none;
+}

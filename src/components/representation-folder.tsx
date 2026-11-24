@@ -91,6 +91,7 @@ export function RepresentationFolder({
                 <Link
                   href={`/solutions?diagram=${r.diagramId}&element=${encodeURIComponent(r.id)}`}
                   title="Показать представление на диаграмме"
+                  data-command="locate"
                   aria-label={`Показать представление ${r.name}`}
                   onClick={(e) => {
                     if (onLocate) {

@@ -1,3 +1,4 @@
+import { shortcutsSchema } from './shortcuts';
 import { manageMcpKeys } from '@/lib/mcp-keys';
 import { requestOrigin } from '@/lib/request-origin';
 import { readJsonBody as body } from '@/lib/http-body';
@@ -370,13 +371,20 @@ async function handle(req: NextRequest, context: { params: Promise<{ path: strin
           theme: z.enum(['light', 'dark']),
           snapToGrid: z.boolean(),
           autosave: z.boolean(),
+          shortcuts: shortcutsSchema.optional(),
         })
         .parse(await body(req));
       const u = await db.user.update({
         where: { id: user.id },
         data: {
           name: input.name,
-          settings: { theme: input.theme, snapToGrid: input.snapToGrid, autosave: input.autosave },
+          settings: {
+            ...(user.settings as Record<string, unknown>),
+            theme: input.theme,
+            snapToGrid: input.snapToGrid,
+            autosave: input.autosave,
+            ...(input.shortcuts ? { shortcuts: input.shortcuts } : {}),
+          },
         },
       });
       return json({ id: u.id, email: u.email, name: u.name, settings: u.settings });

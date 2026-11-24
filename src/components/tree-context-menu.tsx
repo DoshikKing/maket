@@ -6,6 +6,7 @@ import {
   cloneElement,
   isValidElement,
   useEffect,
+  useContext,
   useLayoutEffect,
   useRef,
   useState,
@@ -16,6 +17,9 @@ import {
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { GitBranch } from 'lucide-react';
+import { useUser } from './workspace';
+import { handleCommandKey, CommandEditingContext, permittedActions } from './command-shortcuts';
+import { commands, commandBinding, shortcutLabel, type CommandId } from '@/lib/shortcuts';
 import { api } from '@/lib/client';
 import type { Structure } from '@/lib/structure';
 import { contextLinkUrl } from './diagram-links';
@@ -33,6 +37,9 @@ export function TreeContextMenu({
   DiagramNavigation & {
     actions: ReactNode;
   }) {
+  const { user } = useUser();
+  actions = permittedActions(actions, useContext(CommandEditingContext));
+  const [focused, setFocused] = useState(false);
   const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
   const trigger = useRef<HTMLElement | null>(null);
   function close(restoreFocus = false) {
@@ -42,6 +49,11 @@ export function TreeContextMenu({
   return (
     <div
       {...props}
+      data-command-scope
+      onFocusCapture={() => setFocused(true)}
+      onBlurCapture={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) setFocused(false);
+      }}
       onContextMenu={(event) => {
         event.preventDefault();
         event.stopPropagation();
@@ -51,6 +63,8 @@ export function TreeContextMenu({
         setPosition({ x: event.clientX, y: event.clientY });
       }}
       onKeyDown={(event) => {
+        handleCommandKey(event, user.settings.shortcuts);
+        if (event.defaultPrevented) return;
         if (event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10')) return;
         event.preventDefault();
         event.stopPropagation();
@@ -59,6 +73,11 @@ export function TreeContextMenu({
         setPosition({ x: bounds.left + 20, y: bounds.bottom });
       }}
     >
+      {focused && (
+        <div hidden data-shortcut-actions onClick={(event) => event.stopPropagation()}>
+          {actions}
+        </div>
+      )}
       {children}
       {position && (
         <ContextMenu
@@ -85,6 +104,9 @@ export function ContextMenu({
   onClose: (restoreFocus?: boolean) => void;
 }) {
   const router = useRouter();
+  const { user } = useUser();
+  const [mac, setMac] = useState(false);
+  useEffect(() => setMac(/Mac|iPhone|iPad/.test(navigator.platform)), []);
   const [space, setSpace] = useState<Structure | null>(null),
     [loadError, setLoadError] = useState('');
   useEffect(() => {
@@ -146,6 +168,9 @@ export function ContextMenu({
       if (child.type === Fragment) return cloneElement(child, {}, items(child.props.children));
       if (child.props.hidden) return null;
       const onClick = child.props.onClick;
+      const command = (child.props as { 'data-command'?: CommandId })['data-command'];
+      const binding =
+        command && commands[command] ? commandBinding(command, user.settings.shortcuts) : '';
       return cloneElement(
         child,
         {
@@ -153,12 +178,13 @@ export function ContextMenu({
           tabIndex: -1,
           onClick: (event: MouseEvent<HTMLElement>) => {
             event.stopPropagation();
-            close();
+            close(true);
             onClick?.(event);
           },
         },
         child.props.children,
         <span>{child.props.title ?? child.props['aria-label']}</span>,
+        binding ? <kbd>{shortcutLabel(binding, mac)}</kbd> : null,
       );
     });
   }

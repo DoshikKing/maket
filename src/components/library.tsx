@@ -1,4 +1,5 @@
 'use client';
+import { layeredElements } from './layered-elements';
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -484,37 +485,36 @@ export function DiagramPreview({ document: d }: { document: DiagramDocument }) {
       viewBox={`${minX - 30} ${minY - 30} ${maxX - minX + 60} ${maxY - minY + 60}`}
       aria-label="Миниатюра диаграммы"
     >
-      {d.edges.map((e) => {
-        const g = geometry.get(e.id);
-        return g ? (
-          <path
-            key={e.id}
-            d={g.path}
-            fill="none"
-            stroke={
-              edgeAppearance(
-                d.notation.edgeTypes.find((t) => t.id === e.typeId)!.appearance,
-                e.appearance,
-              ).color
-            }
-            strokeWidth={
-              edgeAppearance(
-                d.notation.edgeTypes.find((t) => t.id === e.typeId)!.appearance,
-                e.appearance,
-              ).width
-            }
-            strokeDasharray={lineDash(
-              edgeAppearance(
-                d.notation.edgeTypes.find((t) => t.id === e.typeId)!.appearance,
-                e.appearance,
-              ),
-            )}
-          />
-        ) : null;
-      })}
-      {[...d.nodes]
-        .sort((a, b) => (a.layer ?? 0) - (b.layer ?? 0))
-        .map((n) => {
+      {layeredElements(d, [
+        ...d.edges.map((e) => {
+          const g = geometry.get(e.id);
+          return g ? (
+            <path
+              key={e.id}
+              d={g.path}
+              fill="none"
+              stroke={
+                edgeAppearance(
+                  d.notation.edgeTypes.find((t) => t.id === e.typeId)!.appearance,
+                  e.appearance,
+                ).color
+              }
+              strokeWidth={
+                edgeAppearance(
+                  d.notation.edgeTypes.find((t) => t.id === e.typeId)!.appearance,
+                  e.appearance,
+                ).width
+              }
+              strokeDasharray={lineDash(
+                edgeAppearance(
+                  d.notation.edgeTypes.find((t) => t.id === e.typeId)!.appearance,
+                  e.appearance,
+                ),
+              )}
+            />
+          ) : null;
+        }),
+        ...d.nodes.map((n) => {
           const t = d.notation.nodeTypes.find((t) => t.id === n.typeId);
           if (!t) return null;
           const a = nodeAppearance(n, t),
@@ -541,7 +541,8 @@ export function DiagramPreview({ document: d }: { document: DiagramDocument }) {
               </text>
             </g>
           );
-        })}
+        }),
+      ])}
     </svg>
   );
 }

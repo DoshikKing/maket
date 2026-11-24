@@ -1,3 +1,4 @@
+import { layeredElements } from './layered-elements';
 import type { Ref, SVGProps } from 'react';
 import { NodeShape } from './node-shape';
 import { EdgeMarkerDefs, markerId } from './edge-markers';
@@ -82,72 +83,71 @@ export function DiagramSvg({
     >
       <EdgeMarkerDefs diagramId="svg" edges={styled} />
       <g data-diagram-content="true">
-        {d.edges.map((e, i) => {
-          const g = geometry.get(e.id);
-          if (!g) return null;
-          const a = styled[i].appearance,
-            t = d.notation.edgeTypes.find((t) => t.id === e.typeId)!;
-          const label = String(
-            effectiveEdge(
-              e,
-              t,
-              d.relations?.find((r) => r.id === e.relationId),
-            ).properties.label ?? '',
-          );
-          return (
-            <g
-              key={e.id}
-              data-representation-id={e.id}
-              onClick={() => onSelect?.(e.id)}
-              style={{ cursor: onSelect ? 'pointer' : undefined }}
-            >
-              <path
-                d={g.path}
-                fill="none"
-                stroke={a.color}
-                strokeWidth={a.width}
-                strokeDasharray={lineDash(a)}
-                strokeLinecap={a.line === 'dotted' ? 'round' : 'butt'}
-                markerStart={
-                  a.sourceMarker && a.sourceMarker !== 'none'
-                    ? `url(#${markerId('svg', e.id, 'start')})`
-                    : undefined
-                }
-                markerEnd={
-                  a.targetMarker !== 'none' ? `url(#${markerId('svg', e.id, 'end')})` : undefined
-                }
-              />
-              {label && (
-                <text
-                  x={g.center.x}
-                  y={g.center.y - 8}
-                  textAnchor="middle"
-                  fill="#232334"
-                  stroke="#ffffff"
-                  strokeWidth="4"
-                  paintOrder="stroke"
-                  fontSize={a.fontSize ?? 12}
-                >
-                  {label}
-                </text>
-              )}
-              {onSelect && <path d={g.path} fill="none" stroke="transparent" strokeWidth="16" />}
-              {selectedId === e.id && (
-                <circle
-                  cx={g.center.x}
-                  cy={g.center.y}
-                  r="8"
+        {layeredElements(d, [
+          ...d.edges.map((e, i) => {
+            const g = geometry.get(e.id);
+            if (!g) return null;
+            const a = styled[i].appearance,
+              t = d.notation.edgeTypes.find((t) => t.id === e.typeId)!;
+            const label = String(
+              effectiveEdge(
+                e,
+                t,
+                d.relations?.find((r) => r.id === e.relationId),
+              ).properties.label ?? '',
+            );
+            return (
+              <g
+                key={e.id}
+                data-representation-id={e.id}
+                onClick={() => onSelect?.(e.id)}
+                style={{ cursor: onSelect ? 'pointer' : undefined }}
+              >
+                <path
+                  d={g.path}
                   fill="none"
-                  stroke="#7060da"
-                  strokeWidth="3"
+                  stroke={a.color}
+                  strokeWidth={a.width}
+                  strokeDasharray={lineDash(a)}
+                  strokeLinecap={a.line === 'dotted' ? 'round' : 'butt'}
+                  markerStart={
+                    a.sourceMarker && a.sourceMarker !== 'none'
+                      ? `url(#${markerId('svg', e.id, 'start')})`
+                      : undefined
+                  }
+                  markerEnd={
+                    a.targetMarker !== 'none' ? `url(#${markerId('svg', e.id, 'end')})` : undefined
+                  }
                 />
-              )}
-            </g>
-          );
-        })}
-        {[...d.nodes]
-          .sort((a, b) => (a.layer ?? 0) - (b.layer ?? 0))
-          .map((n) => {
+                {label && (
+                  <text
+                    x={g.center.x}
+                    y={g.center.y - 8}
+                    textAnchor="middle"
+                    fill="#232334"
+                    stroke="#ffffff"
+                    strokeWidth="4"
+                    paintOrder="stroke"
+                    fontSize={a.fontSize ?? 12}
+                  >
+                    {label}
+                  </text>
+                )}
+                {onSelect && <path d={g.path} fill="none" stroke="transparent" strokeWidth="16" />}
+                {selectedId === e.id && (
+                  <circle
+                    cx={g.center.x}
+                    cy={g.center.y}
+                    r="8"
+                    fill="none"
+                    stroke="#7060da"
+                    strokeWidth="3"
+                  />
+                )}
+              </g>
+            );
+          }),
+          ...d.nodes.map((n) => {
             const t = d.notation.nodeTypes.find((t) => t.id === n.typeId)!,
               a = nodeAppearance(n, t);
             const font = a.fontSize ?? 12,
@@ -233,7 +233,8 @@ export function DiagramSvg({
                 )}
               </g>
             );
-          })}
+          }),
+        ])}
       </g>
     </svg>
   );

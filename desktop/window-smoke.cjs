@@ -1,4 +1,4 @@
-const { _electron: electron } = require('@playwright/test');
+const { _electron: electron, expect } = require('@playwright/test');
 const { mkdtemp, rm } = require('node:fs/promises');
 const { tmpdir } = require('node:os');
 const path = require('node:path');
@@ -134,11 +134,37 @@ const assert = require('node:assert/strict');
     }
     await window.goto(`${data.origin}/diagrams/${data.diagramId}`);
     await window.locator('.react-flow__node-notation').waitFor({ timeout: 30000 });
+    const node = window.locator('.react-flow__node-notation').first();
+    const originalLabel = await node.locator('.node-label').innerText();
+    await node.dblclick();
+    await window
+      .getByRole('textbox', { name: 'Текст объекта', exact: true })
+      .fill('Проверка команд desktop');
+    await window.keyboard.press('Enter');
+    await window.locator('.react-flow').focus();
+    const modifier = process.platform === 'darwin' ? 'Meta' : 'Control';
+    await window.keyboard.press(`${modifier}+z`);
+    await expect(node.locator('.node-label')).toHaveText(originalLabel);
+    await window.keyboard.press(`${modifier}+Shift+z`);
+    await expect(node.locator('.node-label')).toHaveText('Проверка команд desktop');
+    await window.keyboard.press(`${modifier}+s`);
+    await expect(window.locator('.editor-save-state')).toContainText('Сохранено');
+    const saved = await window.evaluate(
+      async (id) => (await (await fetch(`/api/diagrams/${id}`)).json()).document.nodes[0].label,
+      data.diagramId,
+    );
+    assert.equal(saved, 'Проверка команд desktop');
+    await window.getByRole('button', { name: 'Просмотр', exact: true }).click();
+    await node.dblclick();
+    await expect(window.getByRole('textbox', { name: 'Текст объекта', exact: true })).toHaveCount(
+      0,
+    );
+    await window.getByRole('button', { name: 'Редактирование', exact: true }).click();
     await window.screenshot({
       path: process.env.MAKET_TEST_SCREENSHOT || path.join(directory, 'desktop.png'),
     });
     console.log(
-      'Packaged Electron smoke OK: local workspace, session bootstrap, settings, canvas, isolated renderer, MCP and all file formats',
+      'Packaged Electron smoke OK: local workspace, session bootstrap, settings, canvas modes, native keyboard undo/redo/save, isolated renderer, MCP and all file formats',
     );
   } finally {
     if (app) {

@@ -1,9 +1,10 @@
 'use client';
 import { appPath } from '@/lib/base-path';
 import { useEditLease, LeaseNotice } from './collaboration';
+import { CommandEditingContext } from './command-shortcuts';
 import { TreeContextMenu } from './tree-context-menu';
 import { HidePanel } from './workspace-panels';
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useState, useContext, type ReactNode } from 'react';
 import {
   Plus,
   ChevronRight,
@@ -67,7 +68,8 @@ export function ObjectEditor({
   onClose: () => void;
   onRelationsChanged?: () => void;
 }) {
-  const lease = useEditLease(object?.id);
+  const editable = useContext(CommandEditingContext);
+  const lease = useEditLease(object?.id, editable);
   const [name, setName] = useState(
       object?.name ??
         (initialBase
@@ -142,7 +144,7 @@ export function ObjectEditor({
       )}
       <CopyOrigin origin={object?.copiedFrom} />
       <LeaseNotice {...lease} />
-      <fieldset className="lease-fields" disabled={!lease.held}>
+      <fieldset className="lease-fields" disabled={!editable || !lease.held}>
         <form
           className="form-stack"
           onSubmit={async (e) => {
@@ -433,7 +435,7 @@ export function ObjectEditor({
               </span>
               <button
                 className="secondary small"
-                disabled={!lease.held || r.number === object.revision || busy}
+                disabled={!editable || !lease.held || r.number === object.revision || busy}
                 onClick={async () => {
                   if (
                     !confirm(
@@ -517,6 +519,7 @@ export function ObjectTree({
   onRefresh: () => void;
   onRemove: (object: ModelObject) => Promise<void>;
 }) {
+  const editable = useContext(CommandEditingContext);
   const [query, setQuery] = useState(''),
     [editing, setEditing] = useState<{
       object?: ModelObject;
@@ -603,12 +606,14 @@ export function ObjectTree({
                   {onDiagramLinks && (
                     <>
                       <button
+                        data-command="decomposition"
                         aria-label={`Декомпозиция ${r.name}`}
                         onClick={() => onDiagramLinks(r.id, 'decomposition')}
                       >
                         <GitBranch size={12} />
                       </button>
                       <button
+                        data-command="viewpoint"
                         aria-label={`Углубление ${r.name}`}
                         onClick={() => onDiagramLinks(r.id, 'viewpoint')}
                       >
@@ -617,6 +622,7 @@ export function ObjectTree({
                     </>
                   )}
                   <button
+                    data-command="place"
                     aria-label={`Разместить связь ${r.name}`}
                     disabled={r.archived}
                     onClick={() => onRelationPlace?.(r)}
@@ -624,12 +630,14 @@ export function ObjectTree({
                     <Plus size={12} />
                   </button>
                   <button
+                    data-command="locate"
                     aria-label={`Найти связь ${r.name}`}
                     onClick={() => onRelationLocate?.(r.id)}
                   >
                     <LocateFixed size={12} />
                   </button>
                   <button
+                    data-command="properties"
                     aria-label={`Изменить связь ${r.name}`}
                     onClick={() => onRelationEdit?.(r)}
                   >
@@ -707,12 +715,14 @@ export function ObjectTree({
                   {onDiagramLinks ? (
                     <>
                       <button
+                        data-command="decomposition"
                         aria-label={`Декомпозиция ${o.name}`}
                         onClick={() => onDiagramLinks(o.id, 'decomposition')}
                       >
                         <GitBranch size={12} />
                       </button>
                       <button
+                        data-command="viewpoint"
                         aria-label={`Углубление ${o.name}`}
                         onClick={() => onDiagramLinks(o.id, 'viewpoint')}
                       >
@@ -720,6 +730,7 @@ export function ObjectTree({
                       </button>
                       <Link
                         href={`/solutions?parent=${o.id}`}
+                        data-command="children"
                         aria-label={`Дочерние элементы ${o.name}`}
                       >
                         <Folder size={12} />
@@ -728,6 +739,7 @@ export function ObjectTree({
                   ) : (
                     <Link
                       href={`/solutions?parent=${o.id}`}
+                      data-command="decomposition"
                       aria-label={`Декомпозиция ${o.name}`}
                       title="Дочерние элементы и диаграммы"
                     >
@@ -735,6 +747,7 @@ export function ObjectTree({
                     </Link>
                   )}
                   <button
+                    data-command="place"
                     aria-label={`Разместить ${o.name}`}
                     title="Ещё одно представление"
                     disabled={o.archived || !representable}
@@ -747,6 +760,7 @@ export function ObjectTree({
                     <Plus size={13} />
                   </button>
                   <button
+                    data-command="locate"
                     aria-label={`Найти объект ${o.name}`}
                     title="Показать представление на диаграмме"
                     onClick={() =>
@@ -755,10 +769,15 @@ export function ObjectTree({
                   >
                     <LocateFixed size={12} />
                   </button>
-                  <button aria-label={`Изменить объект ${o.name}`} onClick={() => editEntity(o)}>
+                  <button
+                    data-command="properties"
+                    aria-label={`Изменить объект ${o.name}`}
+                    onClick={() => editEntity(o)}
+                  >
                     <Pencil size={12} />
                   </button>
                   <button
+                    data-command="createChild"
                     aria-label={`Создать дочерний объект ${o.name}`}
                     title="Создать дочерний объект"
                     disabled={o.archived}
@@ -774,6 +793,7 @@ export function ObjectTree({
                       {(!o.kind || o.kind === 'object') && (
                         <>
                           <button
+                            data-command="inherit"
                             aria-label={`Создать наследника ${o.name}`}
                             disabled={o.archived}
                             onClick={() =>
@@ -787,6 +807,7 @@ export function ObjectTree({
                             <GitBranch size={12} />
                           </button>
                           <button
+                            data-command="instantiate"
                             aria-label={`Создать реализацию ${o.name}`}
                             disabled={o.archived}
                             onClick={() =>
@@ -803,6 +824,7 @@ export function ObjectTree({
                       )}
                       <button
                         hidden={o.kind === 'diagram'}
+                        data-command="copy"
                         aria-label={`Копировать объект ${o.name}`}
                         disabled={o.archived}
                         onClick={async () => {
@@ -825,6 +847,7 @@ export function ObjectTree({
                         <Copy size={12} />
                       </button>
                       <button
+                        data-command="archive"
                         aria-label={`${o.archived ? 'Вернуть из архива' : 'Архивировать'} ${o.name}`}
                         onClick={async () => {
                           try {
@@ -854,6 +877,7 @@ export function ObjectTree({
                         <Archive size={12} />
                       </button>
                       <button
+                        data-command="delete"
                         aria-label={`Удалить объект ${o.name}`}
                         title="Удалить неиспользуемый объект"
                         onClick={async () => {
@@ -879,7 +903,7 @@ export function ObjectTree({
               }
               className={`object-tree-row tree-row ${(selectedId ?? focusId) === o.id ? 'selected' : ''} ${o.archived ? 'archived' : ''}`}
               title={`${o.derivation === 'instance' ? 'Реализация' : o.derivation === 'inheritance' ? 'Наследник' : entityLabels[kind]} · Родитель: ${entities.find((p) => p.id === o.parentId)?.name ?? 'Корень пространства'}`}
-              draggable={!o.archived}
+              draggable={editable && !o.archived}
               data-object-id={o.id}
               onDragStart={(e) => {
                 e.dataTransfer.setData(
@@ -899,6 +923,7 @@ export function ObjectTree({
                 }
               }}
               onDrop={(e) => {
+                if (!editable) return;
                 const id =
                   e.dataTransfer.getData('application/maket-object') ||
                   e.dataTransfer.getData('application/maket-relation');
@@ -985,12 +1010,14 @@ export function ObjectTree({
                               {onDiagramLinks && (
                                 <>
                                   <button
+                                    data-command="decomposition"
                                     aria-label={`Декомпозиция ${r.name}`}
                                     onClick={() => onDiagramLinks(r.id, 'decomposition')}
                                   >
                                     <GitBranch size={12} />
                                   </button>
                                   <button
+                                    data-command="viewpoint"
                                     aria-label={`Углубление ${r.name}`}
                                     onClick={() => onDiagramLinks(r.id, 'viewpoint')}
                                   >
@@ -999,6 +1026,7 @@ export function ObjectTree({
                                 </>
                               )}
                               <button
+                                data-command="place"
                                 aria-label={`Вернуть представление связи ${r.name}`}
                                 title="Разместить стрелку на диаграмме"
                                 disabled={r.archived}
@@ -1007,6 +1035,7 @@ export function ObjectTree({
                                 <Plus size={12} />
                               </button>
                               <button
+                                data-command="locate"
                                 aria-label={`Найти связь ${r.name}`}
                                 title="Показать представление на диаграмме"
                                 onClick={() => onRelationLocate?.(r.id)}
@@ -1014,6 +1043,7 @@ export function ObjectTree({
                                 <LocateFixed size={12} />
                               </button>
                               <button
+                                data-command="createChild"
                                 aria-label={`Создать дочерний объект связи ${r.name}`}
                                 title="Создать дочерний объект"
                                 disabled={r.archived}
@@ -1022,6 +1052,7 @@ export function ObjectTree({
                                 <FolderPlus size={12} />
                               </button>
                               <button
+                                data-command="properties"
                                 aria-label={`Свойства вложенной связи ${r.name}`}
                                 onClick={() => onRelationEdit?.(r)}
                               >
@@ -1034,7 +1065,7 @@ export function ObjectTree({
                           aria-level={depth + 3}
                           key={r.id}
                           data-relation-reference={r.id}
-                          draggable={!r.archived}
+                          draggable={editable && !r.archived}
                           onDragStart={(e) => {
                             e.dataTransfer.setData('application/maket-relation', r.id);
                             e.dataTransfer.effectAllowed = 'copyMove';
@@ -1052,6 +1083,7 @@ export function ObjectTree({
                             }
                           }}
                           onDrop={(e) => {
+                            if (!editable) return;
                             const id =
                               e.dataTransfer.getData('application/maket-object') ||
                               e.dataTransfer.getData('application/maket-relation');
@@ -1134,6 +1166,7 @@ export function ObjectTree({
           </button>
           <button
             className="icon-button"
+            disabled={!editable}
             aria-label="Создать объект"
             onClick={() => setEditing({ parentId: defaultParentId })}
           >
@@ -1159,6 +1192,7 @@ export function ObjectTree({
             e.preventDefault();
         }}
         onDrop={(e) => {
+          if (!editable) return;
           const id =
             e.dataTransfer.getData('application/maket-object') ||
             e.dataTransfer.getData('application/maket-relation');

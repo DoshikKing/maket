@@ -97,6 +97,7 @@ export async function drawioXml(name: string, document: ViewDocument, objects: M
   const geometry = edgeGeometry(d);
   const cells: string[] = ['<mxCell id="0"/>', '<mxCell id="1" parent="0"/>'];
   const edges: string[] = [];
+  const rendered = new Map<string, string>();
   const stencils = new Map<string, string>();
   for (const shape of d.notation.shapes ?? [])
     if (
@@ -110,6 +111,7 @@ export async function drawioXml(name: string, document: ViewDocument, objects: M
     )
       stencils.set(shape.id, await stencil(shape));
   for (const n of [...d.nodes].sort((a, b) => (a.layer ?? 0) - (b.layer ?? 0))) {
+    const cellStart = cells.length;
     const type = d.notation.nodeTypes.find((t) => t.id === n.typeId)!;
     const a = nodeAppearance(n, type);
     const object = resolved.get(n.objectId ?? '');
@@ -173,6 +175,7 @@ export async function drawioXml(name: string, document: ViewDocument, objects: M
       cells.push(
         `<mxCell${attributes({ id: `label_${n.id}`, value: label, vertex: 1, connectable: 0, parent: nodeId(n.id), style: style({ ...common, shape: 'rectangle', fillColor: 'none', strokeColor: 'none', rotation: a.textRotation }) })}><mxGeometry x="0.5" y="0.5" relative="1"${attributes({ width: a.width, height: a.height, as: 'geometry' })}>${point('offset', { x: -a.width / 2, y: -a.height / 2 })}</mxGeometry></mxCell>`,
       );
+    rendered.set(n.id, cells.slice(cellStart).join(''));
   }
   for (const e of d.edges) {
     const type = d.notation.edgeTypes.find((t) => t.id === e.typeId)!;
@@ -246,5 +249,7 @@ export async function drawioXml(name: string, document: ViewDocument, objects: M
       ),
     );
   }
-  return `<?xml version="1.0" encoding="UTF-8"?>\n<mxfile host="app.diagrams.net" agent="maket"><diagram${attributes({ id: 'maket-diagram', name })}><mxGraphModel grid="1" gridSize="10" page="0" math="0" shadow="0"><root>${[...cells.slice(0, 2), ...edges, ...cells.slice(2)].join('')}</root></mxGraphModel></diagram></mxfile>`;
+  for (let i = 0; i < d.edges.length; i++) rendered.set(d.edges[i].id, edges[i]);
+  const ordered = [...d.edges, ...d.nodes].sort((a, b) => (a.layer ?? 0) - (b.layer ?? 0));
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<mxfile host="app.diagrams.net" agent="maket"><diagram${attributes({ id: 'maket-diagram', name })}><mxGraphModel grid="1" gridSize="10" page="0" math="0" shadow="0"><root>${[...cells.slice(0, 2), ...ordered.map((item) => rendered.get(item.id))].join('')}</root></mxGraphModel></diagram></mxfile>`;
 }

@@ -1,7 +1,8 @@
 'use client';
+import { CommandEditingContext } from './command-shortcuts';
 import { appPath } from '@/lib/base-path';
 import { useEditLease, LeaseNotice } from './collaboration';
-import { useEffect, useId, useState } from 'react';
+import { useEffect, useId, useState, useContext } from 'react';
 import { Trash2 } from 'lucide-react';
 import { api, date } from '@/lib/client';
 import {
@@ -32,7 +33,8 @@ export function RelationEditor({
   onClose: () => void;
   children?: React.ReactNode;
 }) {
-  const lease = useEditLease(relation?.id);
+  const editable = useContext(CommandEditingContext);
+  const lease = useEditLease(relation?.id, editable);
   const [name, setName] = useState(relation?.name ?? 'Новая связь'),
     [description, setDescription] = useState(relation?.description ?? ''),
     [source, setSource] = useState(relation?.sourceId ?? sourceId ?? ''),
@@ -83,7 +85,7 @@ export function RelationEditor({
       </p>
       <CopyOrigin origin={relation?.copiedFrom} />
       <LeaseNotice {...lease} />
-      <fieldset className="lease-fields" disabled={!lease.held}>
+      <fieldset className="lease-fields" disabled={!editable || !lease.held}>
         <form
           className="form-stack"
           onSubmit={async (e) => {
@@ -371,7 +373,7 @@ export function RelationEditor({
               </span>
               <button
                 className="secondary small"
-                disabled={!lease.held || busy || h.number === relation.revision}
+                disabled={!editable || !lease.held || busy || h.number === relation.revision}
                 onClick={async () => {
                   if (!confirm('Восстановить общие свойства связи?')) return;
                   setBusy(true);

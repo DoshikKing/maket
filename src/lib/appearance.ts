@@ -148,11 +148,11 @@ export function visibleProperties(
           : String(node.properties[p.key]),
     }));
 }
-export function moveLayer(
-  nodes: DiagramNode[],
+export function moveLayer<T extends { id: string; layer?: number }>(
+  nodes: T[],
   id: string,
   direction: 'front' | 'back' | 'forward' | 'backward',
-): DiagramNode[] {
+): T[] {
   const ordered = [...nodes].sort((a, b) => (a.layer ?? 0) - (b.layer ?? 0));
   const index = ordered.findIndex((n) => n.id === id);
   if (index < 0) return nodes;

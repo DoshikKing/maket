@@ -205,14 +205,15 @@ async function launch() {
       },
       {
         label: 'Правка',
+        // Renderer bindings handle keyboard commands; Chromium keeps native text editing.
         submenu: [
-          { role: 'undo' },
-          { role: 'redo' },
+          { role: 'undo', accelerator: '' },
+          { role: 'redo', accelerator: '' },
           { type: 'separator' },
-          { role: 'cut' },
-          { role: 'copy' },
-          { role: 'paste' },
-          { role: 'selectAll' },
+          { role: 'cut', accelerator: '' },
+          { role: 'copy', accelerator: '' },
+          { role: 'paste', accelerator: '' },
+          { role: 'selectAll', accelerator: '' },
         ],
       },
       {

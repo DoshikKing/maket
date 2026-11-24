@@ -165,12 +165,14 @@ export function SolutionsPage() {
     return (
       <>
         <button
+          data-command="decomposition"
           aria-label={`Декомпозиция ${o.name}`}
           onClick={() => setDiagramLinks({ entityId: o.id, kind: 'decomposition' })}
         >
           <GitBranch size={14} />
         </button>
         <button
+          data-command="viewpoint"
           aria-label={`Углубление ${o.name}`}
           onClick={() => setDiagramLinks({ entityId: o.id, kind: 'viewpoint' })}
         >
@@ -178,6 +180,7 @@ export function SolutionsPage() {
         </button>
         <button
           title="Свойства"
+          data-command="properties"
           aria-label={`Свойства ${o.name}`}
           onClick={() => {
             select(o.id);
@@ -190,6 +193,7 @@ export function SolutionsPage() {
           <Link
             href={`/solutions?diagram=${diagram.id}`}
             title="Открыть диаграмму"
+            data-command="open"
             aria-label={`Открыть диаграмму ${o.name}`}
           >
             <FileText size={14} />
@@ -198,6 +202,7 @@ export function SolutionsPage() {
         {entityKind(o) === 'object' && (
           <>
             <button
+              data-command="inherit"
               aria-label={`Создать наследника ${o.name}`}
               disabled={o.archived}
               onClick={() => setDeriving({ base: o, kind: 'inheritance' })}
@@ -205,6 +210,7 @@ export function SolutionsPage() {
               <GitBranch size={14} />
             </button>
             <button
+              data-command="instantiate"
               aria-label={`Создать реализацию ${o.name}`}
               disabled={o.archived}
               onClick={() => setDeriving({ base: o, kind: 'instance' })}
@@ -215,6 +221,7 @@ export function SolutionsPage() {
         )}
         <button
           title="Создать внутри"
+          data-command="createChild"
           aria-label={`Создать внутри ${o.name}`}
           disabled={o.archived}
           onClick={() => {
@@ -227,6 +234,7 @@ export function SolutionsPage() {
         </button>
         <button
           title="Удалить"
+          data-command="delete"
           aria-label={`Удалить ${o.name}`}
           disabled={busy}
           onClick={() => void remove(o)}

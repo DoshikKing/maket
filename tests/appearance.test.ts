@@ -176,3 +176,24 @@ describe('layer ordering and rendered content', () => {
     );
   });
 });
+
+it('orders arrows and shapes together and persists edge layers through schema validation', () => {
+  const document = sample();
+  const items = moveLayer<{ id: string; layer?: number }>(
+    [...document.edges, ...document.nodes],
+    'e',
+    'front',
+  );
+  const layers = new Map(items.map((item) => [item.id, item.layer]));
+  document.nodes = document.nodes.map((n) => ({ ...n, layer: layers.get(n.id) }));
+  document.edges = document.edges.map((e) => ({ ...e, layer: layers.get(e.id) }));
+  expect(document.edges[0].layer).toBe(3);
+  expect(diagramSchema.parse(JSON.parse(JSON.stringify(document))).edges[0].layer).toBe(3);
+  const back = moveLayer(items, 'e', 'back');
+  expect(back.find((item) => item.id === 'e')?.layer).toBe(0);
+  expect(back.find((item) => item.id === 'a')?.layer).toBe(1);
+  const down = moveLayer(items, 'e', 'backward');
+  expect(down.find((item) => item.id === 'e')?.layer).toBe(2);
+  document.edges[0].layer = Infinity;
+  expect(diagramSchema.safeParse(document).success).toBe(false);
+});

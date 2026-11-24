@@ -152,6 +152,7 @@ export const diagramSchema = z.object({
       z.object({
         id: identifier,
         typeId: identifier,
+        layer: z.number().int().min(-1000000).max(1000000).optional(),
         source: identifier,
         target: identifier,
         appearance: edgeOverrideSchema.optional(),

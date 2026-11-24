@@ -13,6 +13,7 @@ import {
   MiniMap,
   useReactFlow,
   useNodesInitialized,
+  useKeyPress,
   type NodeChange,
   type EdgeChange,
   type OnConnectEnd,
@@ -45,6 +46,7 @@ import { api, date, download, readJson } from '@/lib/client';
 import { type DiagramDocument as LegacyDocument, defaults } from '@/lib/notation';
 import { useUser } from './workspace';
 import { Modal } from './modal';
+import { handleCommandKey, CommandEditingContext, permittedActions } from './command-shortcuts';
 import { ContextMenu } from './tree-context-menu';
 import { RepresentationAttributes } from './representation-attributes';
 import { useUnsavedNavigation } from './use-unsaved-navigation';
@@ -162,8 +164,11 @@ export function EditorPage({ id }: { id: string }) {
 }
 function Editor({ initial }: { initial: Diagram }) {
   const lease = useEditLease(initial.id, false);
+  const spacePan = useKeyPress('Space', { actInsideInputWithModifier: false });
+  const [mode, setMode] = useState<'view' | 'edit'>('edit');
+  const canEdit = lease.held && mode === 'edit';
   const editable = useRef(false);
-  editable.current = lease.held;
+  editable.current = canEdit;
   const router = useRouter();
   const { panels, setPanels } = useWorkspacePanels();
   const { user } = useUser(),
@@ -470,7 +475,7 @@ function Editor({ initial }: { initial: Diagram }) {
     user.settings.autosave && !errors.length && !blocked ? () => save() : undefined,
   );
   const beginGesture = useCallback((_kind: 'drag' | 'resize' | 'text') => {
-    if (gesture.current) return;
+    if (!editable.current || gesture.current) return;
     gesture.current = structuredClone(docRef.current);
     setInteracting(true);
   }, []);
@@ -500,8 +505,13 @@ function Editor({ initial }: { initial: Diagram }) {
     [change],
   );
   const nodeActions = useMemo(
-    () => ({ begin: beginGesture, end: endGesture, label: setNodeLabel }),
-    [beginGesture, endGesture, setNodeLabel],
+    () => ({
+      editable: canEdit && !spacePan,
+      begin: beginGesture,
+      end: endGesture,
+      label: setNodeLabel,
+    }),
+    [canEdit, spacePan, beginGesture, endGesture, setNodeLabel],
   );
   function updateNodeAppearance(patch: NodeOverride) {
     if (selected?.kind !== 'node') return;
@@ -536,8 +546,18 @@ function Editor({ initial }: { initial: Diagram }) {
     });
   }
   function reorderNode(id: string, direction: 'front' | 'back' | 'forward' | 'backward') {
-    const nodes = moveLayer(docRef.current.nodes, id, direction);
-    if (nodes !== docRef.current.nodes) change({ ...docRef.current, nodes });
+    const current = docRef.current;
+    const items = moveLayer<{ id: string; layer?: number }>(
+      [...current.edges, ...current.nodes],
+      id,
+      direction,
+    );
+    const layers = new Map(items.map((item) => [item.id, item.layer]));
+    change({
+      ...current,
+      nodes: current.nodes.map((n) => ({ ...n, layer: layers.get(n.id) })),
+      edges: current.edges.map((e) => ({ ...e, layer: layers.get(e.id) })),
+    });
   }
   function adopt(result: ModelDiagram & { concurrentBase?: ModelDocument }, record = true) {
     const remote = projectDocument(result.document);
@@ -588,7 +608,7 @@ function Editor({ initial }: { initial: Diagram }) {
     dropPosition?: { x: number; y: number },
     properties?: ModelObject['attributes'],
   ) {
-    if (commandBusy || interacting) return;
+    if (!editable.current || commandBusy || interacting) return;
     setPlacementType(typeId);
     const definition = docRef.current.notation.nodeTypes.find((t) => t.id === typeId)!;
     const existing = objectsRef.current.find((o) => o.id === objectId);
@@ -911,7 +931,7 @@ function Editor({ initial }: { initial: Diagram }) {
               width: 24,
               height: 16,
               draggable: false,
-              zIndex: 1,
+              zIndex: e.layer ?? 0,
               selected: selected?.kind === 'edge' && selected.id === e.id,
               data: {
                 name: relationLookup.get(e.relationId ?? '')?.name ?? 'Связь',
@@ -933,6 +953,7 @@ function Editor({ initial }: { initial: Diagram }) {
                 height: 8,
                 draggable: false,
                 selectable: false,
+                zIndex: e.layer ?? 0,
                 data: { edgeId: e.id, end },
               },
             ]
@@ -975,6 +996,7 @@ function Editor({ initial }: { initial: Diagram }) {
           sourceHandle: e.detachedSource ? 'free' : e.sourcePort,
           targetHandle: e.detachedTarget ? 'free' : e.targetPort,
           type: a.routing === 'bezier' ? 'default' : a.routing,
+          zIndex: e.layer ?? 0,
           label: String(
             effectiveEdge(
               e,
@@ -1067,7 +1089,7 @@ function Editor({ initial }: { initial: Diagram }) {
     if (ids.length) deleteItems([], ids);
   }
   function undoAction() {
-    if (!undo.length) return;
+    if (!editable.current || !undo.length) return;
     const previous = undo[undo.length - 1];
     const current = structuredClone(docRef.current);
     setRedo((r) => [...r, current]);
@@ -1075,7 +1097,7 @@ function Editor({ initial }: { initial: Diagram }) {
     change(previous, false);
   }
   function redoAction() {
-    if (!redo.length) return;
+    if (!editable.current || !redo.length) return;
     const next = redo[redo.length - 1];
     const current = structuredClone(docRef.current);
     setUndo((u) => [...u, current]);
@@ -1358,6 +1380,7 @@ function Editor({ initial }: { initial: Diagram }) {
     else change(next);
   }
   async function updateNotations(notationId?: string, removeBindingId?: string) {
+    if (!editable.current) return;
     setCommandBusy(true);
     try {
       if (!(await flush())) return;
@@ -1382,1604 +1405,1680 @@ function Editor({ initial }: { initial: Diagram }) {
       setError((e as Error).message);
     }
   }
-  return (
-    <main className={`editor ${commandBusy || objectSaving ? 'remote-busy' : ''}`}>
-      <div className="editor-toolbar">
-        <div className="editor-title">
-          <Link
-            href={`/solutions${initial.entityId ? `?parent=${initial.entityId}` : ''}`}
-            className="icon-button"
-            aria-label="К модели решения"
-          >
-            <ArrowLeft size={20} />
-          </Link>
-          <div>
+  const canvasActions = permittedActions(
+    selected ? (
+      <>
+        <button
+          data-command="tree"
+          aria-label="Показать в дереве объектов"
+          disabled={!baseEntity}
+          onClick={showInTree}
+        >
+          <GitBranch size={14} />
+        </button>
+        <button
+          data-command="properties"
+          aria-label="Изменить свойства объекта"
+          disabled={!baseEntity}
+          onClick={() => {
+            if (selected?.kind === 'edge')
+              void editRelation(relationLookup.get(selectedEdge?.relationId ?? ''));
+            else if (baseEntity) setObjectEditing(baseEntity);
+          }}
+        >
+          <MousePointer2 size={14} />
+        </button>
+        <button
+          data-command="decomposition"
+          aria-label="Декомпозиция объекта"
+          disabled={!baseEntity}
+          onClick={() => {
+            if (baseEntity) setDiagramLinks({ entityId: baseEntity.id, kind: 'decomposition' });
+          }}
+        >
+          <GitBranch size={14} />
+        </button>
+        <button
+          data-command="viewpoint"
+          aria-label="Углубление / смена ракурса"
+          disabled={!baseEntity}
+          onClick={() => {
+            if (baseEntity) setDiagramLinks({ entityId: baseEntity.id, kind: 'viewpoint' });
+          }}
+        >
+          <GitBranch size={14} />
+        </button>
+        <button
+          data-command="representation"
+          aria-label="Свойства представления"
+          onClick={() => setPanels((p) => ({ ...p, properties: true }))}
+        >
+          <MousePointer2 size={14} />
+        </button>
+        {selectedNode && (
+          <>
             <button
-              className="title-button"
-              onClick={async () => {
-                const next = prompt('Название диаграммы', name);
-                if (!next?.trim()) return;
-                try {
-                  const result = await api<Diagram>(`diagrams/${initial.id}`, 'PATCH', {
-                    name: next,
-                  });
-                  setName(result.name);
-                } catch (e) {
-                  setError((e as Error).message);
-                }
-              }}
+              disabled={!canEdit}
+              data-command="place"
+              aria-label="Ещё одно представление"
+              onClick={() => void addNode(selectedNode.typeId, selectedNode.objectId)}
             >
-              {name}
-              <ChevronDown size={14} />
+              <Plus size={14} />
             </button>
-            <small>
-              {initial.entityId && (
-                <Link href={`/solutions?parent=${initial.entityId}`}>Декомпозиция · </Link>
-              )}
-              {document.notation.name} · v{document.notation.version}
-            </small>
-          </div>
-        </div>
-        <LeaseNotice {...lease} />
-        <div className="editor-save-state">
-          {saving ? (
-            'Сохраняем…'
-          ) : dirty ? (
-            <>
-              <span className="unsaved-dot" />
-              Есть изменения
-            </>
-          ) : (
-            <>
-              <CheckCircle2 size={14} />
-              Сохранено · ревизия {revision}
-            </>
-          )}
-        </div>
-        <div className="button-row">
+          </>
+        )}
+        <button
+          disabled={!canEdit}
+          data-command="front"
+          aria-label="На передний план"
+          onClick={() => reorderNode(selected!.id, 'front')}
+        >
+          <Plus size={14} />
+        </button>
+        <button
+          disabled={!canEdit}
+          data-command="back"
+          aria-label="На задний план"
+          onClick={() => reorderNode(selected!.id, 'back')}
+        >
+          <Plus size={14} />
+        </button>
+        <button
+          disabled={!canEdit}
+          data-command="forward"
+          aria-label="На уровень выше"
+          onClick={() => reorderNode(selected!.id, 'forward')}
+        >
+          <Plus size={14} />
+        </button>
+        <button
+          disabled={!canEdit}
+          data-command="backward"
+          aria-label="На уровень ниже"
+          onClick={() => reorderNode(selected!.id, 'backward')}
+        >
+          <Plus size={14} />
+        </button>
+        {selectedEdge && (
+          <>
+            <button
+              data-command="detachSource"
+              aria-label="Отвязать начало связи"
+              disabled={!canEdit || !!selectedEdge.detachedSource}
+              onClick={() => detachEnd(selectedEdge.id, 'source')}
+            >
+              <GitBranch size={14} />
+            </button>
+            <button
+              data-command="detachTarget"
+              aria-label="Отвязать конец связи"
+              disabled={!canEdit || !!selectedEdge.detachedTarget}
+              onClick={() => detachEnd(selectedEdge.id, 'target')}
+            >
+              <GitBranch size={14} />
+            </button>
+          </>
+        )}
+        <button
+          data-command="delete"
+          aria-label="Удалить представление"
+          disabled={!canEdit || commandBusy || objectSaving}
+          onClick={() =>
+            deleteItems(
+              selected?.kind === 'node' ? [selected.id] : [],
+              selected?.kind === 'edge' ? [selected.id] : [],
+            )
+          }
+        >
+          <Trash2 size={14} />
+        </button>
+      </>
+    ) : (
+      <>
+        <button
+          data-command="save"
+          aria-label="Сохранить диаграмму"
+          disabled={!canEdit || saving || !dirty}
+          onClick={() => void save()}
+        >
+          <Save size={14} />
+        </button>
+        <button
+          data-command="undo"
+          aria-label="Отменить изменение"
+          disabled={!canEdit || !undo.length}
+          onClick={undoAction}
+        >
+          <Undo2 size={14} />
+        </button>
+        <button
+          data-command="panels"
+          aria-label="Показать все панели"
+          onClick={() => setPanels((p) => ({ ...p, tree: true, palette: true, properties: true }))}
+        >
+          <MousePointer2 size={14} />
+        </button>
+      </>
+    ),
+    canEdit,
+  );
+  const generalActions = (
+    <>
+      <button
+        data-command="save"
+        disabled={saving || interacting || commandBusy || objectSaving || !canEdit}
+        onClick={() => void save(true)}
+      />
+      <button
+        data-command="undo"
+        disabled={!canEdit || commandBusy || interacting || !undo.length}
+        onClick={undoAction}
+      />
+      <button
+        data-command="redo"
+        disabled={!canEdit || commandBusy || interacting || !redo.length}
+        onClick={redoAction}
+      />
+      <button
+        data-command="mode"
+        disabled={!lease.held || saving || interacting || commandBusy || objectSaving}
+        onClick={() => void toggleMode()}
+      />
+      <button
+        data-command="fit"
+        onClick={() => void flow.fitView({ padding: 0.25, duration: 250 })}
+      />
+    </>
+  );
+  async function toggleMode() {
+    if (!lease.held || interacting || saving || commandBusy || objectSaving) return;
+    if (mode === 'edit' && !(await flush())) return;
+    setCanvasMenu(null);
+    setMode(mode === 'edit' ? 'view' : 'edit');
+  }
+  const layerControls = selectedObject && (
+    <div className="inspector-appearance form-stack">
+      <h3>Слой представления</h3>
+      <NumberField
+        label="Уровень слоя"
+        value={rawSelectedObject?.layer ?? 0}
+        min={-1000000}
+        max={1000000}
+        onChange={(layer) => {
+          const current = docRef.current;
+          if (selected?.kind === 'node')
+            change({
+              ...current,
+              nodes: current.nodes.map((n) =>
+                n.id === selected.id ? { ...n, layer: Math.round(layer) } : n,
+              ),
+            });
+          else if (selected)
+            change({
+              ...current,
+              edges: current.edges.map((e) =>
+                e.id === selected.id ? { ...e, layer: Math.round(layer) } : e,
+              ),
+            });
+        }}
+      />
+      <div className="layer-actions">
+        {(
+          [
+            ['front', 'На передний план'],
+            ['back', 'На задний план'],
+            ['forward', 'На уровень выше'],
+            ['backward', 'На уровень ниже'],
+          ] as const
+        ).map(([direction, label]) => (
           <button
+            key={direction}
             className="secondary small"
-            onClick={async () => {
-              if (await flush()) setLinksOpen(true);
-            }}
+            onClick={() => reorderNode(selected!.id, direction)}
           >
-            <GitBranch size={14} /> Связи модели
+            {label}
           </button>
-          <button
-            className="secondary small"
-            onClick={async () => {
-              if (await flush())
-                router.push(
-                  `/solutions?graph=${graphSolutionId(initial.entityId, { objects, relations: allRelations })}${initial.entityId ? `&object=${initial.entityId}` : ''}`,
-                );
-            }}
-          >
-            Граф решения
-          </button>
-          <button
-            className="secondary small"
-            aria-label="Ракурсы"
-            onClick={async () => {
-              if (await flush()) setViewpointsOpen(true);
-            }}
-          >
-            Ракурс: {currentViewpoint?.name ?? 'Без ракурса'}
-          </button>
-          <button
-            className="secondary small"
-            onClick={async () => {
-              if (await flush()) router.push(`/solutions?layers=1&focus=${initial.id}`);
-            }}
-          >
-            Слои ракурсов · 2.5D
-          </button>
-          <button
-            className="icon-button"
-            title="Отменить"
-            aria-label="Отменить"
-            disabled={commandBusy || interacting || !undo.length}
-            onClick={undoAction}
-          >
-            <Undo2 size={18} />
-          </button>
-          <button
-            className="icon-button"
-            title="Повторить"
-            aria-label="Повторить"
-            disabled={commandBusy || interacting || !redo.length}
-            onClick={redoAction}
-          >
-            <Redo2 size={18} />
-          </button>
-          <span className="toolbar-divider" />
-          <button className="secondary small" onClick={showHistory}>
-            <History size={16} />
-            История
-          </button>
-          <button
-            className="secondary small"
-            disabled={commandBusy || saving || interacting}
-            onClick={async () => {
-              if (await flush()) setShareOpen(true);
-            }}
-          >
-            <Share2 size={16} />
-            Поделиться
-          </button>
-          <button className="secondary small" onClick={() => setExportOpen(true)}>
-            <Download size={16} />
-            Экспорт
-          </button>
-          <button
-            className="primary small"
-            onClick={() => void save(true)}
-            disabled={commandBusy || objectSaving || interacting || saving || (!dirty && !blocked)}
-          >
-            <Save size={16} />
-            {blocked ? 'Повторить' : 'Сохранить'}
-          </button>
-        </div>
+        ))}
       </div>
-      {shareOpen && (
-        <ShareDialog
-          id={initial.id}
-          selectedId={selected?.id}
-          onClose={() => setShareOpen(false)}
-        />
-      )}
-      {exportOpen && (
-        <ExportDialog
-          name={name}
-          document={{ ...document, relations: allRelations }}
-          objects={objects}
-          json={{
-            name,
-            document: packDocument(docRef.current, objectsRef.current, relationsRef.current),
-          }}
-          onClose={() => setExportOpen(false)}
-        />
-      )}
-      {error && (
-        <div className="error editor-error" role="alert">
-          {error}
-        </div>
-      )}
-      {connectionNotice && (
-        <div className="connection-toast" role="alert">
-          <AlertCircle size={20} aria-hidden="true" />
-          <span>{connectionNotice.message}</span>
-          <button
-            type="button"
-            className="icon-button"
-            aria-label="Закрыть уведомление"
-            onClick={() => setConnectionNotice(null)}
-          >
-            <X size={18} aria-hidden="true" />
-          </button>
-        </div>
-      )}
-      <div
-        style={{ '--tree-width': `${panels.treeWidth}px` } as CSSProperties}
-        className={`editor-body model-editor-body ${panels.tree ? '' : 'hide-tree'} ${panels.palette ? '' : 'hide-palette'} ${panels.properties ? '' : 'hide-properties'}`}
+    </div>
+  );
+
+  return (
+    <CommandEditingContext.Provider value={canEdit}>
+      <main
+        data-command-scope
+        onKeyDown={(event) => handleCommandKey(event, user.settings.shortcuts)}
+        className={`editor ${canEdit ? 'is-edit' : 'is-view'} ${commandBusy || objectSaving ? 'remote-busy' : ''}`}
       >
-        <PanelEdge
-          side="left"
-          items={[
-            ...(!panels.tree
-              ? [
-                  {
-                    label: 'Дерево объектов',
-                    onShow: () => setPanels((p) => ({ ...p, tree: true })),
-                  },
-                ]
-              : []),
-            ...(!panels.palette
-              ? [
-                  {
-                    label: 'Палитра объектов',
-                    onShow: () => setPanels((p) => ({ ...p, palette: true })),
-                  },
-                ]
-              : []),
-          ]}
-        />
-        <PanelEdge
-          side="right"
-          items={
-            !panels.properties
-              ? [
-                  {
-                    label: 'Свойства',
-                    onShow: () => setPanels((p) => ({ ...p, properties: true })),
-                  },
-                ]
-              : []
-          }
-        />
-        <ObjectTree
-          beforeNavigate={flush}
-          onHide={() => setPanels((p) => ({ ...p, tree: false }))}
-          focusId={initial.entityId}
-          focusRequest={treeFocus}
-          diagramId={initial.id}
-          diagrams={diagrams}
-          defaultParentId={objects.find((o) => o.id === initial.entityId)?.parentId}
-          representations={[
-            ...document.nodes.map((n) => ({
-              id: n.id,
-              entityId: n.objectId!,
-              diagramId: initial.id,
-              diagramName: name,
-              notation:
-                document.bindings.find((b) => b.id === splitType(n.typeId)[0])?.document.name ?? '',
-              type: document.notation.nodeTypes.find((t) => t.id === n.typeId)?.name ?? '',
-              name: nodeLabel(
-                effectiveNode(
-                  n,
-                  document.notation.nodeTypes.find((t) => t.id === n.typeId)!,
-                  objectLookup.get(n.objectId!),
-                ),
-                document.notation.nodeTypes.find((t) => t.id === n.typeId)!,
-              ),
-            })),
-            ...document.edges
-              .filter((e) => e.relationId)
-              .map((e) => ({
-                id: e.id,
-                entityId: e.relationId!,
-                diagramId: initial.id,
-                diagramName: name,
-                notation:
-                  document.bindings.find((b) => b.id === splitType(e.typeId)[0])?.document.name ??
-                  'Универсальная связь',
-                type: document.notation.edgeTypes.find((t) => t.id === e.typeId)?.name ?? '',
-                name: String(
-                  effectiveEdge(
-                    e,
-                    document.notation.edgeTypes.find((t) => t.id === e.typeId)!,
-                    relationLookup.get(e.relationId!),
-                  ).properties.label ||
-                    relationLookup.get(e.relationId!)?.name ||
-                    'Связь',
-                ),
-              })),
-          ]}
-          onRepresentationLocate={(id, diagramId) => {
-            if (diagramId !== initial.id) {
-              void flush().then((ok) => {
-                if (ok)
-                  window.location.assign(
-                    appPath(`/solutions?diagram=${diagramId}&element=${encodeURIComponent(id)}`),
-                  );
-              });
-              return;
-            }
-            const n = docRef.current.nodes.find((n) => n.id === id),
-              e = docRef.current.edges.find((e) => e.id === id);
-            if (n || e) {
-              setSelected({ kind: n ? 'node' : 'edge', id });
-              void flow.fitView({
-                nodes: n ? [{ id }] : [{ id: e!.source }, { id: e!.target }],
-                padding: 0.4,
-                maxZoom: 1,
-              });
-            }
-          }}
-          objects={objects}
-          relations={allRelations}
-          onRelationLocate={locateRelation}
-          footer={
-            <ViewpointExplorer
-              viewpoints={viewpoints}
-              diagrams={diagrams}
-              currentDiagramId={initial.id}
-              onManage={async () => {
-                if (await flush()) setViewpointsOpen(true);
-              }}
-            />
-          }
-          onDiagramLinks={(entityId, kind) => setDiagramLinks({ entityId, kind })}
-          onRelationEdit={(r) => void editRelation(r)}
-          onRelationPlace={setRelationPlacement}
-          onRelationSaved={(r) => mergeRelations([r])}
-
-          counts={
-            new Map([
-              ...objects.map(
-                (o) => [o.id, document.nodes.filter((n) => n.objectId === o.id).length] as const,
-              ),
-              ...allRelations.map(
-                (r) => [r.id, document.edges.filter((e) => e.relationId === r.id).length] as const,
-              ),
-            ])
-          }
-          selectedId={selectedNode?.objectId ?? selectedEdge?.relationId}
-          onSaved={(o) => mergeObjects([o])}
-          onRefresh={() => void refreshObjects()}
-          onRemove={async (o) => {
-            setCommandBusy(true);
-            try {
-              if (!(await flush()))
-                throw new Error('Сначала завершите сохранение диаграммы, затем повторите удаление');
-              await api(`objects/${o.id}`, 'DELETE', {
-                revision: o.revision,
-                incarnation: o.incarnation,
-              });
-              mergeObjects(
-                objectsRef.current.filter((x) => x.id !== o.id),
-                true,
-              );
-            } finally {
-              setCommandBusy(false);
-            }
-          }}
-          onPlace={(id) => void addNode(placementType, id)}
-          onLocate={(id) => {
-            const n = docRef.current.nodes.find((n) => n.objectId === id);
-            if (n) {
-              setSelected({ kind: 'node', id: n.id });
-              void flow.fitView({
-                nodes: docRef.current.nodes
-                  .filter((n) => n.objectId === id)
-                  .map((n) => ({ id: n.id })),
-                padding: 0.5,
-                maxZoom: 1,
-              });
-            } else {
-              const o = objectLookup.get(id);
-              if (o) setObjectEditing(o);
-            }
-          }}
-        />
-
-        <TreeResizeHandle
-          width={panels.treeWidth}
-          onResize={(treeWidth) => setPanels((p) => ({ ...p, treeWidth }))}
-        />
-        <aside className="palette">
-          <div className="palette-title">
-            <h3>Инструменты</h3>
-            <div className="button-row">
-              <span className="badge">{document.notation.nodeTypes.length}</span>
-              <HidePanel
-                label="Палитра объектов"
-                onHide={() => setPanels((p) => ({ ...p, palette: false }))}
-              />
-            </div>
-          </div>
-          <p className="muted small-text">Нажмите, чтобы добавить элемент</p>
-          <button
-            className="secondary wide small"
-            onClick={async () => {
-              try {
-                setAvailableNotations(await api<NotationItem[]>('notations'));
-                setNotationsOpen(true);
-              } catch (err) {
-                setError((err as Error).message);
-              }
-            }}
-          >
-            Нотации диаграммы
-          </button>
-          <label className="small-text">
-            Отображение при размещении
-            <select
-              aria-label="Отображение при размещении"
-              value={placementType}
-              onChange={(e) => setPlacementType(e.target.value)}
-            >
-              {document.bindings.map((b) => (
-                <optgroup label={b.document.name} key={b.id}>
-                  {b.document.nodeTypes.map((t) => (
-                    <option value={qualify(b.id, t.id)} key={t.id}>
-                      {t.name}
-                    </option>
-                  ))}
-                </optgroup>
-              ))}
-            </select>
-          </label>
-          {document.bindings.map((b) => (
-            <section
-              className="notation-palette-section"
-              key={b.id}
-              aria-label={`Палитра ${b.document.name}`}
-            >
-              <div className="palette-section">
-                {b.document.name} · {b.document.version}
-              </div>
-              {b.document.nodeTypes.map((t) => (
-                <button
-                  className="palette-item"
-                  key={t.id}
-                  disabled={commandBusy}
-                  draggable
-                  onDragStart={(e) => {
-                    e.dataTransfer.setData('application/maket-type', qualify(b.id, t.id));
-                    e.dataTransfer.effectAllowed = 'copy';
-                  }}
-                  onClick={() => void addNode(qualify(b.id, t.id))}
-                >
-                  <span
-                    className={`palette-shape ${t.appearance.shape}`}
-                    style={{ borderColor: t.appearance.stroke, background: t.appearance.fill }}
-                  />
-                  <span>{t.name}</span>
-                  <Plus size={14} />
-                </button>
-              ))}
-            </section>
-          ))}
-          <div className="palette-section">СОЕДИНЕНИЯ</div>
-          <label className="small-text">
-            Тип связи
-            <select
-              value={edgeType}
-              onChange={(e) => setEdgeType(e.target.value)}
-              aria-label="Тип связи"
-            >
-              {document.bindings.map((b) => (
-                <optgroup label={b.document.name} key={b.id}>
-                  {b.document.edgeTypes.map((t) => (
-                    <option value={qualify(b.id, t.id)} key={t.id}>
-                      {t.name}
-                    </option>
-                  ))}
-                </optgroup>
-              ))}
-              <optgroup label="Пояснения">
-                <option value="universal:association">Поясняющая связь</option>
-              </optgroup>
-            </select>
-          </label>
-          <p className="muted small-text">
-            Перетащите связь от правого порта к левому. Тип связи выбирается в нотации исходного
-            представления. Соединение должно соответствовать её правилам.
-          </p>
-          <div className="palette-section">СЛОИ</div>
-          <div className="layers-panel" aria-label="Слои диаграммы">
-            {[...document.nodes]
-              .sort((a, b) => (a.layer ?? 0) - (b.layer ?? 0))
-              .reverse()
-              .map((n) => (
-                <button
-                  className={selected?.kind === 'node' && selected.id === n.id ? 'selected' : ''}
-                  key={n.id}
-                  onClick={() => setSelected({ kind: 'node', id: n.id })}
-                >
-                  <span>
-                    {String(
-                      n.label ??
-                        n.properties.title ??
-                        document.notation.nodeTypes.find((t) => t.id === n.typeId)?.name,
-                    )}
-                  </span>
-                  <small>{n.layer ?? 0}</small>
-                </button>
-              ))}
-            {!document.nodes.length && <span className="muted small-text">Пока нет элементов</span>}
-          </div>
-          <div className="palette-bottom">
-            <input
-              type="file"
-              hidden
-              ref={file}
-              accept=".json"
-              onChange={async (e) => {
-                const f = e.target.files?.[0];
-                e.target.value = '';
-                if (!f) return;
-                try {
-                  const raw = await readJson(f),
-                    parsed = portableDiagramSchema.parse(raw.document ?? raw);
-                  if (parsed.schemaVersion !== 2 || parsed.modelSpaceId !== document.modelSpaceId)
-                    throw new Error('Импортируйте этот файл как новую диаграмму через библиотеку.');
-                  if (JSON.stringify(parsed.bindings) !== JSON.stringify(document.bindings))
-                    throw new Error('Другой набор нотаций. Используйте импорт через библиотеку.');
-                  if (parsed.nodes.some((n) => !objectLookup.has(n.objectId)))
-                    throw new Error('Объекты файла отсутствуют в модели. Используйте библиотеку.');
-                  const next = packDocument(
-                    projectDocument(parsed),
-                    objectsRef.current,
-                    relationsRef.current,
-                  );
-                  const issues = modelErrors(next);
-                  if (issues.length) throw new Error(issues.join('; '));
-                  change(projectDocument(next));
-                } catch (e) {
-                  setError((e as Error).message);
-                }
-              }}
-            />
-            <button className="secondary wide small" onClick={() => file.current?.click()}>
-              <Upload size={15} />
-              Импорт файла
-            </button>
-            <span className="muted small-text">
-              Удалить: Backspace / Delete
-              <br />
-              Перемещение: перетаскивание
-              <br />
-              Масштаб: колесо мыши
-            </span>
-          </div>
-        </aside>
-        <div
-          className="flow-container"
-          onDragOver={(e) => {
-            if (
-              e.dataTransfer.types.some(
-                (t) =>
-                  t === 'application/maket-object' ||
-                  t === 'application/maket-type' ||
-                  t === 'application/maket-relation',
-              )
-            ) {
-              e.preventDefault();
-              e.dataTransfer.dropEffect = 'copy';
-            }
-          }}
-          onDrop={(e) => {
-            e.preventDefault();
-            const relationId = e.dataTransfer.getData('application/maket-relation');
-            if (relationId) {
-              const r = relationLookup.get(relationId);
-              if (r) setRelationPlacement(r);
-              return;
-            }
-            const objectId = e.dataTransfer.getData('application/maket-object'),
-              typeId = e.dataTransfer.getData('application/maket-type');
-            if (objectId || typeId)
-              void addNode(
-                typeId || placementType,
-                objectId || undefined,
-                flow.screenToFlowPosition({ x: e.clientX, y: e.clientY }),
-              );
-          }}
-        >
-          <NodeActionsContext.Provider value={nodeActions}>
-            <ReactFlow<CanvasNode>
-              nodesDraggable={lease.held}
-              nodesConnectable={lease.held}
-              edgesReconnectable={lease.held}
-              nodes={nodes}
-              edges={edges}
-              nodeTypes={canvasNodeTypes}
-              connectionMode={ConnectionMode.Loose}
-              colorMode={user.settings.theme}
-              elevateNodesOnSelect={false}
-              elevateEdgesOnSelect={false}
-              onNodesChange={nodesChanged}
-              onEdgesChange={edgesChanged}
-              onNodeClick={(_, n) =>
-                setSelected({ kind: n.type === 'relation-anchor' ? 'edge' : 'node', id: n.id })
-              }
-              onEdgeClick={(_, e) => setSelected({ kind: 'edge', id: e.id })}
-              onNodeContextMenu={(event, node) => {
-                event.preventDefault();
-                const target = {
-                  kind:
-                    node.type === 'relation-anchor' || node.type === 'free-endpoint'
-                      ? ('edge' as const)
-                      : ('node' as const),
-                  id:
-                    node.type === 'free-endpoint'
-                      ? (node.data as FreeEndpointNode['data']).edgeId
-                      : node.id,
-                };
-                setSelected(target);
-                setCanvasMenu({ x: event.clientX, y: event.clientY, target });
-              }}
-              onEdgeContextMenu={(event, edge) => {
-                event.preventDefault();
-                const target = { kind: 'edge' as const, id: edge.id };
-                setSelected(target);
-                setCanvasMenu({ x: event.clientX, y: event.clientY, target });
-              }}
-              onPaneContextMenu={(event) => {
-                event.preventDefault();
-                setSelected(null);
-                setCanvasMenu({ x: event.clientX, y: event.clientY, target: null });
-              }}
-              onPaneClick={() => {
-                setSelected(null);
-                setCanvasMenu(null);
-              }}
-              onNodeDragStart={() => beginGesture('drag')}
-              onNodeDragStop={endGesture}
-              onConnectStart={(_, { nodeId, handleId, handleType }) => {
-                if (nodeId && handleType === 'source')
-                  setEdgeType(connectionTypeForSource(docRef.current, nodeId, edgeType, handleId));
-              }}
-              onConnect={(c) => {
-                const next = candidate(c);
-                const issues = modelErrors(
-                  packDocument(next, objectsRef.current, relationsRef.current),
-                );
-                if (issues.length) setConnectionNotice({ message: issues.join('; ') });
-                else {
-                  setEdgeType(next.edges[next.edges.length - 1].typeId);
-                  change(next);
-                }
-              }}
-              onReconnectStart={(_, e, handle) => {
-                reconnecting.current = {
-                  id: e.id,
-                  end: handle === 'source' ? 'target' : 'source',
-                  completed: false,
-                };
-                beginGesture('drag');
-              }}
-              onReconnect={(e, c) => {
-                const next = reconnectCandidate(e.id, c);
-                const issues = modelErrors(
-                  packDocument(next, objectsRef.current, relationsRef.current),
-                );
-                if (issues.length) setConnectionNotice({ message: issues.join('; ') });
-                else {
-                  change(next);
-                  if (reconnecting.current) reconnecting.current.completed = true;
-                }
-              }}
-              onReconnectEnd={(event, e, handle, state) => {
-                if (!reconnecting.current?.completed && !state.toHandle && !state.toNode) {
-                  const pointer = 'changedTouches' in event ? event.changedTouches[0] : event;
-                  if (pointer)
-                    detachEnd(
-                      e.id,
-                      handle === 'source' ? 'target' : 'source',
-                      flow.screenToFlowPosition({ x: pointer.clientX, y: pointer.clientY }),
-                    );
-                } else if (!reconnecting.current?.completed) {
-                  setConnectionNotice({
-                    message: 'Соединение запрещено: выберите совместимый порт',
-                  });
-                }
-                reconnecting.current = null;
-                endGesture();
-              }}
-              onConnectEnd={connectionEnded}
-              onClickConnectEnd={connectionEnded}
-              isValidConnection={(c) =>
-                modelErrors(
-                  packDocument(
-                    reconnecting.current
-                      ? reconnectCandidate(reconnecting.current.id, c)
-                      : candidate(c),
-                    objectsRef.current,
-                    relationsRef.current,
-                  ),
-                ).length === 0
-              }
-              snapToGrid={user.settings.snapToGrid}
-              snapGrid={[20, 20]}
-              deleteKeyCode={
-                !lease.held || commandBusy || objectSaving ? null : ['Backspace', 'Delete']
-              }
-              minZoom={0.2}
-              maxZoom={2}
-            >
-              <EdgeMarkers diagramId={initial.id} edges={styledEdges} />
-              <Background
-                variant={BackgroundVariant.Dots}
-                gap={20}
-                size={1}
-                color="var(--canvas-dots)"
-              />
-              <Controls showInteractive={false} />
-              <MiniMap
-                pannable
-                maskColor="var(--minimap-mask)"
-                bgColor="var(--panel)"
-                zoomable
-                nodeColor={(n) =>
-                  n.type !== 'notation'
-                    ? 'transparent'
-                    : nodeAppearance((n.data as ShapeData).node, (n.data as ShapeData).definition)
-                        .fill
-                }
-                nodeStrokeColor={(n) =>
-                  n.type !== 'notation'
-                    ? 'transparent'
-                    : nodeAppearance((n.data as ShapeData).node, (n.data as ShapeData).definition)
-                        .stroke
-                }
-              />
-            </ReactFlow>
-          </NodeActionsContext.Provider>
-          {!document.nodes.length && (
-            <div className="canvas-empty">
-              <span>
-                <GitBranch size={30} />
-              </span>
-              <h2>Всё начинается с одного элемента</h2>
-              <p>
-                Выберите инструмент в палитре слева
-                <br />и создайте первую связь.
-              </p>
-            </div>
-          )}
-          <div className="canvas-caption">
-            <MousePointer2 size={13} /> {document.nodes.length} элементов · {document.edges.length}{' '}
-            связей
-          </div>
+        <div hidden data-shortcut-actions onClick={(event) => event.stopPropagation()}>
+          {generalActions}
+          {canvasActions}
         </div>
-        <aside className="inspector">
-          <div className="palette-title">
-            <h3>Свойства</h3>
-            <HidePanel
-              label="Свойства"
-              side="right"
-              onHide={() => setPanels((p) => ({ ...p, properties: false }))}
-            />
-          </div>
-          {selectedObject && definition ? (
-            <>
-              <div className="inspector-type">
-                <span className="file-icon">
-                  <GitBranch size={20} />
-                </span>
-                <div>
-                  <strong>{selectedNodeCaption ?? definition.name}</strong>
-                  <small>{selected?.kind === 'node' ? definition.name : 'Соединение'}</small>
-                </div>
-              </div>
-              {selectedNode?.objectId && objectLookup.get(selectedNode.objectId) && (
-                <div className="model-object-summary">
-                  <strong>{objectLookup.get(selectedNode.objectId)!.name}</strong>
-                  <small>
-                    Общий объект ·{' '}
-                    {document.nodes.filter((n) => n.objectId === selectedNode.objectId).length}{' '}
-                    представлений здесь
-                  </small>
-                  <button
-                    className="secondary small"
-                    onClick={() => setObjectEditing(objectLookup.get(selectedNode.objectId!)!)}
-                  >
-                    Общие свойства объекта
-                  </button>
-                  <button
-                    className="secondary small"
-                    onClick={() => void addNode(selectedNode.typeId, selectedNode.objectId)}
-                  >
-                    Ещё одно представление
-                  </button>
-                  <button
-                    className="secondary small"
-                    disabled={
-                      selectedNode.label === undefined &&
-                      selectedNode.properties.title === undefined
-                    }
-                    onClick={() =>
-                      change({
-                        ...docRef.current,
-                        nodes: docRef.current.nodes.map((n) => {
-                          if (n.id !== selectedNode.id) return n;
-                          const properties = { ...n.properties };
-                          if (
-                            definition.properties.some(
-                              (p) =>
-                                p.key === 'title' && p.type === 'string' && p.scope !== 'object',
-                            )
-                          )
-                            delete properties.title;
-                          return { ...n, label: undefined, properties };
-                        }),
-                      })
-                    }
-                  >
-                    Сбросить локальную подпись
-                  </button>
-                  <label>
-                    Отображение объекта
-                    <select
-                      aria-label="Отображение объекта"
-                      value={selectedNode.typeId}
-                      onChange={(e) => requestSkin(selectedNode.id, e.target.value)}
-                    >
-                      {document.bindings.map((b) => (
-                        <optgroup label={`${b.document.name} · ${b.document.version}`} key={b.id}>
-                          {b.document.nodeTypes.map((t) => (
-                            <option key={t.id} value={qualify(b.id, t.id)}>
-                              {t.name}
-                            </option>
-                          ))}
-                        </optgroup>
-                      ))}
-                    </select>
-                  </label>
-                </div>
-              )}
-              <div className="form-stack">
-                {definition.properties.map((p) => (
-                  <label key={p.key}>
-                    {p.label}
-                    {p.scope === 'object' && (
-                      <small>
-                        {' '}
-                        ·{' '}
-                        {Object.hasOwn(rawSelectedObject?.attributes ?? {}, p.objectKey ?? p.key)
-                          ? 'локальное переопределение'
-                          : 'общий атрибут'}
-                      </small>
-                    )}
-                    {p.required && <span className="required"> *</span>}
-                    {p.type === 'boolean' ? (
-                      <PropertyCheckbox
-                        key={`${selected?.id}:${p.key}`}
-                        value={Boolean(selectedObject.properties[p.key])}
-                        onValue={(value) => propertyChange(p.key, value)}
-                      />
-                    ) : (
-                      <PropertyInput
-                        key={`${selected?.id}:${p.key}`}
-                        shared={p.scope === 'object' && selected?.kind === 'node'}
-                        type={p.type === 'number' ? 'number' : 'text'}
-                        value={
-                          selectedNodeCaption !== undefined &&
-                          p.key === 'title' &&
-                          p.type === 'string' &&
-                          p.scope !== 'object'
-                            ? selectedNodeCaption
-                            : String(selectedObject.properties[p.key] ?? '')
-                        }
-                        onValue={(value) =>
-                          propertyChange(p.key, p.type === 'number' ? Number(value) : value)
-                        }
-                      />
-                    )}
-                  </label>
-                ))}
-                {!definition.properties.length && (
-                  <p className="muted">У этого типа нет дополнительных свойств.</p>
-                )}
-              </div>
-              <RepresentationAttributes
-                key={selectedObject.id}
-                local={rawSelectedObject?.attributes}
-                object={baseEntity}
-                onChange={representationAttributes}
-              />
-              {selectedNode && selectedNodeAppearance && (
-                <div className="inspector-appearance form-stack">
-                  <h3>Размер и слои</h3>
-                  <div className="appearance-grid">
-                    <NumberField
-                      label="Ширина объекта"
-                      value={selectedNodeAppearance.width}
-                      min={40}
-                      max={2000}
-                      onChange={(v) => updateNodeSize('width', v)}
-                    />
-                    <NumberField
-                      label="Высота объекта"
-                      value={selectedNodeAppearance.height}
-                      min={30}
-                      max={1600}
-                      onChange={(v) => updateNodeSize('height', v)}
-                    />
-                  </div>
-                  <NumberField
-                    label="Уровень слоя"
-                    value={selectedNode.layer ?? 0}
-                    min={-1000000}
-                    max={1000000}
-                    onChange={(layer) =>
-                      change({
-                        ...docRef.current,
-                        nodes: docRef.current.nodes.map((n) =>
-                          n.id === selectedNode.id ? { ...n, layer: Math.round(layer) } : n,
-                        ),
-                      })
-                    }
-                  />
-                  <div className="layer-actions">
-                    <button
-                      className="secondary small"
-                      onClick={() => reorderNode(selectedNode.id, 'front')}
-                    >
-                      На передний план
-                    </button>
-                    <button
-                      className="secondary small"
-                      onClick={() => reorderNode(selectedNode.id, 'back')}
-                    >
-                      На задний план
-                    </button>
-                    <button
-                      className="secondary small"
-                      onClick={() => reorderNode(selectedNode.id, 'forward')}
-                    >
-                      На уровень выше
-                    </button>
-                    <button
-                      className="secondary small"
-                      onClick={() => reorderNode(selectedNode.id, 'backward')}
-                    >
-                      На уровень ниже
-                    </button>
-                  </div>
-                  <h3>Оформление объекта</h3>
-                  <label>
-                    Форма объекта
-                    <select
-                      aria-label="Форма объекта"
-                      value={
-                        selectedNodeAppearance.shape === 'custom'
-                          ? `custom:${selectedNodeAppearance.shapeId}`
-                          : selectedNodeAppearance.shape
-                      }
-                      onChange={(e) =>
-                        updateNodeAppearance(
-                          e.target.value.startsWith('custom:')
-                            ? { shape: 'custom', shapeId: e.target.value.slice(7) }
-                            : {
-                                shape: e.target.value as NodeOverride['shape'],
-                                shapeId: undefined,
-                              },
-                        )
-                      }
-                    >
-                      {baseShapes.map((shape, i) => (
-                        <option value={shape} key={shape}>
-                          {['Прямоугольник', 'Скруглённый', 'Ромб', 'Эллипс', 'Текст'][i]}
-                        </option>
-                      ))}
-                      {document.notation.shapes
-                        ?.filter((s) => splitType(s.id)[0] === splitType(selectedNode.typeId)[0])
-                        .map((s) => (
-                          <option value={`custom:${s.id}`} key={s.id}>
-                            {s.name}
-                          </option>
-                        ))}
-                    </select>
-                  </label>
-                  <div className="appearance-grid">
-                    <label>
-                      Заливка объекта
-                      <input
-                        type="color"
-                        aria-label="Заливка объекта"
-                        value={selectedNodeAppearance.fill}
-                        onChange={(e) => updateNodeAppearance({ fill: e.target.value })}
-                      />
-                    </label>
-                    <label>
-                      Контур объекта
-                      <input
-                        type="color"
-                        aria-label="Контур объекта"
-                        value={selectedNodeAppearance.stroke}
-                        onChange={(e) => updateNodeAppearance({ stroke: e.target.value })}
-                      />
-                    </label>
-                  </div>
-                  <TextAppearanceControls
-                    value={selectedNodeAppearance}
-                    onChange={updateNodeAppearance}
-                  />
-                  <small className="muted">
-                    Двойной щелчок — изменить текст. Enter — сохранить, Esc — отменить.
-                  </small>
-                </div>
-              )}
-              {selectedEdge && (
-                <div className="inspector-appearance form-stack">
-                  <h3>Связь модели</h3>
-                  <p className="small-text">
-                    {relationLookup.get(selectedEdge.relationId ?? '')?.name ?? 'Связь'} · общая для
-                    всех стрелок
-                  </p>
-                  <button
-                    className="secondary small"
-                    onClick={() => {
-                      const r = relationLookup.get(selectedEdge.relationId ?? '');
-                      if (r) void editRelation(r);
-                    }}
-                  >
-                    Общие свойства связи
-                  </button>
-                  <label>
-                    Использовать связь модели
-                    <select
-                      aria-label="Использовать связь модели"
-                      value={selectedEdge.relationId ?? ''}
-                      onChange={(e) =>
-                        change({
-                          ...docRef.current,
-                          edges: docRef.current.edges.map((x) =>
-                            x.id === selectedEdge.id ? { ...x, relationId: e.target.value } : x,
-                          ),
-                        })
-                      }
-                    >
-                      {allRelations
-                        .filter(
-                          (r) =>
-                            (!r.archived || r.id === selectedEdge.relationId) &&
-                            r.sourceId ===
-                              (selectedEdge.detachedSource
-                                ? relationLookup.get(selectedEdge.relationId ?? '')?.sourceId
-                                : participantId(document, selectedEdge.source)) &&
-                            r.targetId ===
-                              (selectedEdge.detachedTarget
-                                ? relationLookup.get(selectedEdge.relationId ?? '')?.targetId
-                                : participantId(document, selectedEdge.target)),
-                        )
-                        .map((r) => (
-                          <option key={r.id} value={r.id}>
-                            {r.name}
-                          </option>
-                        ))}
-                    </select>
-                  </label>
-                  <h3>Концы стрелки</h3>
-                  <p className="muted small-text">
-                    Перетащите конец к другому порту или на свободное место. При смене участника
-                    создаётся отдельная модельная связь.
-                  </p>
-                  {(['source', 'target'] as const).map((end) => (
-                    <button
-                      key={end}
-                      className="secondary small"
-                      disabled={Boolean(
-                        end === 'source'
-                          ? selectedEdge.detachedSource
-                          : selectedEdge.detachedTarget,
-                      )}
-                      onClick={() => detachEnd(selectedEdge.id, end)}
-                    >
-                      {end === 'source' ? 'Отвязать начало' : 'Отвязать конец'}
-                    </button>
-                  ))}
-                  <h3>Оформление стрелки</h3>
-                  <EdgeAppearanceControls
-                    value={edgeAppearance(
-                      document.notation.edgeTypes.find((t) => t.id === selectedEdge.typeId)!
-                        .appearance,
-                      selectedEdge.appearance,
-                    )}
-                    onChange={updateEdgeAppearance}
-                  />
-                </div>
-              )}
-              <div className="inspector-meta">
-                <small>ID</small>
-                <code>{selectedObject.id.slice(0, 22)}…</code>
-              </div>
+        <div className="editor-toolbar">
+          <div className="editor-title">
+            <Link
+              href={`/solutions${initial.entityId ? `?parent=${initial.entityId}` : ''}`}
+              className="icon-button"
+              aria-label="К модели решения"
+            >
+              <ArrowLeft size={20} />
+            </Link>
+            <div>
               <button
-                className="secondary danger wide small"
-                onClick={() =>
-                  deleteItems(
-                    selected?.kind === 'node' ? [selected.id] : [],
-                    selected?.kind === 'edge' ? [selected.id] : [],
-                  )
-                }
-              >
-                <Trash2 size={15} />
-                Удалить {selected?.kind === 'node' ? 'элемент' : 'связь'}
-              </button>
-            </>
-          ) : (
-            <div className="inspector-empty">
-              <MousePointer2 size={26} />
-              <p>
-                Выберите элемент или связь,
-                <br />
-                чтобы изменить свойства.
-              </p>
-            </div>
-          )}
-          <div className="validation-box">
-            <strong>
-              {errors.length ? (
-                <>
-                  <AlertCircle size={15} />
-                  {errors.length} ошибок
-                </>
-              ) : (
-                <>
-                  <CheckCircle2 size={15} />
-                  Диаграмма корректна
-                </>
-              )}
-            </strong>
-            {errors.map((error, i) => (
-              <p key={i}>{error}</p>
-            ))}
-            <small>Проверка по правилам нотации</small>
-          </div>
-        </aside>
-      </div>
-      {historyOpen && (
-        <Modal title="История диаграммы" onClose={() => setHistoryOpen(false)}>
-          <p className="muted">Последние 100 сохранений. Восстановление создаёт новую ревизию.</p>
-          <div className="revision-list">
-            {revisions.map((r) => (
-              <div className="revision-row" key={r.number}>
-                <div>
-                  <strong>
-                    Ревизия {r.number}
-                    {r.number === revision && <span className="badge">Текущая</span>}
-                  </strong>
-                  <small>
-                    {date(r.createdAt)} ·{' '}
-                    {r.reason === 'restore'
-                      ? 'Восстановление'
-                      : r.reason === 'create'
-                        ? 'Создание'
-                        : r.reason === 'duplicate'
-                          ? 'Копирование'
-                          : r.reason === 'viewpoint'
-                            ? 'Смена ракурса'
-                            : 'Сохранение'}
-                  </small>
-                </div>
-                <button
-                  className="secondary small"
-                  onClick={async () => {
-                    try {
-                      const d = await api<{ document: ModelDocument | LegacyDocument }>(
-                        `diagrams/${initial.id}/history?number=${r.number}`,
-                      );
-                      setHistorical(d.document);
-                    } catch (err) {
-                      setError((err as Error).message);
-                    }
-                  }}
-                >
-                  Просмотреть снимок
-                </button>
-                <button
-                  className="secondary small"
-                  disabled={commandBusy || r.number === revision || saving}
-                  onClick={async () => {
-                    if (
-                      !confirm('Восстановить эту версию? Несохранённые изменения будут потеряны.')
-                    )
-                      return;
-                    try {
-                      const d = await api<ModelDiagram>(`diagrams/${initial.id}/restore`, 'POST', {
-                        revision: revisionRef.current,
-                        number: r.number,
-                      });
-                      adopt(d);
-                      setHistoryOpen(false);
-                    } catch (e) {
-                      setError((e as Error).message);
-                    }
-                  }}
-                >
-                  Восстановить
-                </button>
-              </div>
-            ))}
-          </div>
-        </Modal>
-      )}
-      {relationEditing && (
-        <RelationEditor
-          key={
-            relationEditing === 'new' ? 'new' : `${relationEditing.id}:${relationEditing.revision}`
-          }
-          relation={relationEditing === 'new' ? undefined : relationEditing}
-          objects={[...objects, ...allRelations.map(relationEntity)]}
-          onSaved={(r) => mergeRelations([r])}
-          onClose={() => setRelationEditing(null)}
-        >
-          {relationEditing !== 'new' && (
-            <EntityRelations
-              entityId={relationEditing.id}
-              onChanged={() => void refreshObjects()}
-            />
-          )}
-        </RelationEditor>
-      )}
-      {linksOpen && (
-        <Modal title="Менеджер связей" onClose={() => setLinksOpen(false)} className="object-modal">
-          <EntityRelations onChanged={() => void refreshObjects()} />
-        </Modal>
-      )}
-      {relationPlacement && (
-        <RelationPlacement
-          relation={relationPlacement}
-          document={document}
-          onClose={() => setRelationPlacement(null)}
-          onPlace={async (edge) => {
-            if (!(await flush())) throw new Error('Сначала сохраните диаграмму');
-            const next = {
-              ...docRef.current,
-              edges: [...docRef.current.edges, edge],
-              relations: mergeModelObjects(docRef.current.relations ?? [], [relationPlacement]),
-            };
-            const issues = modelErrors(
-              packDocument(next, objectsRef.current, relationsRef.current),
-            );
-            if (issues.length) throw new Error(issues.join('; '));
-            change(next);
-            setSelected({ kind: 'edge', id: edge.id });
-          }}
-        />
-      )}
-      {canvasMenu && (
-        <ContextMenu
-          position={canvasMenu}
-          entityId={baseEntity?.id}
-          beforeNavigate={flush}
-          onClose={() => setCanvasMenu(null)}
-          actions={
-            canvasMenu.target ? (
-              <>
-                <button
-                  aria-label="Показать в дереве объектов"
-                  disabled={!baseEntity}
-                  onClick={showInTree}
-                >
-                  <GitBranch size={14} />
-                </button>
-                <button
-                  aria-label="Изменить свойства объекта"
-                  disabled={!baseEntity}
-                  onClick={() => {
-                    if (selected?.kind === 'edge')
-                      void editRelation(relationLookup.get(selectedEdge?.relationId ?? ''));
-                    else if (baseEntity) setObjectEditing(baseEntity);
-                  }}
-                >
-                  <MousePointer2 size={14} />
-                </button>
-                <button
-                  aria-label="Декомпозиция объекта"
-                  disabled={!baseEntity}
-                  onClick={() => {
-                    if (baseEntity)
-                      setDiagramLinks({ entityId: baseEntity.id, kind: 'decomposition' });
-                  }}
-                >
-                  <GitBranch size={14} />
-                </button>
-                <button
-                  aria-label="Углубление / смена ракурса"
-                  disabled={!baseEntity}
-                  onClick={() => {
-                    if (baseEntity) setDiagramLinks({ entityId: baseEntity.id, kind: 'viewpoint' });
-                  }}
-                >
-                  <GitBranch size={14} />
-                </button>
-                <button
-                  aria-label="Свойства представления"
-                  onClick={() => setPanels((p) => ({ ...p, properties: true }))}
-                >
-                  <MousePointer2 size={14} />
-                </button>
-                {selectedNode && (
-                  <>
-                    <button
-                      aria-label="Ещё одно представление"
-                      onClick={() => void addNode(selectedNode.typeId, selectedNode.objectId)}
-                    >
-                      <Plus size={14} />
-                    </button>
-                    <button
-                      aria-label="На передний план"
-                      onClick={() => reorderNode(selectedNode.id, 'front')}
-                    >
-                      <Plus size={14} />
-                    </button>
-                    <button
-                      aria-label="На задний план"
-                      onClick={() => reorderNode(selectedNode.id, 'back')}
-                    >
-                      <Plus size={14} />
-                    </button>
-                  </>
-                )}
-                {selectedEdge && (
-                  <>
-                    <button
-                      aria-label="Отвязать начало связи"
-                      disabled={!!selectedEdge.detachedSource}
-                      onClick={() => detachEnd(selectedEdge.id, 'source')}
-                    >
-                      <GitBranch size={14} />
-                    </button>
-                    <button
-                      aria-label="Отвязать конец связи"
-                      disabled={!!selectedEdge.detachedTarget}
-                      onClick={() => detachEnd(selectedEdge.id, 'target')}
-                    >
-                      <GitBranch size={14} />
-                    </button>
-                  </>
-                )}
-                <button
-                  aria-label="Удалить представление"
-                  disabled={commandBusy || objectSaving}
-                  onClick={() =>
-                    deleteItems(
-                      selected?.kind === 'node' ? [selected.id] : [],
-                      selected?.kind === 'edge' ? [selected.id] : [],
-                    )
+                className="title-button"
+                disabled={!canEdit}
+                onClick={async () => {
+                  const next = prompt('Название диаграммы', name);
+                  if (!next?.trim()) return;
+                  try {
+                    const result = await api<Diagram>(`diagrams/${initial.id}`, 'PATCH', {
+                      name: next,
+                    });
+                    setName(result.name);
+                  } catch (e) {
+                    setError((e as Error).message);
                   }
-                >
-                  <Trash2 size={14} />
-                </button>
+                }}
+              >
+                {name}
+                <ChevronDown size={14} />
+              </button>
+              <small>
+                {initial.entityId && (
+                  <Link href={`/solutions?parent=${initial.entityId}`}>Декомпозиция · </Link>
+                )}
+                {document.notation.name} · v{document.notation.version}
+              </small>
+            </div>
+          </div>
+          <LeaseNotice {...lease} />
+          <div className="editor-mode" role="group" aria-label="Режим диаграммы">
+            <button
+              className="secondary small"
+              aria-pressed={!canEdit}
+              disabled={!canEdit || saving || interacting || commandBusy || objectSaving}
+              onClick={() => void toggleMode()}
+            >
+              Просмотр
+            </button>
+            <button
+              className="secondary small"
+              aria-pressed={canEdit}
+              disabled={
+                canEdit || !lease.held || saving || interacting || commandBusy || objectSaving
+              }
+              onClick={() => void toggleMode()}
+            >
+              Редактирование
+            </button>
+          </div>
+          <div className="editor-save-state">
+            {saving ? (
+              'Сохраняем…'
+            ) : dirty ? (
+              <>
+                <span className="unsaved-dot" />
+                Есть изменения
               </>
             ) : (
               <>
-                <button
-                  aria-label="Сохранить диаграмму"
-                  disabled={saving || !dirty}
-                  onClick={() => void save()}
-                >
-                  <Save size={14} />
-                </button>
-                <button
-                  aria-label="Отменить изменение"
-                  disabled={!undo.length}
-                  onClick={undoAction}
-                >
-                  <Undo2 size={14} />
-                </button>
-                <button
-                  aria-label="Показать все панели"
-                  onClick={() =>
-                    setPanels((p) => ({ ...p, tree: true, palette: true, properties: true }))
-                  }
-                >
-                  <MousePointer2 size={14} />
-                </button>
+                <CheckCircle2 size={14} />
+                Сохранено · ревизия {revision}
               </>
-            )
-          }
-        />
-      )}
-      {diagramLinks && (
-        <DiagramLinks
-          entityId={diagramLinks.entityId}
-          sourceDiagramId={initial.id}
-          initialKind={diagramLinks.kind}
-          onClose={() => setDiagramLinks(null)}
-          onChanged={() => void refreshObjects()}
-        />
-      )}
-      {viewpointsOpen && (
-        <ViewpointBrowser
-          currentDiagramId={initial.id}
-          onClose={() => setViewpointsOpen(false)}
-          onChanged={(diagram) => {
-            if (diagram?.id === initial.id) {
-              revisionRef.current = diagram.revision;
-              setRevision(diagram.revision);
-            }
-            void refreshObjects();
-          }}
-        />
-      )}
-      {objectEditing && (
-        <ObjectEditor
-          onRelationsChanged={() => void refreshObjects()}
-          key={`${objectEditing.id}:${objectEditing.revision}`}
-          object={objectEditing}
-          objects={objects}
-          onSaved={(o) => mergeObjects([o])}
-          onClose={() => setObjectEditing(null)}
-        />
-      )}
-      {notationsOpen && (
-        <Modal title="Нотации диаграммы" onClose={() => setNotationsOpen(false)}>
-          <p className="muted">
-            Каждая нотация закреплена на выбранной версии. Подключено {document.bindings.length} из
-            12.
-          </p>
-          <div className="notation-bindings">
-            {document.bindings.map((b) => (
-              <div className="revision-row" key={b.id}>
-                <span>
-                  <strong>{b.document.name}</strong>
-                  <small>v{b.document.version}</small>
-                </span>
-                <button
-                  className="secondary small danger"
-                  disabled={
-                    commandBusy ||
-                    document.bindings.length === 1 ||
-                    document.nodes.some((n) => splitType(n.typeId)[0] === b.id) ||
-                    document.edges.some((e) => splitType(e.typeId)[0] === b.id)
-                  }
-                  onClick={() => void updateNotations(undefined, b.id)}
-                >
-                  Отключить {b.document.name}
-                </button>
-              </div>
-            ))}
-          </div>
-          <h3>Добавить из библиотеки</h3>
-          {availableNotations.map((n) => (
-            <button
-              key={n.id}
-              className="secondary notation-add"
-              disabled={
-                commandBusy ||
-                document.bindings.length >= 12 ||
-                document.bindings.some(
-                  (b) =>
-                    b.document.id === n.document.id && b.document.version === n.document.version,
-                )
-              }
-              onClick={() => void updateNotations(n.id)}
-            >
-              Добавить {n.name} · v{n.document.version}
-            </button>
-          ))}
-          {error && (
-            <div className="error" role="alert">
-              {error}
-            </div>
-          )}
-        </Modal>
-      )}
-      {placementRequest && (
-        <Modal title="Свойства перед размещением" onClose={() => setPlacementRequest(null)}>
-          <p className="muted">
-            Заполните обязательные свойства отображения. Общие атрибуты относятся к объекту и
-            применяются ко всем его представлениям.
-          </p>
-          <form
-            className="form-stack"
-            onSubmit={(e) => {
-              e.preventDefault();
-              void addNode(
-                placementRequest.typeId,
-                placementRequest.objectId,
-                placementRequest.position,
-                placementRequest.values,
-              );
-            }}
-          >
-            {Object.entries(placementRequest.values).map(([key, value]) => {
-              const p = document.notation.nodeTypes
-                .find((t) => t.id === placementRequest.typeId)!
-                .properties.find((p) => p.key === key)!;
-              return (
-                <label key={key}>
-                  {p.label}
-                  {p.scope === 'object' && <small> · общий атрибут ({p.objectKey ?? p.key})</small>}
-                  <input
-                    type={
-                      p.type === 'boolean' ? 'checkbox' : p.type === 'number' ? 'number' : 'text'
-                    }
-                    required={p.type !== 'boolean'}
-                    maxLength={2000}
-                    disabled={commandBusy}
-                    checked={p.type === 'boolean' ? Boolean(value) : undefined}
-                    value={p.type === 'boolean' ? undefined : String(value)}
-                    onChange={(e) =>
-                      setPlacementRequest({
-                        ...placementRequest,
-                        values: {
-                          ...placementRequest.values,
-                          [key]:
-                            p.type === 'boolean'
-                              ? e.target.checked
-                              : p.type === 'number'
-                                ? Number(e.target.value)
-                                : e.target.value,
-                        },
-                      })
-                    }
-                  />
-                </label>
-              );
-            })}
-            {error && (
-              <p className="error" role="alert">
-                {error}
-              </p>
             )}
-            <button className="primary" disabled={commandBusy}>
-              Разместить объект
-            </button>
-          </form>
-        </Modal>
-      )}
-      {skinChange && (
-        <Modal title="Изменить отображение объекта" onClose={() => setSkinChange(null)}>
-          <p className="muted">
-            Объект, размер и положение сохраняются. Сопоставьте порты и выберите совместимые связи.
-            Прежние локальные свойства сохраняются для возврата к прежнему отображению.
-          </p>
-          <div className="skin-preview" aria-label="Предпросмотр нового отображения">
-            <DiagramPreview
-              document={displayedView(
-                skinCandidate(
-                  skinChange.nodeId,
-                  skinChange.typeId,
-                  skinChange.ports,
-                  skinChange.types,
-                ),
-                objects,
-              )}
-            />
           </div>
-          {docRef.current.edges
-            .filter((e) => e.source === skinChange.nodeId || e.target === skinChange.nodeId)
-            .map((e) => (
-              <fieldset className="skin-edge-map" key={e.id}>
-                <legend>{String(e.properties.label || e.id)}</legend>
-                <label>
-                  Отображение связи
-                  <select
-                    aria-label={`Отображение связи ${e.id}`}
-                    value={skinChange.types[e.id]}
-                    onChange={(ev) =>
-                      setSkinChange({
-                        ...skinChange,
-                        types: { ...skinChange.types, [e.id]: ev.target.value },
-                      })
-                    }
-                  >
-                    {document.notation.edgeTypes.map((t) => (
-                      <option value={t.id} key={t.id}>
+          <div className="button-row">
+            <button
+              className="secondary small"
+              onClick={async () => {
+                if (await flush()) setLinksOpen(true);
+              }}
+            >
+              <GitBranch size={14} /> Связи модели
+            </button>
+            <button
+              className="secondary small"
+              onClick={async () => {
+                if (await flush())
+                  router.push(
+                    `/solutions?graph=${graphSolutionId(initial.entityId, { objects, relations: allRelations })}${initial.entityId ? `&object=${initial.entityId}` : ''}`,
+                  );
+              }}
+            >
+              Граф решения
+            </button>
+            <button
+              className="secondary small"
+              aria-label="Ракурсы"
+              onClick={async () => {
+                if (await flush()) setViewpointsOpen(true);
+              }}
+            >
+              Ракурс: {currentViewpoint?.name ?? 'Без ракурса'}
+            </button>
+            <button
+              className="secondary small"
+              onClick={async () => {
+                if (await flush()) router.push(`/solutions?layers=1&focus=${initial.id}`);
+              }}
+            >
+              Слои ракурсов · 2.5D
+            </button>
+            <button
+              className="icon-button"
+              title="Отменить"
+              aria-label="Отменить"
+              disabled={!canEdit || commandBusy || interacting || !undo.length}
+              onClick={undoAction}
+            >
+              <Undo2 size={18} />
+            </button>
+            <button
+              className="icon-button"
+              title="Повторить"
+              aria-label="Повторить"
+              disabled={!canEdit || commandBusy || interacting || !redo.length}
+              onClick={redoAction}
+            >
+              <Redo2 size={18} />
+            </button>
+            <span className="toolbar-divider" />
+            <button className="secondary small" onClick={showHistory}>
+              <History size={16} />
+              История
+            </button>
+            <button
+              className="secondary small"
+              disabled={commandBusy || saving || interacting}
+              onClick={async () => {
+                if (await flush()) setShareOpen(true);
+              }}
+            >
+              <Share2 size={16} />
+              Поделиться
+            </button>
+            <button className="secondary small" onClick={() => setExportOpen(true)}>
+              <Download size={16} />
+              Экспорт
+            </button>
+            <button
+              className="primary small"
+              onClick={() => void save(true)}
+              disabled={
+                commandBusy || objectSaving || interacting || saving || (!dirty && !blocked)
+              }
+            >
+              <Save size={16} />
+              {blocked ? 'Повторить' : 'Сохранить'}
+            </button>
+          </div>
+        </div>
+        {shareOpen && (
+          <ShareDialog
+            id={initial.id}
+            selectedId={selected?.id}
+            onClose={() => setShareOpen(false)}
+          />
+        )}
+        {exportOpen && (
+          <ExportDialog
+            name={name}
+            document={{ ...document, relations: allRelations }}
+            objects={objects}
+            json={{
+              name,
+              document: packDocument(docRef.current, objectsRef.current, relationsRef.current),
+            }}
+            onClose={() => setExportOpen(false)}
+          />
+        )}
+        {error && (
+          <div className="error editor-error" role="alert">
+            {error}
+          </div>
+        )}
+        {connectionNotice && (
+          <div className="connection-toast" role="alert">
+            <AlertCircle size={20} aria-hidden="true" />
+            <span>{connectionNotice.message}</span>
+            <button
+              type="button"
+              className="icon-button"
+              aria-label="Закрыть уведомление"
+              onClick={() => setConnectionNotice(null)}
+            >
+              <X size={18} aria-hidden="true" />
+            </button>
+          </div>
+        )}
+        <div
+          style={{ '--tree-width': `${panels.treeWidth}px` } as CSSProperties}
+          className={`editor-body model-editor-body ${panels.tree ? '' : 'hide-tree'} ${panels.palette ? '' : 'hide-palette'} ${panels.properties ? '' : 'hide-properties'}`}
+        >
+          <PanelEdge
+            side="left"
+            items={[
+              ...(!panels.tree
+                ? [
+                    {
+                      label: 'Дерево объектов',
+                      onShow: () => setPanels((p) => ({ ...p, tree: true })),
+                    },
+                  ]
+                : []),
+              ...(!panels.palette
+                ? [
+                    {
+                      label: 'Палитра объектов',
+                      onShow: () => setPanels((p) => ({ ...p, palette: true })),
+                    },
+                  ]
+                : []),
+            ]}
+          />
+          <PanelEdge
+            side="right"
+            items={
+              !panels.properties
+                ? [
+                    {
+                      label: 'Свойства',
+                      onShow: () => setPanels((p) => ({ ...p, properties: true })),
+                    },
+                  ]
+                : []
+            }
+          />
+          <ObjectTree
+            beforeNavigate={flush}
+            onHide={() => setPanels((p) => ({ ...p, tree: false }))}
+            focusId={initial.entityId}
+            focusRequest={treeFocus}
+            diagramId={initial.id}
+            diagrams={diagrams}
+            defaultParentId={objects.find((o) => o.id === initial.entityId)?.parentId}
+            representations={[
+              ...document.nodes.map((n) => ({
+                id: n.id,
+                entityId: n.objectId!,
+                diagramId: initial.id,
+                diagramName: name,
+                notation:
+                  document.bindings.find((b) => b.id === splitType(n.typeId)[0])?.document.name ??
+                  '',
+                type: document.notation.nodeTypes.find((t) => t.id === n.typeId)?.name ?? '',
+                name: nodeLabel(
+                  effectiveNode(
+                    n,
+                    document.notation.nodeTypes.find((t) => t.id === n.typeId)!,
+                    objectLookup.get(n.objectId!),
+                  ),
+                  document.notation.nodeTypes.find((t) => t.id === n.typeId)!,
+                ),
+              })),
+              ...document.edges
+                .filter((e) => e.relationId)
+                .map((e) => ({
+                  id: e.id,
+                  entityId: e.relationId!,
+                  diagramId: initial.id,
+                  diagramName: name,
+                  notation:
+                    document.bindings.find((b) => b.id === splitType(e.typeId)[0])?.document.name ??
+                    'Универсальная связь',
+                  type: document.notation.edgeTypes.find((t) => t.id === e.typeId)?.name ?? '',
+                  name: String(
+                    effectiveEdge(
+                      e,
+                      document.notation.edgeTypes.find((t) => t.id === e.typeId)!,
+                      relationLookup.get(e.relationId!),
+                    ).properties.label ||
+                      relationLookup.get(e.relationId!)?.name ||
+                      'Связь',
+                  ),
+                })),
+            ]}
+            onRepresentationLocate={(id, diagramId) => {
+              if (diagramId !== initial.id) {
+                void flush().then((ok) => {
+                  if (ok)
+                    window.location.assign(
+                      appPath(`/solutions?diagram=${diagramId}&element=${encodeURIComponent(id)}`),
+                    );
+                });
+                return;
+              }
+              const n = docRef.current.nodes.find((n) => n.id === id),
+                e = docRef.current.edges.find((e) => e.id === id);
+              if (n || e) {
+                setSelected({ kind: n ? 'node' : 'edge', id });
+                void flow.fitView({
+                  nodes: n ? [{ id }] : [{ id: e!.source }, { id: e!.target }],
+                  padding: 0.4,
+                  maxZoom: 1,
+                });
+              }
+            }}
+            objects={objects}
+            relations={allRelations}
+            onRelationLocate={locateRelation}
+            footer={
+              <ViewpointExplorer
+                viewpoints={viewpoints}
+                diagrams={diagrams}
+                currentDiagramId={initial.id}
+                onManage={async () => {
+                  if (await flush()) setViewpointsOpen(true);
+                }}
+              />
+            }
+            onDiagramLinks={(entityId, kind) => setDiagramLinks({ entityId, kind })}
+            onRelationEdit={(r) => void editRelation(r)}
+            onRelationPlace={setRelationPlacement}
+            onRelationSaved={(r) => mergeRelations([r])}
+
+            counts={
+              new Map([
+                ...objects.map(
+                  (o) => [o.id, document.nodes.filter((n) => n.objectId === o.id).length] as const,
+                ),
+                ...allRelations.map(
+                  (r) =>
+                    [r.id, document.edges.filter((e) => e.relationId === r.id).length] as const,
+                ),
+              ])
+            }
+            selectedId={selectedNode?.objectId ?? selectedEdge?.relationId}
+            onSaved={(o) => mergeObjects([o])}
+            onRefresh={() => void refreshObjects()}
+            onRemove={async (o) => {
+              setCommandBusy(true);
+              try {
+                if (!(await flush()))
+                  throw new Error(
+                    'Сначала завершите сохранение диаграммы, затем повторите удаление',
+                  );
+                await api(`objects/${o.id}`, 'DELETE', {
+                  revision: o.revision,
+                  incarnation: o.incarnation,
+                });
+                mergeObjects(
+                  objectsRef.current.filter((x) => x.id !== o.id),
+                  true,
+                );
+              } finally {
+                setCommandBusy(false);
+              }
+            }}
+            onPlace={(id) => void addNode(placementType, id)}
+            onLocate={(id) => {
+              const n = docRef.current.nodes.find((n) => n.objectId === id);
+              if (n) {
+                setSelected({ kind: 'node', id: n.id });
+                void flow.fitView({
+                  nodes: docRef.current.nodes
+                    .filter((n) => n.objectId === id)
+                    .map((n) => ({ id: n.id })),
+                  padding: 0.5,
+                  maxZoom: 1,
+                });
+              } else {
+                const o = objectLookup.get(id);
+                if (o) setObjectEditing(o);
+              }
+            }}
+          />
+
+          <TreeResizeHandle
+            width={panels.treeWidth}
+            onResize={(treeWidth) => setPanels((p) => ({ ...p, treeWidth }))}
+          />
+          <aside className="palette">
+            <div className="palette-title">
+              <h3>Инструменты</h3>
+              <div className="button-row">
+                <span className="badge">{document.notation.nodeTypes.length}</span>
+                <HidePanel
+                  label="Палитра объектов"
+                  onHide={() => setPanels((p) => ({ ...p, palette: false }))}
+                />
+              </div>
+            </div>
+            <p className="muted small-text">Нажмите, чтобы добавить элемент</p>
+            <button
+              className="secondary wide small"
+              onClick={async () => {
+                try {
+                  setAvailableNotations(await api<NotationItem[]>('notations'));
+                  setNotationsOpen(true);
+                } catch (err) {
+                  setError((err as Error).message);
+                }
+              }}
+            >
+              Нотации диаграммы
+            </button>
+            <label className="small-text">
+              Отображение при размещении
+              <select
+                aria-label="Отображение при размещении"
+                value={placementType}
+                onChange={(e) => setPlacementType(e.target.value)}
+              >
+                {document.bindings.map((b) => (
+                  <optgroup label={b.document.name} key={b.id}>
+                    {b.document.nodeTypes.map((t) => (
+                      <option value={qualify(b.id, t.id)} key={t.id}>
                         {t.name}
                       </option>
                     ))}
-                    <option value="delete">Удалить эту связь</option>
-                  </select>
-                </label>
-                {(['source', 'target'] as const)
-                  .filter((end) => (end === 'source' ? e.source : e.target) === skinChange.nodeId)
-                  .map((end) => (
-                    <label key={end}>
-                      {end === 'source' ? 'Выходной' : 'Входной'} порт
-                      <select
-                        aria-label={`${end === 'source' ? 'Выходной' : 'Входной'} порт ${e.id}`}
-                        value={skinChange.ports[`${e.id}:${end}`]}
-                        onChange={(ev) =>
-                          setSkinChange({
-                            ...skinChange,
-                            ports: { ...skinChange.ports, [`${e.id}:${end}`]: ev.target.value },
+                  </optgroup>
+                ))}
+              </select>
+            </label>
+            {document.bindings.map((b) => (
+              <section
+                className="notation-palette-section"
+                key={b.id}
+                aria-label={`Палитра ${b.document.name}`}
+              >
+                <div className="palette-section">
+                  {b.document.name} · {b.document.version}
+                </div>
+                {b.document.nodeTypes.map((t) => (
+                  <button
+                    className="palette-item"
+                    key={t.id}
+                    disabled={!canEdit || commandBusy}
+                    draggable={canEdit}
+                    onDragStart={(e) => {
+                      e.dataTransfer.setData('application/maket-type', qualify(b.id, t.id));
+                      e.dataTransfer.effectAllowed = 'copy';
+                    }}
+                    onClick={() => void addNode(qualify(b.id, t.id))}
+                  >
+                    <span
+                      className={`palette-shape ${t.appearance.shape}`}
+                      style={{ borderColor: t.appearance.stroke, background: t.appearance.fill }}
+                    />
+                    <span>{t.name}</span>
+                    <Plus size={14} />
+                  </button>
+                ))}
+              </section>
+            ))}
+            <div className="palette-section">СОЕДИНЕНИЯ</div>
+            <label className="small-text">
+              Тип связи
+              <select
+                value={edgeType}
+                onChange={(e) => setEdgeType(e.target.value)}
+                aria-label="Тип связи"
+              >
+                {document.bindings.map((b) => (
+                  <optgroup label={b.document.name} key={b.id}>
+                    {b.document.edgeTypes.map((t) => (
+                      <option value={qualify(b.id, t.id)} key={t.id}>
+                        {t.name}
+                      </option>
+                    ))}
+                  </optgroup>
+                ))}
+                <optgroup label="Пояснения">
+                  <option value="universal:association">Поясняющая связь</option>
+                </optgroup>
+              </select>
+            </label>
+            <p className="muted small-text">
+              Перетащите связь от правого порта к левому. Тип связи выбирается в нотации исходного
+              представления. Соединение должно соответствовать её правилам.
+            </p>
+            <div className="palette-section">СЛОИ</div>
+            <div className="layers-panel" aria-label="Слои диаграммы">
+              {[
+                ...document.edges.map((e) => ({ ...e, kind: 'edge' as const })),
+                ...document.nodes.map((n) => ({ ...n, kind: 'node' as const })),
+              ]
+                .sort((a, b) => (a.layer ?? 0) - (b.layer ?? 0))
+                .reverse()
+                .map((n) => (
+                  <button
+                    className={selected?.kind === n.kind && selected.id === n.id ? 'selected' : ''}
+                    key={n.id}
+                    onClick={() => setSelected({ kind: n.kind, id: n.id })}
+                  >
+                    <span>
+                      {String(
+                        (n.kind === 'node'
+                          ? (n.label ?? n.properties.title)
+                          : n.properties.label) ??
+                          (n.kind === 'edge'
+                            ? document.notation.edgeTypes
+                            : document.notation.nodeTypes
+                          ).find((t) => t.id === n.typeId)?.name,
+                      )}
+                    </span>
+                    <small>{n.layer ?? 0}</small>
+                  </button>
+                ))}
+              {!document.nodes.length && !document.edges.length && (
+                <span className="muted small-text">Пока нет элементов</span>
+              )}
+            </div>
+            <div className="palette-bottom">
+              <input
+                type="file"
+                hidden
+                ref={file}
+                accept=".json"
+                onChange={async (e) => {
+                  const f = e.target.files?.[0];
+                  e.target.value = '';
+                  if (!f) return;
+                  try {
+                    const raw = await readJson(f),
+                      parsed = portableDiagramSchema.parse(raw.document ?? raw);
+                    if (parsed.schemaVersion !== 2 || parsed.modelSpaceId !== document.modelSpaceId)
+                      throw new Error(
+                        'Импортируйте этот файл как новую диаграмму через библиотеку.',
+                      );
+                    if (JSON.stringify(parsed.bindings) !== JSON.stringify(document.bindings))
+                      throw new Error('Другой набор нотаций. Используйте импорт через библиотеку.');
+                    if (parsed.nodes.some((n) => !objectLookup.has(n.objectId)))
+                      throw new Error(
+                        'Объекты файла отсутствуют в модели. Используйте библиотеку.',
+                      );
+                    const next = packDocument(
+                      projectDocument(parsed),
+                      objectsRef.current,
+                      relationsRef.current,
+                    );
+                    const issues = modelErrors(next);
+                    if (issues.length) throw new Error(issues.join('; '));
+                    change(projectDocument(next));
+                  } catch (e) {
+                    setError((e as Error).message);
+                  }
+                }}
+              />
+              <button
+                className="secondary wide small"
+                disabled={!canEdit}
+                onClick={() => file.current?.click()}
+              >
+                <Upload size={15} />
+                Импорт файла
+              </button>
+              <span className="muted small-text">
+                Перемещение поля:{' '}
+                {canEdit ? 'Пробел + перетаскивание или средняя кнопка' : 'левая кнопка мыши'}
+                <br />
+                Масштаб: колесо мыши
+              </span>
+            </div>
+          </aside>
+          <div
+            className="flow-container"
+            onDragOver={(e) => {
+              if (
+                e.dataTransfer.types.some(
+                  (t) =>
+                    t === 'application/maket-object' ||
+                    t === 'application/maket-type' ||
+                    t === 'application/maket-relation',
+                )
+              ) {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'copy';
+              }
+            }}
+            onDrop={(e) => {
+              e.preventDefault();
+              if (!canEdit) return;
+              const relationId = e.dataTransfer.getData('application/maket-relation');
+              if (relationId) {
+                const r = relationLookup.get(relationId);
+                if (r) setRelationPlacement(r);
+                return;
+              }
+              const objectId = e.dataTransfer.getData('application/maket-object'),
+                typeId = e.dataTransfer.getData('application/maket-type');
+              if (objectId || typeId)
+                void addNode(
+                  typeId || placementType,
+                  objectId || undefined,
+                  flow.screenToFlowPosition({ x: e.clientX, y: e.clientY }),
+                );
+            }}
+          >
+            <NodeActionsContext.Provider value={nodeActions}>
+              <ReactFlow<CanvasNode>
+                tabIndex={0}
+                nodesDraggable={canEdit && !spacePan}
+                nodesConnectable={canEdit && !spacePan}
+                edgesReconnectable={canEdit && !spacePan}
+                nodes={nodes}
+                edges={edges}
+                nodeTypes={canvasNodeTypes}
+                connectionMode={ConnectionMode.Loose}
+                colorMode={user.settings.theme}
+                elevateNodesOnSelect={false}
+                elevateEdgesOnSelect={false}
+                onNodesChange={nodesChanged}
+                onEdgesChange={edgesChanged}
+                onNodeClick={(_, n) =>
+                  setSelected({ kind: n.type === 'relation-anchor' ? 'edge' : 'node', id: n.id })
+                }
+                onEdgeClick={(_, e) => setSelected({ kind: 'edge', id: e.id })}
+                onNodeContextMenu={(event, node) => {
+                  event.preventDefault();
+                  (event.target as Element)
+                    .closest<HTMLElement>('.react-flow')
+                    ?.focus({ preventScroll: true });
+                  const target = {
+                    kind:
+                      node.type === 'relation-anchor' || node.type === 'free-endpoint'
+                        ? ('edge' as const)
+                        : ('node' as const),
+                    id:
+                      node.type === 'free-endpoint'
+                        ? (node.data as FreeEndpointNode['data']).edgeId
+                        : node.id,
+                  };
+                  setSelected(target);
+                  setCanvasMenu({ x: event.clientX, y: event.clientY, target });
+                }}
+                onEdgeContextMenu={(event, edge) => {
+                  event.preventDefault();
+                  (event.target as Element)
+                    .closest<HTMLElement>('.react-flow')
+                    ?.focus({ preventScroll: true });
+                  const target = { kind: 'edge' as const, id: edge.id };
+                  setSelected(target);
+                  setCanvasMenu({ x: event.clientX, y: event.clientY, target });
+                }}
+                onPaneContextMenu={(event) => {
+                  event.preventDefault();
+                  (event.target as Element)
+                    .closest<HTMLElement>('.react-flow')
+                    ?.focus({ preventScroll: true });
+                  setSelected(null);
+                  setCanvasMenu({ x: event.clientX, y: event.clientY, target: null });
+                }}
+                onPaneClick={() => {
+                  setSelected(null);
+                  setCanvasMenu(null);
+                }}
+                onNodeDragStart={() => beginGesture('drag')}
+                onNodeDragStop={endGesture}
+                onConnectStart={(_, { nodeId, handleId, handleType }) => {
+                  if (nodeId && handleType === 'source')
+                    setEdgeType(
+                      connectionTypeForSource(docRef.current, nodeId, edgeType, handleId),
+                    );
+                }}
+                onConnect={(c) => {
+                  const next = candidate(c);
+                  const issues = modelErrors(
+                    packDocument(next, objectsRef.current, relationsRef.current),
+                  );
+                  if (issues.length) setConnectionNotice({ message: issues.join('; ') });
+                  else {
+                    setEdgeType(next.edges[next.edges.length - 1].typeId);
+                    change(next);
+                  }
+                }}
+                onReconnectStart={(_, e, handle) => {
+                  reconnecting.current = {
+                    id: e.id,
+                    end: handle === 'source' ? 'target' : 'source',
+                    completed: false,
+                  };
+                  beginGesture('drag');
+                }}
+                onReconnect={(e, c) => {
+                  const next = reconnectCandidate(e.id, c);
+                  const issues = modelErrors(
+                    packDocument(next, objectsRef.current, relationsRef.current),
+                  );
+                  if (issues.length) setConnectionNotice({ message: issues.join('; ') });
+                  else {
+                    change(next);
+                    if (reconnecting.current) reconnecting.current.completed = true;
+                  }
+                }}
+                onReconnectEnd={(event, e, handle, state) => {
+                  if (!reconnecting.current?.completed && !state.toHandle && !state.toNode) {
+                    const pointer = 'changedTouches' in event ? event.changedTouches[0] : event;
+                    if (pointer)
+                      detachEnd(
+                        e.id,
+                        handle === 'source' ? 'target' : 'source',
+                        flow.screenToFlowPosition({ x: pointer.clientX, y: pointer.clientY }),
+                      );
+                  } else if (!reconnecting.current?.completed) {
+                    setConnectionNotice({
+                      message: 'Соединение запрещено: выберите совместимый порт',
+                    });
+                  }
+                  reconnecting.current = null;
+                  endGesture();
+                }}
+                onConnectEnd={connectionEnded}
+                onClickConnectEnd={connectionEnded}
+                isValidConnection={(c) =>
+                  modelErrors(
+                    packDocument(
+                      reconnecting.current
+                        ? reconnectCandidate(reconnecting.current.id, c)
+                        : candidate(c),
+                      objectsRef.current,
+                      relationsRef.current,
+                    ),
+                  ).length === 0
+                }
+                snapToGrid={user.settings.snapToGrid}
+                snapGrid={[20, 20]}
+                deleteKeyCode={null}
+                panOnDrag={canEdit ? [1, 2] : [0, 1, 2]}
+                panActivationKeyCode="Space"
+                minZoom={0.2}
+                maxZoom={2}
+              >
+                <EdgeMarkers diagramId={initial.id} edges={styledEdges} />
+                <Background
+                  variant={BackgroundVariant.Dots}
+                  gap={20}
+                  size={1}
+                  color="var(--canvas-dots)"
+                />
+                <Controls showInteractive={false} />
+                <MiniMap
+                  pannable
+                  maskColor="var(--minimap-mask)"
+                  bgColor="var(--panel)"
+                  zoomable
+                  nodeColor={(n) =>
+                    n.type !== 'notation'
+                      ? 'transparent'
+                      : nodeAppearance((n.data as ShapeData).node, (n.data as ShapeData).definition)
+                          .fill
+                  }
+                  nodeStrokeColor={(n) =>
+                    n.type !== 'notation'
+                      ? 'transparent'
+                      : nodeAppearance((n.data as ShapeData).node, (n.data as ShapeData).definition)
+                          .stroke
+                  }
+                />
+              </ReactFlow>
+            </NodeActionsContext.Provider>
+            {!document.nodes.length && (
+              <div className="canvas-empty">
+                <span>
+                  <GitBranch size={30} />
+                </span>
+                <h2>Всё начинается с одного элемента</h2>
+                <p>
+                  Выберите инструмент в палитре слева
+                  <br />и создайте первую связь.
+                </p>
+              </div>
+            )}
+            <div className="canvas-caption">
+              <MousePointer2 size={13} /> {document.nodes.length} элементов ·{' '}
+              {document.edges.length} связей
+            </div>
+          </div>
+          <aside className="inspector">
+            <div className="palette-title">
+              <h3>Свойства</h3>
+              <HidePanel
+                label="Свойства"
+                side="right"
+                onHide={() => setPanels((p) => ({ ...p, properties: false }))}
+              />
+            </div>
+            <fieldset className="lease-fields" disabled={!canEdit}>
+              {selectedObject && definition ? (
+                <>
+                  <div className="inspector-type">
+                    <span className="file-icon">
+                      <GitBranch size={20} />
+                    </span>
+                    <div>
+                      <strong>{selectedNodeCaption ?? definition.name}</strong>
+                      <small>{selected?.kind === 'node' ? definition.name : 'Соединение'}</small>
+                    </div>
+                  </div>
+                  {selectedNode?.objectId && objectLookup.get(selectedNode.objectId) && (
+                    <div className="model-object-summary">
+                      <strong>{objectLookup.get(selectedNode.objectId)!.name}</strong>
+                      <small>
+                        Общий объект ·{' '}
+                        {document.nodes.filter((n) => n.objectId === selectedNode.objectId).length}{' '}
+                        представлений здесь
+                      </small>
+                      <button
+                        className="secondary small"
+                        onClick={() => setObjectEditing(objectLookup.get(selectedNode.objectId!)!)}
+                      >
+                        Общие свойства объекта
+                      </button>
+                      <button
+                        className="secondary small"
+                        onClick={() => void addNode(selectedNode.typeId, selectedNode.objectId)}
+                      >
+                        Ещё одно представление
+                      </button>
+                      <button
+                        className="secondary small"
+                        disabled={
+                          selectedNode.label === undefined &&
+                          selectedNode.properties.title === undefined
+                        }
+                        onClick={() =>
+                          change({
+                            ...docRef.current,
+                            nodes: docRef.current.nodes.map((n) => {
+                              if (n.id !== selectedNode.id) return n;
+                              const properties = { ...n.properties };
+                              if (
+                                definition.properties.some(
+                                  (p) =>
+                                    p.key === 'title' &&
+                                    p.type === 'string' &&
+                                    p.scope !== 'object',
+                                )
+                              )
+                                delete properties.title;
+                              return { ...n, label: undefined, properties };
+                            }),
                           })
                         }
                       >
-                        <option value="">Выберите порт</option>
-                        {document.notation.nodeTypes
-                          .find((t) => t.id === skinChange.typeId)!
-                          .ports.filter(
-                            (p) => p.direction === (end === 'source' ? 'output' : 'input'),
-                          )
-                          .map((p) => (
-                            <option value={p.id} key={p.id}>
-                              {p.id}
+                        Сбросить локальную подпись
+                      </button>
+                      <label>
+                        Отображение объекта
+                        <select
+                          aria-label="Отображение объекта"
+                          value={selectedNode.typeId}
+                          onChange={(e) => requestSkin(selectedNode.id, e.target.value)}
+                        >
+                          {document.bindings.map((b) => (
+                            <optgroup
+                              label={`${b.document.name} · ${b.document.version}`}
+                              key={b.id}
+                            >
+                              {b.document.nodeTypes.map((t) => (
+                                <option key={t.id} value={qualify(b.id, t.id)}>
+                                  {t.name}
+                                </option>
+                              ))}
+                            </optgroup>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+                  )}
+                  <div className="form-stack">
+                    {definition.properties.map((p) => (
+                      <label key={p.key}>
+                        {p.label}
+                        {p.scope === 'object' && (
+                          <small>
+                            {' '}
+                            ·{' '}
+                            {Object.hasOwn(
+                              rawSelectedObject?.attributes ?? {},
+                              p.objectKey ?? p.key,
+                            )
+                              ? 'локальное переопределение'
+                              : 'общий атрибут'}
+                          </small>
+                        )}
+                        {p.required && <span className="required"> *</span>}
+                        {p.type === 'boolean' ? (
+                          <PropertyCheckbox
+                            key={`${selected?.id}:${p.key}`}
+                            value={Boolean(selectedObject.properties[p.key])}
+                            onValue={(value) => propertyChange(p.key, value)}
+                          />
+                        ) : (
+                          <PropertyInput
+                            key={`${selected?.id}:${p.key}`}
+                            shared={p.scope === 'object' && selected?.kind === 'node'}
+                            type={p.type === 'number' ? 'number' : 'text'}
+                            value={
+                              selectedNodeCaption !== undefined &&
+                              p.key === 'title' &&
+                              p.type === 'string' &&
+                              p.scope !== 'object'
+                                ? selectedNodeCaption
+                                : String(selectedObject.properties[p.key] ?? '')
+                            }
+                            onValue={(value) =>
+                              propertyChange(p.key, p.type === 'number' ? Number(value) : value)
+                            }
+                          />
+                        )}
+                      </label>
+                    ))}
+                    {!definition.properties.length && (
+                      <p className="muted">У этого типа нет дополнительных свойств.</p>
+                    )}
+                  </div>
+                  <RepresentationAttributes
+                    key={selectedObject.id}
+                    local={rawSelectedObject?.attributes}
+                    object={baseEntity}
+                    onChange={representationAttributes}
+                  />
+                  {layerControls}
+                  {selectedNode && selectedNodeAppearance && (
+                    <div className="inspector-appearance form-stack">
+                      <h3>Размер и слои</h3>
+                      <div className="appearance-grid">
+                        <NumberField
+                          label="Ширина объекта"
+                          value={selectedNodeAppearance.width}
+                          min={40}
+                          max={2000}
+                          onChange={(v) => updateNodeSize('width', v)}
+                        />
+                        <NumberField
+                          label="Высота объекта"
+                          value={selectedNodeAppearance.height}
+                          min={30}
+                          max={1600}
+                          onChange={(v) => updateNodeSize('height', v)}
+                        />
+                      </div>
+                      <h3>Оформление объекта</h3>
+                      <label>
+                        Форма объекта
+                        <select
+                          aria-label="Форма объекта"
+                          value={
+                            selectedNodeAppearance.shape === 'custom'
+                              ? `custom:${selectedNodeAppearance.shapeId}`
+                              : selectedNodeAppearance.shape
+                          }
+                          onChange={(e) =>
+                            updateNodeAppearance(
+                              e.target.value.startsWith('custom:')
+                                ? { shape: 'custom', shapeId: e.target.value.slice(7) }
+                                : {
+                                    shape: e.target.value as NodeOverride['shape'],
+                                    shapeId: undefined,
+                                  },
+                            )
+                          }
+                        >
+                          {baseShapes.map((shape, i) => (
+                            <option value={shape} key={shape}>
+                              {['Прямоугольник', 'Скруглённый', 'Ромб', 'Эллипс', 'Текст'][i]}
                             </option>
                           ))}
-                      </select>
-                    </label>
-                  ))}
-              </fieldset>
-            ))}
-          {modelErrors(
-            packDocument(
-              skinCandidate(
-                skinChange.nodeId,
-                skinChange.typeId,
-                skinChange.ports,
-                skinChange.types,
-              ),
-              objects,
-              relations,
-            ),
-          ).map((issue, i) => (
-            <p className="error" key={i}>
-              {issue}
+                          {document.notation.shapes
+                            ?.filter(
+                              (s) => splitType(s.id)[0] === splitType(selectedNode.typeId)[0],
+                            )
+                            .map((s) => (
+                              <option value={`custom:${s.id}`} key={s.id}>
+                                {s.name}
+                              </option>
+                            ))}
+                        </select>
+                      </label>
+                      <div className="appearance-grid">
+                        <label>
+                          Заливка объекта
+                          <input
+                            type="color"
+                            aria-label="Заливка объекта"
+                            value={selectedNodeAppearance.fill}
+                            onChange={(e) => updateNodeAppearance({ fill: e.target.value })}
+                          />
+                        </label>
+                        <label>
+                          Контур объекта
+                          <input
+                            type="color"
+                            aria-label="Контур объекта"
+                            value={selectedNodeAppearance.stroke}
+                            onChange={(e) => updateNodeAppearance({ stroke: e.target.value })}
+                          />
+                        </label>
+                      </div>
+                      <TextAppearanceControls
+                        value={selectedNodeAppearance}
+                        onChange={updateNodeAppearance}
+                      />
+                      <small className="muted">
+                        Двойной щелчок — изменить текст. Enter — сохранить, Esc — отменить.
+                      </small>
+                    </div>
+                  )}
+                  {selectedEdge && (
+                    <div className="inspector-appearance form-stack">
+                      <h3>Связь модели</h3>
+                      <p className="small-text">
+                        {relationLookup.get(selectedEdge.relationId ?? '')?.name ?? 'Связь'} · общая
+                        для всех стрелок
+                      </p>
+                      <button
+                        className="secondary small"
+                        onClick={() => {
+                          const r = relationLookup.get(selectedEdge.relationId ?? '');
+                          if (r) void editRelation(r);
+                        }}
+                      >
+                        Общие свойства связи
+                      </button>
+                      <label>
+                        Использовать связь модели
+                        <select
+                          aria-label="Использовать связь модели"
+                          value={selectedEdge.relationId ?? ''}
+                          onChange={(e) =>
+                            change({
+                              ...docRef.current,
+                              edges: docRef.current.edges.map((x) =>
+                                x.id === selectedEdge.id ? { ...x, relationId: e.target.value } : x,
+                              ),
+                            })
+                          }
+                        >
+                          {allRelations
+                            .filter(
+                              (r) =>
+                                (!r.archived || r.id === selectedEdge.relationId) &&
+                                r.sourceId ===
+                                  (selectedEdge.detachedSource
+                                    ? relationLookup.get(selectedEdge.relationId ?? '')?.sourceId
+                                    : participantId(document, selectedEdge.source)) &&
+                                r.targetId ===
+                                  (selectedEdge.detachedTarget
+                                    ? relationLookup.get(selectedEdge.relationId ?? '')?.targetId
+                                    : participantId(document, selectedEdge.target)),
+                            )
+                            .map((r) => (
+                              <option key={r.id} value={r.id}>
+                                {r.name}
+                              </option>
+                            ))}
+                        </select>
+                      </label>
+                      <h3>Концы стрелки</h3>
+                      <p className="muted small-text">
+                        Перетащите конец к другому порту или на свободное место. При смене участника
+                        создаётся отдельная модельная связь.
+                      </p>
+                      {(['source', 'target'] as const).map((end) => (
+                        <button
+                          key={end}
+                          className="secondary small"
+                          disabled={Boolean(
+                            end === 'source'
+                              ? selectedEdge.detachedSource
+                              : selectedEdge.detachedTarget,
+                          )}
+                          onClick={() => detachEnd(selectedEdge.id, end)}
+                        >
+                          {end === 'source' ? 'Отвязать начало' : 'Отвязать конец'}
+                        </button>
+                      ))}
+                      <h3>Оформление стрелки</h3>
+                      <EdgeAppearanceControls
+                        value={edgeAppearance(
+                          document.notation.edgeTypes.find((t) => t.id === selectedEdge.typeId)!
+                            .appearance,
+                          selectedEdge.appearance,
+                        )}
+                        onChange={updateEdgeAppearance}
+                      />
+                    </div>
+                  )}
+                  <div className="inspector-meta">
+                    <small>ID</small>
+                    <code>{selectedObject.id.slice(0, 22)}…</code>
+                  </div>
+                  <button
+                    className="secondary danger wide small"
+                    onClick={() =>
+                      deleteItems(
+                        selected?.kind === 'node' ? [selected.id] : [],
+                        selected?.kind === 'edge' ? [selected.id] : [],
+                      )
+                    }
+                  >
+                    <Trash2 size={15} />
+                    Удалить {selected?.kind === 'node' ? 'элемент' : 'связь'}
+                  </button>
+                </>
+              ) : (
+                <div className="inspector-empty">
+                  <MousePointer2 size={26} />
+                  <p>
+                    Выберите элемент или связь,
+                    <br />
+                    чтобы изменить свойства.
+                  </p>
+                </div>
+              )}
+              <div className="validation-box">
+                <strong>
+                  {errors.length ? (
+                    <>
+                      <AlertCircle size={15} />
+                      {errors.length} ошибок
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle2 size={15} />
+                      Диаграмма корректна
+                    </>
+                  )}
+                </strong>
+                {errors.map((error, i) => (
+                  <p key={i}>{error}</p>
+                ))}
+                <small>Проверка по правилам нотации</small>
+              </div>
+            </fieldset>
+          </aside>
+        </div>
+        {historyOpen && (
+          <Modal title="История диаграммы" onClose={() => setHistoryOpen(false)}>
+            <p className="muted">Последние 100 сохранений. Восстановление создаёт новую ревизию.</p>
+            <div className="revision-list">
+              {revisions.map((r) => (
+                <div className="revision-row" key={r.number}>
+                  <div>
+                    <strong>
+                      Ревизия {r.number}
+                      {r.number === revision && <span className="badge">Текущая</span>}
+                    </strong>
+                    <small>
+                      {date(r.createdAt)} ·{' '}
+                      {r.reason === 'restore'
+                        ? 'Восстановление'
+                        : r.reason === 'create'
+                          ? 'Создание'
+                          : r.reason === 'duplicate'
+                            ? 'Копирование'
+                            : r.reason === 'viewpoint'
+                              ? 'Смена ракурса'
+                              : 'Сохранение'}
+                    </small>
+                  </div>
+                  <button
+                    className="secondary small"
+                    onClick={async () => {
+                      try {
+                        const d = await api<{ document: ModelDocument | LegacyDocument }>(
+                          `diagrams/${initial.id}/history?number=${r.number}`,
+                        );
+                        setHistorical(d.document);
+                      } catch (err) {
+                        setError((err as Error).message);
+                      }
+                    }}
+                  >
+                    Просмотреть снимок
+                  </button>
+                  <button
+                    className="secondary small"
+                    disabled={!canEdit || commandBusy || r.number === revision || saving}
+                    onClick={async () => {
+                      if (
+                        !confirm('Восстановить эту версию? Несохранённые изменения будут потеряны.')
+                      )
+                        return;
+                      try {
+                        const d = await api<ModelDiagram>(
+                          `diagrams/${initial.id}/restore`,
+                          'POST',
+                          {
+                            revision: revisionRef.current,
+                            number: r.number,
+                          },
+                        );
+                        adopt(d);
+                        setHistoryOpen(false);
+                      } catch (e) {
+                        setError((e as Error).message);
+                      }
+                    }}
+                  >
+                    Восстановить
+                  </button>
+                </div>
+              ))}
+            </div>
+          </Modal>
+        )}
+        {relationEditing && (
+          <RelationEditor
+            key={
+              relationEditing === 'new'
+                ? 'new'
+                : `${relationEditing.id}:${relationEditing.revision}`
+            }
+            relation={relationEditing === 'new' ? undefined : relationEditing}
+            objects={[...objects, ...allRelations.map(relationEntity)]}
+            onSaved={(r) => mergeRelations([r])}
+            onClose={() => setRelationEditing(null)}
+          >
+            {relationEditing !== 'new' && (
+              <EntityRelations
+                entityId={relationEditing.id}
+                onChanged={() => void refreshObjects()}
+              />
+            )}
+          </RelationEditor>
+        )}
+        {linksOpen && (
+          <Modal
+            title="Менеджер связей"
+            onClose={() => setLinksOpen(false)}
+            className="object-modal"
+          >
+            <EntityRelations onChanged={() => void refreshObjects()} />
+          </Modal>
+        )}
+        {relationPlacement && (
+          <RelationPlacement
+            relation={relationPlacement}
+            document={document}
+            onClose={() => setRelationPlacement(null)}
+            onPlace={async (edge) => {
+              if (!(await flush())) throw new Error('Сначала сохраните диаграмму');
+              const next = {
+                ...docRef.current,
+                edges: [...docRef.current.edges, edge],
+                relations: mergeModelObjects(docRef.current.relations ?? [], [relationPlacement]),
+              };
+              const issues = modelErrors(
+                packDocument(next, objectsRef.current, relationsRef.current),
+              );
+              if (issues.length) throw new Error(issues.join('; '));
+              change(next);
+              setSelected({ kind: 'edge', id: edge.id });
+            }}
+          />
+        )}
+        {canvasMenu && (
+          <ContextMenu
+            position={canvasMenu}
+            entityId={baseEntity?.id}
+            beforeNavigate={flush}
+            onClose={() => setCanvasMenu(null)}
+            actions={canvasActions}
+          />
+        )}
+        {diagramLinks && (
+          <DiagramLinks
+            entityId={diagramLinks.entityId}
+            sourceDiagramId={initial.id}
+            initialKind={diagramLinks.kind}
+            onClose={() => setDiagramLinks(null)}
+            onChanged={() => void refreshObjects()}
+          />
+        )}
+        {viewpointsOpen && (
+          <ViewpointBrowser
+            currentDiagramId={initial.id}
+            onClose={() => setViewpointsOpen(false)}
+            onChanged={(diagram) => {
+              if (diagram?.id === initial.id) {
+                revisionRef.current = diagram.revision;
+                setRevision(diagram.revision);
+              }
+              void refreshObjects();
+            }}
+          />
+        )}
+        {objectEditing && (
+          <ObjectEditor
+            onRelationsChanged={() => void refreshObjects()}
+            key={`${objectEditing.id}:${objectEditing.revision}`}
+            object={objectEditing}
+            objects={objects}
+            onSaved={(o) => mergeObjects([o])}
+            onClose={() => setObjectEditing(null)}
+          />
+        )}
+        {notationsOpen && (
+          <Modal title="Нотации диаграммы" onClose={() => setNotationsOpen(false)}>
+            <p className="muted">
+              Каждая нотация закреплена на выбранной версии. Подключено {document.bindings.length}{' '}
+              из 12.
             </p>
-          ))}
-          <button
-            className="primary"
-            disabled={
-              !!modelErrors(
-                packDocument(
+            <div className="notation-bindings">
+              {document.bindings.map((b) => (
+                <div className="revision-row" key={b.id}>
+                  <span>
+                    <strong>{b.document.name}</strong>
+                    <small>v{b.document.version}</small>
+                  </span>
+                  <button
+                    className="secondary small danger"
+                    disabled={
+                      commandBusy ||
+                      document.bindings.length === 1 ||
+                      document.nodes.some((n) => splitType(n.typeId)[0] === b.id) ||
+                      document.edges.some((e) => splitType(e.typeId)[0] === b.id)
+                    }
+                    onClick={() => void updateNotations(undefined, b.id)}
+                  >
+                    Отключить {b.document.name}
+                  </button>
+                </div>
+              ))}
+            </div>
+            <h3>Добавить из библиотеки</h3>
+            {availableNotations.map((n) => (
+              <button
+                key={n.id}
+                className="secondary notation-add"
+                disabled={
+                  commandBusy ||
+                  document.bindings.length >= 12 ||
+                  document.bindings.some(
+                    (b) =>
+                      b.document.id === n.document.id && b.document.version === n.document.version,
+                  )
+                }
+                onClick={() => void updateNotations(n.id)}
+              >
+                Добавить {n.name} · v{n.document.version}
+              </button>
+            ))}
+            {error && (
+              <div className="error" role="alert">
+                {error}
+              </div>
+            )}
+          </Modal>
+        )}
+        {placementRequest && (
+          <Modal title="Свойства перед размещением" onClose={() => setPlacementRequest(null)}>
+            <p className="muted">
+              Заполните обязательные свойства отображения. Общие атрибуты относятся к объекту и
+              применяются ко всем его представлениям.
+            </p>
+            <form
+              className="form-stack"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void addNode(
+                  placementRequest.typeId,
+                  placementRequest.objectId,
+                  placementRequest.position,
+                  placementRequest.values,
+                );
+              }}
+            >
+              {Object.entries(placementRequest.values).map(([key, value]) => {
+                const p = document.notation.nodeTypes
+                  .find((t) => t.id === placementRequest.typeId)!
+                  .properties.find((p) => p.key === key)!;
+                return (
+                  <label key={key}>
+                    {p.label}
+                    {p.scope === 'object' && (
+                      <small> · общий атрибут ({p.objectKey ?? p.key})</small>
+                    )}
+                    <input
+                      type={
+                        p.type === 'boolean' ? 'checkbox' : p.type === 'number' ? 'number' : 'text'
+                      }
+                      required={p.type !== 'boolean'}
+                      maxLength={2000}
+                      disabled={commandBusy}
+                      checked={p.type === 'boolean' ? Boolean(value) : undefined}
+                      value={p.type === 'boolean' ? undefined : String(value)}
+                      onChange={(e) =>
+                        setPlacementRequest({
+                          ...placementRequest,
+                          values: {
+                            ...placementRequest.values,
+                            [key]:
+                              p.type === 'boolean'
+                                ? e.target.checked
+                                : p.type === 'number'
+                                  ? Number(e.target.value)
+                                  : e.target.value,
+                          },
+                        })
+                      }
+                    />
+                  </label>
+                );
+              })}
+              {error && (
+                <p className="error" role="alert">
+                  {error}
+                </p>
+              )}
+              <button className="primary" disabled={commandBusy}>
+                Разместить объект
+              </button>
+            </form>
+          </Modal>
+        )}
+        {skinChange && (
+          <Modal title="Изменить отображение объекта" onClose={() => setSkinChange(null)}>
+            <p className="muted">
+              Объект, размер и положение сохраняются. Сопоставьте порты и выберите совместимые
+              связи. Прежние локальные свойства сохраняются для возврата к прежнему отображению.
+            </p>
+            <div className="skin-preview" aria-label="Предпросмотр нового отображения">
+              <DiagramPreview
+                document={displayedView(
                   skinCandidate(
                     skinChange.nodeId,
                     skinChange.typeId,
@@ -2987,59 +3086,147 @@ function Editor({ initial }: { initial: Diagram }) {
                     skinChange.types,
                   ),
                   objects,
-                  relations,
-                ),
-              ).length
-            }
-            onClick={() => {
-              change(
+                )}
+              />
+            </div>
+            {docRef.current.edges
+              .filter((e) => e.source === skinChange.nodeId || e.target === skinChange.nodeId)
+              .map((e) => (
+                <fieldset className="skin-edge-map" key={e.id}>
+                  <legend>{String(e.properties.label || e.id)}</legend>
+                  <label>
+                    Отображение связи
+                    <select
+                      aria-label={`Отображение связи ${e.id}`}
+                      value={skinChange.types[e.id]}
+                      onChange={(ev) =>
+                        setSkinChange({
+                          ...skinChange,
+                          types: { ...skinChange.types, [e.id]: ev.target.value },
+                        })
+                      }
+                    >
+                      {document.notation.edgeTypes.map((t) => (
+                        <option value={t.id} key={t.id}>
+                          {t.name}
+                        </option>
+                      ))}
+                      <option value="delete">Удалить эту связь</option>
+                    </select>
+                  </label>
+                  {(['source', 'target'] as const)
+                    .filter((end) => (end === 'source' ? e.source : e.target) === skinChange.nodeId)
+                    .map((end) => (
+                      <label key={end}>
+                        {end === 'source' ? 'Выходной' : 'Входной'} порт
+                        <select
+                          aria-label={`${end === 'source' ? 'Выходной' : 'Входной'} порт ${e.id}`}
+                          value={skinChange.ports[`${e.id}:${end}`]}
+                          onChange={(ev) =>
+                            setSkinChange({
+                              ...skinChange,
+                              ports: { ...skinChange.ports, [`${e.id}:${end}`]: ev.target.value },
+                            })
+                          }
+                        >
+                          <option value="">Выберите порт</option>
+                          {document.notation.nodeTypes
+                            .find((t) => t.id === skinChange.typeId)!
+                            .ports.filter(
+                              (p) => p.direction === (end === 'source' ? 'output' : 'input'),
+                            )
+                            .map((p) => (
+                              <option value={p.id} key={p.id}>
+                                {p.id}
+                              </option>
+                            ))}
+                        </select>
+                      </label>
+                    ))}
+                </fieldset>
+              ))}
+            {modelErrors(
+              packDocument(
                 skinCandidate(
                   skinChange.nodeId,
                   skinChange.typeId,
                   skinChange.ports,
                   skinChange.types,
                 ),
-              );
-              setSkinChange(null);
-            }}
-          >
-            Применить отображение
-          </button>
-        </Modal>
-      )}
-      {historical && (
-        <Modal title="Снимок диаграммы" onClose={() => setHistorical(null)}>
-          <p className="muted">
-            Объекты показаны в состоянии на момент сохранения. Восстановление диаграммы использует
-            актуальные общие данные модели.
-          </p>
-          <div className="history-preview">
-            <DiagramPreview
-              document={
-                historical.schemaVersion === 2
-                  ? displayedView(projectDocument(historical), historical.objects)
-                  : historical
+                objects,
+                relations,
+              ),
+            ).map((issue, i) => (
+              <p className="error" key={i}>
+                {issue}
+              </p>
+            ))}
+            <button
+              className="primary"
+              disabled={
+                !!modelErrors(
+                  packDocument(
+                    skinCandidate(
+                      skinChange.nodeId,
+                      skinChange.typeId,
+                      skinChange.ports,
+                      skinChange.types,
+                    ),
+                    objects,
+                    relations,
+                  ),
+                ).length
               }
-            />
-          </div>
-          {historical.schemaVersion === 2 && (
-            <ul>
-              {historical.objects.map((o) => (
-                <li key={o.id}>
-                  {o.name} · версия объекта {o.revision}
-                </li>
-              ))}
-            </ul>
-          )}
-          <button
-            className="secondary"
-            onClick={() => download(`${name}-history.maket.json`, { name, document: historical })}
-          >
-            Экспорт снимка
-          </button>
-        </Modal>
-      )}
-    </main>
+              onClick={() => {
+                change(
+                  skinCandidate(
+                    skinChange.nodeId,
+                    skinChange.typeId,
+                    skinChange.ports,
+                    skinChange.types,
+                  ),
+                );
+                setSkinChange(null);
+              }}
+            >
+              Применить отображение
+            </button>
+          </Modal>
+        )}
+        {historical && (
+          <Modal title="Снимок диаграммы" onClose={() => setHistorical(null)}>
+            <p className="muted">
+              Объекты показаны в состоянии на момент сохранения. Восстановление диаграммы использует
+              актуальные общие данные модели.
+            </p>
+            <div className="history-preview">
+              <DiagramPreview
+                document={
+                  historical.schemaVersion === 2
+                    ? displayedView(projectDocument(historical), historical.objects)
+                    : historical
+                }
+              />
+            </div>
+            {historical.schemaVersion === 2 && (
+              <ul>
+                {historical.objects.map((o) => (
+                  <li key={o.id}>
+                    {o.name} · версия объекта {o.revision}
+                  </li>
+                ))}
+              </ul>
+            )}
+            <button
+              className="secondary"
+              onClick={() => download(`${name}-history.maket.json`, { name, document: historical })}
+            >
+              Экспорт снимка
+            </button>
+          </Modal>
+        )}
+      </main>
+    </CommandEditingContext.Provider>
   );
 }
 

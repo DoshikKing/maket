@@ -1,12 +1,15 @@
 'use client';
 import { useState } from 'react';
 import { Save, UserRound, SlidersHorizontal, LockKeyhole } from 'lucide-react';
+import { ShortcutSettings } from './shortcut-settings';
+import { bindingConflict } from '@/lib/shortcuts';
 import { McpSettings } from './mcp-settings';
 import { desktopEdition } from '@/lib/desktop';
 import { api } from '@/lib/client';
 import { useUser, User } from './workspace';
 export function SettingsPage() {
   const { user, setUser } = useUser();
+  const [shortcuts, setShortcuts] = useState(user.settings.shortcuts ?? {});
   const [mcpRevision, setMcpRevision] = useState(0);
   const [message, setMessage] = useState(''),
     [error, setError] = useState(''),
@@ -34,6 +37,11 @@ export function SettingsPage() {
         className="settings-form"
         onSubmit={async (e) => {
           e.preventDefault();
+          const conflict = bindingConflict(shortcuts);
+          if (conflict) {
+            setError(conflict);
+            return;
+          }
           setBusy(true);
           setMessage('');
           setError('');
@@ -44,6 +52,7 @@ export function SettingsPage() {
               theme: d.get('theme'),
               snapToGrid: d.has('snapToGrid'),
               autosave: d.has('autosave'),
+              shortcuts,
             });
             setUser(u);
             setMessage('Настройки сохранены');
@@ -125,6 +134,7 @@ export function SettingsPage() {
             />
           </label>
         </section>
+        <ShortcutSettings value={shortcuts} onChange={setShortcuts} />
         <button className="primary" disabled={busy}>
           <Save size={17} />
           {busy ? 'Сохраняем…' : 'Сохранить настройки'}

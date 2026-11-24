@@ -13,6 +13,7 @@ import {
   PanelLeftOpen,
   BookOpen,
 } from 'lucide-react';
+import type { Shortcuts } from '@/lib/shortcuts';
 import { desktopEdition } from '@/lib/desktop';
 import { api } from '@/lib/client';
 import { CollaborationProvider, WorkspaceAccessButton } from './collaboration';
@@ -21,7 +22,12 @@ export type User = {
   id: string;
   email: string;
   name: string;
-  settings: { theme: 'light' | 'dark'; snapToGrid: boolean; autosave: boolean };
+  settings: {
+    theme: 'light' | 'dark';
+    snapToGrid: boolean;
+    autosave: boolean;
+    shortcuts?: Shortcuts;
+  };
 };
 const UserContext = createContext<{
   user: User;
