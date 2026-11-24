@@ -9,7 +9,7 @@ module.exports = {
   npmRebuild: false,
   directories: { output: 'dist', buildResources: '.build' },
   files: ['main.cjs', 'runtime.cjs', 'server-entry.cjs', 'package.json'],
-  extraResources: [],
+  extraResources: [{ from: 'THIRD_PARTY_NOTICES.txt', to: 'THIRD_PARTY_NOTICES.txt' }],
   async afterPack(context) {
     // electron-builder excludes a root node_modules from extraResources; standalone needs it intact.
     await fs.cp(

@@ -140,7 +140,7 @@ async function startRuntime({
       '--builtin-locale=C.UTF-8',
       '--locale=C',
     ],
-    postgresFlags: ['-h', '127.0.0.1', '-c', 'unix_socket_directories='],
+    postgresFlags: ['-h', '127.0.0.1', '-c', 'unix_socket_directories=', '-c', 'timezone=UTC'],
     onLog: (message) => {
       databaseMessages = (databaseMessages + message).slice(-2000);
       log(message);
@@ -295,7 +295,7 @@ async function startRuntime({
           '-l',
           path.join(dataDir, 'logs', 'postgres.log'),
           '-o',
-          `-h 127.0.0.1 -p ${pgPort} -c unix_socket_directories=`,
+          `-h 127.0.0.1 -p ${pgPort} -c unix_socket_directories= -c timezone=UTC`,
           'start',
           '-w',
           '-t',

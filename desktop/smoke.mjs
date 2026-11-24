@@ -64,6 +64,7 @@ try {
   assert.ok(!Object.hasOwn(childEnvironment(), 'DATABASE_URL'));
   assert.ok(!(await readdir(serverDir)).some((name) => /^\.env(?:\.|$)/.test(name)));
   // A running web deployment's environment must never select the desktop database.
+  process.env.TZ = 'Asia/Tokyo'; // Database timestamps must stay UTC even on a non-UTC computer.
   const old = process.env.DATABASE_URL;
   process.env.DATABASE_URL = 'postgresql://invalid:invalid@127.0.0.1:1/do-not-use';
   runtime = await startRuntime({ dataDir, serverDir, version, log, onFailure });
@@ -91,6 +92,10 @@ try {
     name: 'Офлайн-диаграмма',
     notationIds: ['builtin', 'builtin-bpmn', 'builtin-uml'],
   });
+  assert.ok(
+    Math.abs(Date.now() - Date.parse(diagram.createdAt)) < 60000,
+    'database timestamps must be UTC',
+  );
   assert.equal(diagram.document.bindings.length, 3);
   const binding = diagram.document.bindings[0];
   await api(`diagrams/${diagram.id}/representations`, 'POST', {

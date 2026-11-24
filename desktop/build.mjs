@@ -61,6 +61,18 @@ for (const name of [
     recursive: true,
   });
 }
+// Tracing copies executable dependencies, not necessarily their accompanying notices.
+async function copyLicenses(relative = '') {
+  const source = path.join(root, 'node_modules', relative),
+    destination = path.join(target, 'node_modules', relative);
+  for (const file of await readdir(source, { withFileTypes: true }).catch(() => [])) {
+    if (file.isFile() && /^(licen[cs]e|copying|copyright|notice)(?:[._-]|$)/i.test(file.name))
+      await cp(path.join(source, file.name), path.join(destination, file.name));
+  }
+  for (const folder of await readdir(destination, { withFileTypes: true }))
+    if (folder.isDirectory()) await copyLicenses(path.join(relative, folder.name));
+}
+await copyLicenses();
 await cp(path.join(root, 'prisma', 'migrations'), path.join(target, 'prisma', 'migrations'), {
   recursive: true,
 });
