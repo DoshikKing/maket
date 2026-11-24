@@ -27,10 +27,15 @@ const uuid = () => crypto.randomUUID();
 const finite = (value: string | null | undefined, fallback = 0) =>
   value == null || value === '' || !Number.isFinite(Number(value)) ? fallback : Number(value);
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
-function parseXml(value: string) {
+export type DrawioDom = {
+  document: Document;
+  parseXml: (value: string) => Document;
+  serialize: (element: Element) => string;
+};
+function parseXml(value: string, dom?: DrawioDom) {
   if (value.length > LIMIT) throw new Error('Распакованный XML превышает 2 МБ');
   if (/<!DOCTYPE|<!ENTITY/i.test(value)) throw new Error('DTD и XML-сущности не поддерживаются');
-  const doc = new DOMParser().parseFromString(value, 'application/xml');
+  const doc = dom ? dom.parseXml(value) : new DOMParser().parseFromString(value, 'application/xml');
   if (doc.querySelector('parsererror')) throw new Error('Некорректный XML draw.io');
   return doc;
 }
@@ -45,10 +50,10 @@ function jsonAttribute(element: Element, key: string): Data {
     throw new Error(`Некорректные метаданные ${key}`);
   }
 }
-function plain(value: string, html: boolean) {
+function plain(value: string, html: boolean, dom?: DrawioDom) {
   if (!html) return value;
   // Template contents remain inert: imported images, scripts and handlers never enter the live DOM.
-  const template = document.createElement('template');
+  const template = (dom?.document ?? document).createElement('template');
   template.innerHTML = value.replace(/<br\s*\/?\s*>|<\/(?:div|p|tr|li|h[1-6])\s*>/gi, '\n');
   template.content.querySelectorAll('script,style,iframe,object').forEach((el) => el.remove());
   return (template.content.textContent ?? '').trimEnd();
@@ -130,8 +135,9 @@ async function customShape(
   encoded: string,
   id: string,
   unpack: (value: string) => Promise<string>,
+  dom?: DrawioDom,
 ): Promise<CustomShape | undefined> {
-  const def = parseXml(await unpack(encoded));
+  const def = parseXml(await unpack(encoded), dom);
   // Maket's exported stencils use one closed path with quadratic corner control points.
   const path = def.querySelector('foreground > path');
   if (!path || def.querySelectorAll('path').length !== 1) return;
@@ -160,13 +166,16 @@ async function customShape(
   return parsed.success ? parsed.data : undefined;
 }
 
-export async function importDrawio(file: File): Promise<{
+export async function importDrawio(
+  file: File,
+  dom?: DrawioDom,
+): Promise<{
   folderName: string;
   pages: { name: string; document: ModelDocument }[];
   warnings: string[];
 }> {
   if (file.size > LIMIT) throw new Error('Максимальный размер файла — 2 МБ');
-  const doc = parseXml(await file.text());
+  const doc = parseXml(await file.text(), dom);
   const folderName = (file.name.replace(/\.(drawio|xml)$/i, '').trim() || 'Импорт draw.io').slice(
     0,
     100,
@@ -206,10 +215,12 @@ export async function importDrawio(file: File): Promise<{
     if (!model) {
       const value = entry.textContent?.trim() ?? '';
       const unpacked = value.startsWith('<') ? value : await inflate(value);
-      model = parseXml(unpacked).documentElement;
+      model = parseXml(unpacked, dom).documentElement;
     }
     if (model.tagName !== 'mxGraphModel') throw new Error('На странице отсутствует mxGraphModel');
-    total += new TextEncoder().encode(new XMLSerializer().serializeToString(model)).length;
+    total += new TextEncoder().encode(
+      dom ? dom.serialize(model) : new XMLSerializer().serializeToString(model),
+    ).length;
     if (total + expanded > LIMIT)
       throw new Error('Общий размер распакованных страниц превышает 2 МБ');
     const root = model.querySelector(':scope > root');
@@ -275,6 +286,7 @@ export async function importDrawio(file: File): Promise<{
       return plain(
         value.data.getAttribute('label') ?? value.cell.getAttribute('value') ?? '',
         value.style.html === '1',
+        dom,
       );
     };
     const position = (c: Cell, seen = new Set<string>()): { x: number; y: number } => {
@@ -459,7 +471,12 @@ export async function importDrawio(file: File): Promise<{
       if (s.shape?.startsWith('stencil(')) {
         if (!attemptedShapes.has(s.shape)) {
           attemptedShapes.add(s.shape);
-          const custom = await customShape(s.shape.slice(8, -1), `shape_${shapes.size}`, unpack);
+          const custom = await customShape(
+            s.shape.slice(8, -1),
+            `shape_${shapes.size}`,
+            unpack,
+            dom,
+          );
           if (custom) shapes.set(s.shape, custom);
         }
         shapeId = shapes.get(s.shape)?.id;

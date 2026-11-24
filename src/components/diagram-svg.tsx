@@ -1,4 +1,3 @@
-'use client';
 import type { Ref, SVGProps } from 'react';
 import { NodeShape } from './node-shape';
 import { EdgeMarkerDefs, markerId } from './edge-markers';

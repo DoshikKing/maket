@@ -9,7 +9,7 @@ const config: NextConfig = {
   output: process.env.BUILD_STANDALONE === '1' ? 'standalone' : undefined,
   poweredByHeader: false,
   devIndicators: false,
-  serverExternalPackages: ['@prisma/client'],
+  serverExternalPackages: ['@prisma/client', 'jsdom', 'sharp'],
   async headers() {
     return [
       {

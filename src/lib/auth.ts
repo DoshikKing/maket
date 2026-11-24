@@ -1,3 +1,5 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
+import type { User } from '@prisma/client';
 import { appPath } from './base-path';
 import { randomBytes, scrypt as scryptCallback, timingSafeEqual, createHash } from 'node:crypto';
 import { promisify } from 'node:util';
@@ -17,7 +19,10 @@ export async function checkPassword(password: string, stored: string) {
   const expected = Buffer.from(hash, 'hex');
   return expected.length === key.length && timingSafeEqual(expected, key);
 }
+export const actingUser = new AsyncLocalStorage<User>();
 export async function currentUser() {
+  const delegated = actingUser.getStore();
+  if (delegated) return delegated;
   const value = (await cookies()).get('maket_session')?.value;
   if (!value) return null;
   const session = await db.session.findUnique({

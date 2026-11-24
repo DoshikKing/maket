@@ -4306,3 +4306,62 @@ body {
   overflow: auto;
   font-size: 13px;
 }
+
+.mcp-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.mcp-settings p {
+  margin: 0;
+}
+.mcp-settings textarea {
+  width: 100%;
+  overflow-wrap: anywhere;
+}
+.mcp-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.mcp-grants {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+}
+.mcp-workspace {
+  padding: 12px 0;
+}
+.mcp-workspace + .mcp-workspace {
+  border-top: 1px solid var(--border);
+}
+.mcp-check {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+}
+.mcp-check input {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+.mcp-capabilities {
+  display: grid;
+  gap: 10px;
+  padding: 14px 0 0 26px;
+}
+.mcp-key-list {
+  display: grid;
+  gap: 12px;
+}
+.mcp-key,
+.mcp-secret {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}

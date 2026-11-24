@@ -18,6 +18,8 @@ RUN --mount=type=secret,id=proxy_ca \
     npm run build
 
 FROM node:24-bookworm-slim AS runner
+# Fonts for server-side diagram export, including Cyrillic labels.
+RUN apt-get update && apt-get install -y --no-install-recommends fonts-dejavu-core fonts-liberation fontconfig && rm -rf /var/lib/apt/lists/*
 ARG APP_URL=""
 ENV APP_URL=${APP_URL}
 WORKDIR /app

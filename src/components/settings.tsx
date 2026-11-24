@@ -1,10 +1,12 @@
 'use client';
 import { useState } from 'react';
 import { Save, UserRound, SlidersHorizontal, LockKeyhole } from 'lucide-react';
+import { McpSettings } from './mcp-settings';
 import { api } from '@/lib/client';
 import { useUser, User } from './workspace';
 export function SettingsPage() {
   const { user, setUser } = useUser();
+  const [mcpRevision, setMcpRevision] = useState(0);
   const [message, setMessage] = useState(''),
     [error, setError] = useState(''),
     [busy, setBusy] = useState(false);
@@ -138,7 +140,8 @@ export function SettingsPage() {
             try {
               await api('password', 'POST', Object.fromEntries(new FormData(form)));
               form.reset();
-              setMessage('Пароль изменён. Остальные сессии завершены.');
+              setMcpRevision((value) => value + 1);
+              setMessage('Пароль изменён. Остальные сессии завершены, MCP-ключи отозваны.');
             } catch (e) {
               setError((e as Error).message);
             }
@@ -168,6 +171,7 @@ export function SettingsPage() {
           <button className="secondary">Изменить пароль</button>
         </form>
       </section>
+      <McpSettings key={mcpRevision} />
     </main>
   );
 }

@@ -7,6 +7,7 @@ datasource db {
   url = env("DATABASE_URL")
 }
 model User {
+  mcpKeys McpKey[]
   id String @id @default(cuid())
   email String @unique
   name String
@@ -285,4 +286,19 @@ model WorkspaceEvent {
   targetId String?
   createdAt DateTime @default(now())
   @@index([spaceId, createdAt])
+}
+
+model McpKey {
+  id String @id @default(cuid())
+  ownerId String
+  owner User @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  name String
+  tokenHash String @unique
+  prefix String
+  grants Json
+  expiresAt DateTime?
+  lastUsedAt DateTime?
+  createdAt DateTime @default(now())
+  revision Int @default(1)
+  @@index([ownerId])
 }
