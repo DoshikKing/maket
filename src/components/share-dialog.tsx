@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
+import { desktopEdition } from '@/lib/desktop';
 import { api } from '@/lib/client';
 import { Modal } from './modal';
 type Sharing = { enabled: boolean; path: string | null };
@@ -19,6 +20,7 @@ export function ShareDialog({
     [error, setError] = useState(''),
     [copied, setCopied] = useState('');
   useEffect(() => {
+    if (desktopEdition) return;
     let active = true;
     api<Sharing>(`${resource}/${id}/share`)
       .then((s) => {
@@ -31,6 +33,15 @@ export function ShareDialog({
       active = false;
     };
   }, [id, resource]);
+  if (desktopEdition)
+    return (
+      <Modal title="Поделиться" onClose={onClose}>
+        <p>
+          Публичные ссылки доступны в серверной версии maket. Для передачи локальной диаграммы
+          воспользуйтесь экспортом JSON, draw.io, PNG, JPEG или PDF.
+        </p>
+      </Modal>
+    );
   async function change(enabled: boolean, rotate = false) {
     const previous = sharing;
     setSharing((s) => (s ? { ...s, enabled } : s));

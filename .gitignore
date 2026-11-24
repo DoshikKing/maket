@@ -9,3 +9,7 @@ test-results/
 playwright-report/
 backups/
 *.log
+
+.next-desktop/
+desktop/.build/
+desktop/dist/

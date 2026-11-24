@@ -1,4 +1,5 @@
 'use client';
+import { desktopEdition } from '@/lib/desktop';
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Users, LockKeyhole } from 'lucide-react';
 import { api, ApiError, activeEditLeases } from '@/lib/client';
@@ -187,6 +188,7 @@ type Entity = { id: string; name: string; kind?: string };
 export function WorkspaceAccessButton() {
   const { state, error } = useCollaboration();
   const [open, setOpen] = useState(false);
+  if (desktopEdition) return null;
   return (
     <>
       <button

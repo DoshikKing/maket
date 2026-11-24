@@ -13,6 +13,7 @@ import {
   PanelLeftOpen,
   BookOpen,
 } from 'lucide-react';
+import { desktopEdition } from '@/lib/desktop';
 import { api } from '@/lib/client';
 import { CollaborationProvider, WorkspaceAccessButton } from './collaboration';
 import { WorkspaceSwitcher, type WorkspaceItem } from './workspace-switcher';
@@ -147,22 +148,24 @@ export function Workspace({
                 <strong>{user.name}</strong>
                 <small>{user.email}</small>
               </div>
-              <button
-                className="icon-button"
-                title="Выйти"
-                aria-label="Выйти"
-                onClick={async () => {
-                  try {
-                    await api('auth/logout', 'POST', {});
-                    router.push('/login');
-                    router.refresh();
-                  } catch (e) {
-                    setError((e as Error).message);
-                  }
-                }}
-              >
-                <LogOut size={17} />
-              </button>
+              {!desktopEdition && (
+                <button
+                  className="icon-button"
+                  title="Выйти"
+                  aria-label="Выйти"
+                  onClick={async () => {
+                    try {
+                      await api('auth/logout', 'POST', {});
+                      router.push('/login');
+                      router.refresh();
+                    } catch (e) {
+                      setError((e as Error).message);
+                    }
+                  }}
+                >
+                  <LogOut size={17} />
+                </button>
+              )}
             </div>
             {error && <div className="error">{error}</div>}
           </aside>

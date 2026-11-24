@@ -1,0 +1,99 @@
+name: Desktop release
+on:
+  push:
+    tags: ['desktop-v*']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: desktop-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-2022
+            name: windows-x64
+          - runner: ubuntu-22.04
+            name: linux-x64
+          - runner: macos-15-intel
+            name: macos-x64
+          - runner: macos-15
+            name: macos-arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    env:
+      APP_URL: ''
+      NEXT_TELEMETRY_DISABLED: '1'
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            desktop/package-lock.json
+      - name: Validate release version
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: node -e 'const v=require("./desktop/package.json").version;if(process.env.GITHUB_REF_NAME!==`desktop-v${v}`)throw new Error("Tag must match desktop/package.json version")'
+      - run: npm ci
+      - run: npm ci --prefix desktop
+      - run: npm test
+      - run: npm --prefix desktop run build
+      - run: npm --prefix desktop run smoke
+      - run: npm --prefix desktop run dist
+      - name: Test actual portable Linux archive
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/maket-portable-test"
+          tar -xzf desktop/dist/*-portable.tar.gz -C "$RUNNER_TEMP/maket-portable-test"
+          binary=$(find "$RUNNER_TEMP/maket-portable-test" -mindepth 2 -maxdepth 2 -name maket -type f)
+          test -n "$binary"
+          sudo chown root "$(dirname "$binary")/chrome-sandbox"
+          sudo chmod 4755 "$(dirname "$binary")/chrome-sandbox"
+          MAKET_TEST_EXECUTABLE="$binary" xvfb-run -a node desktop/window-smoke.cjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.name }}
+          if-no-files-found: error
+          path: |
+            desktop/dist/*.exe
+            desktop/dist/*.deb
+            desktop/dist/*.AppImage
+            desktop/dist/*.tar.gz
+            desktop/dist/*.dmg
+            desktop/dist/*.zip
+  publish:
+    if: startsWith(github.ref, 'refs/tags/desktop-v')
+    needs: build
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: desktop-*
+          path: release-assets
+          merge-multiple: true
+      - run: node desktop/checksums.mjs release-assets
+      - name: Publish completed desktop builds
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" release-assets/* --clobber
+          else
+            gh release create "$TAG" release-assets/* --verify-tag --title "maket Desktop ${TAG#desktop-v}" --notes-file desktop/RELEASE_NOTES.md
+          fi

@@ -2,6 +2,7 @@
 import { useState } from 'react';
 import { Save, UserRound, SlidersHorizontal, LockKeyhole } from 'lucide-react';
 import { McpSettings } from './mcp-settings';
+import { desktopEdition } from '@/lib/desktop';
 import { api } from '@/lib/client';
 import { useUser, User } from './workspace';
 export function SettingsPage() {
@@ -63,10 +64,14 @@ export function SettingsPage() {
             <input name="name" defaultValue={user.name} required maxLength={100} />
           </label>
           <label>
-            Электронная почта
+            {desktopEdition ? 'Локальный идентификатор' : 'Электронная почта'}
             <input value={user.email} disabled readOnly />
           </label>
-          <small className="muted">Адрес используется для входа и восстановления доступа.</small>
+          <small className="muted">
+            {desktopEdition
+              ? 'Данные хранятся на этом компьютере. Регистрация и вход не требуются.'
+              : 'Адрес используется для входа и восстановления доступа.'}
+          </small>
         </section>
         <section className="settings-panel">
           <h2>
@@ -125,52 +130,54 @@ export function SettingsPage() {
           {busy ? 'Сохраняем…' : 'Сохранить настройки'}
         </button>
       </form>
-      <section className="settings-panel password-panel">
-        <h2>
-          <LockKeyhole size={20} />
-          Безопасность
-        </h2>
-        <form
-          className="form-stack"
-          onSubmit={async (e) => {
-            e.preventDefault();
-            setError('');
-            setMessage('');
-            const form = e.currentTarget;
-            try {
-              await api('password', 'POST', Object.fromEntries(new FormData(form)));
-              form.reset();
-              setMcpRevision((value) => value + 1);
-              setMessage('Пароль изменён. Остальные сессии завершены, MCP-ключи отозваны.');
-            } catch (e) {
-              setError((e as Error).message);
-            }
-          }}
-        >
-          <label>
-            Текущий пароль
-            <input
-              name="currentPassword"
-              type="password"
-              autoComplete="current-password"
-              required
-              maxLength={128}
-            />
-          </label>
-          <label>
-            Новый пароль
-            <input
-              name="password"
-              type="password"
-              autoComplete="new-password"
-              minLength={10}
-              maxLength={128}
-              required
-            />
-          </label>
-          <button className="secondary">Изменить пароль</button>
-        </form>
-      </section>
+      {!desktopEdition && (
+        <section className="settings-panel password-panel">
+          <h2>
+            <LockKeyhole size={20} />
+            Безопасность
+          </h2>
+          <form
+            className="form-stack"
+            onSubmit={async (e) => {
+              e.preventDefault();
+              setError('');
+              setMessage('');
+              const form = e.currentTarget;
+              try {
+                await api('password', 'POST', Object.fromEntries(new FormData(form)));
+                form.reset();
+                setMcpRevision((value) => value + 1);
+                setMessage('Пароль изменён. Остальные сессии завершены, MCP-ключи отозваны.');
+              } catch (e) {
+                setError((e as Error).message);
+              }
+            }}
+          >
+            <label>
+              Текущий пароль
+              <input
+                name="currentPassword"
+                type="password"
+                autoComplete="current-password"
+                required
+                maxLength={128}
+              />
+            </label>
+            <label>
+              Новый пароль
+              <input
+                name="password"
+                type="password"
+                autoComplete="new-password"
+                minLength={10}
+                maxLength={128}
+                required
+              />
+            </label>
+            <button className="secondary">Изменить пароль</button>
+          </form>
+        </section>
+      )}
       <McpSettings key={mcpRevision} />
     </main>
   );

@@ -1,0 +1,33 @@
+{
+  "name": "maket-desktop",
+  "productName": "maket",
+  "version": "0.1.0",
+  "description": "Offline desktop edition of maket",
+  "author": {
+    "name": "DoshikKing",
+    "email": "DoshikKing@users.noreply.github.com"
+  },
+  "license": "UNLICENSED",
+  "private": true,
+  "main": "main.cjs",
+  "scripts": {
+    "build": "node build.mjs",
+    "pack": "electron-builder --dir --publish never",
+    "dist": "node dist.mjs",
+    "start": "electron .",
+    "smoke": "node smoke.mjs"
+  },
+  "dependencies": {
+    "embedded-postgres": "17.12.0-beta.19",
+    "pg": "8.23.1"
+  },
+  "devDependencies": {
+    "electron": "45.4.1",
+    "electron-builder": "26.18.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/DoshikKing/maket.git",
+    "directory": "desktop"
+  }
+}
