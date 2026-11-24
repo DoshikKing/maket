@@ -129,10 +129,12 @@ async function startRuntime({
     onError: (value) => log(String(value)),
   });
   let ready = false;
+  let detachedDatabase = false;
   let server,
     stopping = false,
     sessionToken,
-    refresh;
+    refresh,
+    postgresMonitor;
   async function sql(text, values, override) {
     const client = new Client({ ...pgConfig, ...override });
     client.on('error', () => {});
@@ -144,6 +146,21 @@ async function startRuntime({
     }
   }
   async function stopDatabase() {
+    if (detachedDatabase) {
+      detachedDatabase = false;
+      try {
+        await run(binaries.pg_ctl, ['-D', dbDir, 'stop', '-m', 'fast', '-w', '-t', '20'], {
+          timeout: 25000,
+          windowsHide: true,
+        });
+      } catch (error) {
+        const status = await run(binaries.pg_ctl, ['-D', dbDir, 'status'], {
+          windowsHide: true,
+        }).catch((e) => e);
+        if (status.code !== 3) throw error;
+      }
+      return;
+    }
     if (
       !database.process ||
       database.process.exitCode !== null ||
@@ -168,6 +185,7 @@ async function startRuntime({
     if (stopping) return;
     stopping = true;
     clearInterval(refresh);
+    clearInterval(postgresMonitor);
     if (server && server.pid && server.exitCode === null && server.signalCode === null) {
       const closed = new Promise((resolve) => server.once('exit', resolve));
       server.kill();
@@ -247,16 +265,60 @@ async function startRuntime({
       }
     } else await database.initialise();
     try {
-      await database.start();
+      if (process.platform === 'win32') {
+        // pg_ctl strips administrative privileges before starting PostgreSQL on Windows.
+        // Directly spawning postgres.exe fails under an elevated account (including hosted CI).
+        await fs.mkdir(path.join(dataDir, 'logs'), { recursive: true, mode: 0o700 });
+        detachedDatabase = true;
+        await run(
+          binaries.pg_ctl,
+          [
+            '-D',
+            dbDir,
+            '-l',
+            path.join(dataDir, 'logs', 'postgres.log'),
+            '-o',
+            `-h 127.0.0.1 -p ${pgPort} -c unix_socket_directories=`,
+            'start',
+            '-w',
+            '-t',
+            '30',
+          ],
+          { timeout: 35000, windowsHide: true },
+        );
+        const pid = Number(
+          (await fs.readFile(path.join(dbDir, 'postmaster.pid'), 'utf8')).split('\n')[0],
+        );
+        postgresMonitor = setInterval(() => {
+          if (!ready || stopping) return;
+          try {
+            process.kill(pid, 0);
+          } catch (error) {
+            if (error.code === 'ESRCH')
+              onFailure(
+                new Error('Локальная база неожиданно остановилась. Перезапустите приложение.'),
+              );
+          }
+        }, 2000);
+        postgresMonitor.unref();
+      } else {
+        await database.start();
+        database.process.once('exit', () => {
+          if (ready && !stopping)
+            onFailure(
+              new Error('Локальная база неожиданно остановилась. Перезапустите приложение.'),
+            );
+        });
+      }
     } catch {
+      const windowsLog =
+        process.platform === 'win32'
+          ? await fs.readFile(path.join(dataDir, 'logs', 'postgres.log'), 'utf8').catch(() => '')
+          : '';
       throw new Error(
-        'Не удалось запустить локальный PostgreSQL. Подробности — в журнале запуска.',
+        `Не удалось запустить локальный PostgreSQL.\n${(windowsLog || databaseMessages).slice(-2000)}`,
       );
     }
-    database.process.once('exit', () => {
-      if (ready && !stopping)
-        onFailure(new Error('Локальная база неожиданно остановилась. Перезапустите приложение.'));
-    });
     const connection = new URL(
       `postgresql://maket:${settings.password}@127.0.0.1:${pgPort}/postgres`,
     );
