@@ -334,6 +334,19 @@ async function startRuntime({
         `Не удалось запустить локальный PostgreSQL.\n${(windowsLog || databaseMessages).slice(-2000)}`,
       );
     }
+    // A successful pg_ctl exit can precede the first accepted connection on Windows.
+    // Check the database itself before migrations or profile creation, including crash recovery.
+    const databaseDeadline = Date.now() + 30000;
+    while (true) {
+      try {
+        await sql('SELECT 1');
+        break;
+      } catch (error) {
+        if (Date.now() > databaseDeadline)
+          throw new Error(`Локальная база не готова: ${error.message}`);
+        await new Promise((resolve) => setTimeout(resolve, 200));
+      }
+    }
     const connection = new URL(
       `postgresql://maket:${settings.password}@127.0.0.1:${pgPort}/postgres`,
     );
