@@ -6,6 +6,25 @@ const { promisify } = require('node:util');
 const { randomBytes, randomUUID, createHash, scryptSync } = require('node:crypto');
 const { Client } = require('pg');
 const run = promisify(execFile);
+function startDetached(file, args) {
+  return new Promise((resolve, reject) => {
+    // pg_ctl's Windows CMD child lives as long as PostgreSQL. Inherited stdout
+    // pipes keep execFile's callback pending even after pg_ctl exits successfully.
+    const child = spawn(file, args, { stdio: 'ignore', windowsHide: true });
+    const timer = setTimeout(() => {
+      child.kill();
+      reject(new Error('PostgreSQL startup timed out'));
+    }, 35000);
+    child.once('error', (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.once('exit', (code) => {
+      clearTimeout(timer);
+      code === 0 ? resolve() : reject(new Error(`pg_ctl exited ${code}`));
+    });
+  });
+}
 const hash = (value) => createHash('sha256').update(value).digest('hex');
 const exists = async (file) => !!(await fs.stat(file).catch(() => null));
 async function freePort() {
@@ -270,22 +289,18 @@ async function startRuntime({
         // Directly spawning postgres.exe fails under an elevated account (including hosted CI).
         await fs.mkdir(path.join(dataDir, 'logs'), { recursive: true, mode: 0o700 });
         detachedDatabase = true;
-        await run(
-          binaries.pg_ctl,
-          [
-            '-D',
-            dbDir,
-            '-l',
-            path.join(dataDir, 'logs', 'postgres.log'),
-            '-o',
-            `-h 127.0.0.1 -p ${pgPort} -c unix_socket_directories=`,
-            'start',
-            '-w',
-            '-t',
-            '30',
-          ],
-          { timeout: 35000, windowsHide: true },
-        );
+        await startDetached(binaries.pg_ctl, [
+          '-D',
+          dbDir,
+          '-l',
+          path.join(dataDir, 'logs', 'postgres.log'),
+          '-o',
+          `-h 127.0.0.1 -p ${pgPort} -c unix_socket_directories=`,
+          'start',
+          '-w',
+          '-t',
+          '30',
+        ]);
         const pid = Number(
           (await fs.readFile(path.join(dbDir, 'postmaster.pid'), 'utf8')).split('\n')[0],
         );
