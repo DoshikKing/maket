@@ -21,7 +21,7 @@ export function diagramBounds(d: ViewDocument): Bounds {
     );
     return [n.position, { x: n.position.x + a.width, y: n.position.y + a.height }];
   });
-  for (const g of edgeGeometry(d).values()) points.push(g.source, g.target, g.center);
+  for (const g of edgeGeometry(d).values()) points.push(...g.points, g.label);
   if (!points.length) return { x: 0, y: 0, width: 600, height: 400 };
   const x = Math.min(...points.map((p) => p.x)) - 60,
     y = Math.min(...points.map((p) => p.y)) - 60;
@@ -121,8 +121,9 @@ export function DiagramSvg({
                 />
                 {label && (
                   <text
-                    x={g.center.x}
-                    y={g.center.y - 8}
+                    x={g.label.x}
+                    y={e.labelPosition ? g.label.y : g.label.y - 8}
+                    dominantBaseline={e.labelPosition ? 'middle' : undefined}
                     textAnchor="middle"
                     fill="#232334"
                     stroke="#ffffff"

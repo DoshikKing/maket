@@ -17,6 +17,7 @@ import {
   type CustomShape,
   type DiagramNode,
 } from '@/lib/appearance';
+import { ImportedHandles, type ImportedHandle } from './imported-edge';
 import { NodeShape } from './node-shape';
 import { effectiveNode, type ModelObject } from '@/lib/model';
 export type ShapeData = {
@@ -24,6 +25,7 @@ export type ShapeData = {
   node: DiagramNode;
   shapes?: CustomShape[];
   object?: ModelObject;
+  importedHandles?: ImportedHandle[];
 };
 export type ShapeNode = Node<ShapeData, 'notation'>;
 export const NodeActionsContext = createContext<{
@@ -50,7 +52,11 @@ export const DiagramNodeView = memo(function DiagramNodeView({
     outputs = t.ports.filter((p) => p.direction === 'output');
   const updateInternals = useUpdateNodeInternals();
   const portSignature = t.ports.map((p) => `${p.id}:${p.direction}`).join(',');
-  useLayoutEffect(() => updateInternals(id), [id, portSignature, updateInternals]);
+  const importedSignature = JSON.stringify(data.importedHandles);
+  useLayoutEffect(
+    () => updateInternals(id),
+    [id, portSignature, importedSignature, updateInternals],
+  );
   const rotation = a.textRotation ?? 0;
   const vertical = Math.abs(rotation) === 90;
   function finish(cancel = false) {
@@ -149,6 +155,7 @@ export const DiagramNodeView = memo(function DiagramNodeView({
           </div>
         )}
       </div>
+      <ImportedHandles handles={data.importedHandles} />
       {inputs.map((p, i) => (
         <Handle
           key={p.id}

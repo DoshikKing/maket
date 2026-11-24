@@ -43,7 +43,7 @@ const style = (values: Record<string, string | number>) =>
     .join('');
 const nodeId = (id: string) => `node_${id}`;
 const edgeId = (id: string) => `edge_${id}`;
-const point = (as: string, p: { x: number; y: number }) =>
+const point = (as: string | undefined, p: { x: number; y: number }) =>
   `<mxPoint${attributes({ x: p.x, y: p.y, as })}/>`;
 function userObject(id: string, label: string, data: Record<string, unknown>, cell: string) {
   return `<object${attributes({ id, label, ...data })}>${cell}</object>`;
@@ -199,11 +199,12 @@ export async function drawioXml(name: string, document: ViewDocument, objects: M
       endFill: end.fill,
       startSize: a.markerSize ?? 18,
       endSize: a.markerSize ?? 18,
-      ...(a.routing === 'smoothstep'
+      ...(!e.waypoints && a.routing === 'smoothstep'
         ? { edgeStyle: 'orthogonalEdgeStyle' }
-        : a.routing === 'bezier'
+        : !e.waypoints && a.routing === 'bezier'
           ? { edgeStyle: 'orthogonalEdgeStyle', curved: 1 }
           : {}),
+      ...(e.waypoints && a.routing === 'bezier' ? { curved: 1 } : {}),
       ...(a.line !== 'solid' ? { dashed: 1, dashPattern: lineDash(a) ?? '6 3', fixDash: 1 } : {}),
     };
     const ends: Record<string, string | undefined> = {};
@@ -245,7 +246,7 @@ export async function drawioXml(name: string, document: ViewDocument, objects: M
             Object.entries(e.attributes ?? {}).map(([key, value]) => [`attribute_${key}`, value]),
           ),
         },
-        `<mxCell${attributes({ edge: 1, parent: '1', ...ends, style: style(styles) })}><mxGeometry relative="1" as="geometry">${point('sourcePoint', g.source)}${point('targetPoint', g.target)}</mxGeometry></mxCell>`,
+        `<mxCell${attributes({ edge: 1, parent: '1', ...ends, style: style(styles) })}><mxGeometry${attributes({ relative: e.labelPosition?.relative === false ? 0 : 1, x: e.labelPosition ? (e.labelPosition.along - 0.5) * 2 : undefined, y: e.labelPosition?.normal, as: 'geometry' })}>${point('sourcePoint', g.source)}${point('targetPoint', g.target)}${e.waypoints ? `<Array as="points">${e.waypoints.map((p) => point(undefined, p)).join('')}</Array>` : ''}${e.labelPosition ? point('offset', e.labelPosition.offset) : ''}</mxGeometry></mxCell>`,
       ),
     );
   }

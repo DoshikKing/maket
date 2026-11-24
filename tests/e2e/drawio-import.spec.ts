@@ -186,7 +186,7 @@ test('rejects invalid XML, DTD and oversized decompression before upload; rolls 
   expect(await db.modelObject.count({ where: { name: 'Rollback' } })).toBe(before);
   const area = (await (await request.get('/api/workspaces')).json())[0];
   const viewer = await playwright.request.newContext({
-    baseURL: 'http://localhost:3000',
+    baseURL: new URL(page.url()).origin,
     extraHTTPHeaders: { 'X-Maket-Workspace': area.id },
   });
   try {
@@ -250,4 +250,68 @@ test('HTML labels remain inert and external images never load', async ({ page, r
     await page.evaluate(() => (window as unknown as { importAttack?: number }).importAttack),
   ).toBeUndefined();
   expect(external).toBe(0);
+});
+
+test('keeps grouped free ends, explicit anchors and bends in the rendered editor after move/save/reload', async ({
+  page,
+  request,
+}) => {
+  await login(request);
+  await page.context().addCookies((await request.storageState()).cookies);
+  const xml = `<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>
+    <mxCell id="group" parent="1" vertex="1"><mxGeometry x="200" y="100" width="600" height="400" as="geometry"/></mxCell>
+    <mxCell id="a" parent="group" vertex="1" value="A"><mxGeometry x="20" y="20" width="100" height="60" as="geometry"/></mxCell>
+    <mxCell id="b" parent="group" vertex="1" value="B"><mxGeometry x="350" y="200" width="100" height="60" as="geometry"/></mxCell>
+    <mxCell id="free" parent="group" edge="1" value="Свободная"><mxGeometry relative="1" as="geometry"><mxPoint x="20" y="90" as="sourcePoint"/><Array as="points"><mxPoint x="20" y="150"/><mxPoint x="300" y="150"/></Array><mxPoint x="300" y="90" as="targetPoint"/></mxGeometry></mxCell>
+    <mxCell id="fixed" parent="group" edge="1" source="a" target="b" style="exitX=0.5;exitY=1;exitPerimeter=0;entryX=0.5;entryY=0;entryPerimeter=0;"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="70" y="160"/><mxPoint x="400" y="160"/></Array></mxGeometry></mxCell>
+  </root></mxGraphModel>`;
+  await page.goto('/library');
+  const pending = page.waitForResponse((r) => r.url().endsWith('/api/diagram-imports'));
+  await page.locator('input[type=file]').setInputFiles({
+    name: 'Coordinates.drawio',
+    mimeType: 'application/xml',
+    buffer: Buffer.from(xml),
+  });
+  const response = await pending;
+  expect(response.status(), await response.text()).toBe(201);
+  const result = await response.json(),
+    id = result.diagrams[0].id;
+  const doc = modelDiagramSchema.parse(
+    (await (await request.get(`/api/diagrams/${id}`)).json()).document,
+  );
+  const a = doc.nodes.find((n) => n.label === 'A')!,
+    free = doc.edges.find((e) => e.properties.label === 'Свободная')!,
+    fixed = doc.edges.find((e) => e.id !== free.id)!;
+  await page.goto(`/diagrams/${id}`);
+  const freePath = page.locator(`.react-flow__edge[data-id="${free.id}"] .react-flow__edge-path`);
+  const fixedPath = page.locator(`.react-flow__edge[data-id="${fixed.id}"] .react-flow__edge-path`);
+  await expect(freePath).toHaveAttribute('d', 'M 220 190 L 220 250 L 500 250 L 500 190');
+  await expect(fixedPath).toHaveAttribute('d', 'M 270 180 L 270 260 L 600 260 L 600 300');
+  const visibleEdge = await freePath.evaluate((path) => {
+    const p = (path as SVGPathElement)
+      .getPointAtLength(15)
+      .matrixTransform((path as SVGPathElement).getScreenCTM()!);
+    return document.elementFromPoint(p.x, p.y)?.closest('[data-id]')?.getAttribute('data-id');
+  });
+  expect(visibleEdge).toBe(free.id);
+  await page.locator(`.react-flow__node[data-id="${a.id}"]`).click();
+  const box = (await page.locator(`.react-flow__node[data-id="${a.id}"]`).boundingBox())!;
+  await page.mouse.move(box.x + 25, box.y + 20);
+  await page.mouse.down();
+  await page.mouse.move(box.x + 85, box.y + 60, { steps: 8 });
+  await page.mouse.up();
+  await page.getByRole('button', { name: 'Сохранить', exact: true }).click();
+  await expect(page.getByText(/Сохранено · ревизия/)).toBeVisible();
+  const saved = modelDiagramSchema.parse(
+      (await (await request.get(`/api/diagrams/${id}`)).json()).document,
+    ),
+    moved = saved.nodes.find((n) => n.id === a.id)!;
+  expect(moved.position).not.toEqual(a.position);
+  expect(saved.edges.find((e) => e.id === fixed.id)?.waypoints).toEqual(fixed.waypoints);
+  await page.reload();
+  await expect(fixedPath).toHaveAttribute(
+    'd',
+    `M ${moved.position.x + 50} ${moved.position.y + 60} L 270 260 L 600 260 L 600 300`,
+  );
+  await expect(freePath).toHaveAttribute('d', 'M 220 190 L 220 250 L 500 250 L 500 190');
 });

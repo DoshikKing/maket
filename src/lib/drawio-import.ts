@@ -8,6 +8,7 @@ import {
 } from './model';
 import { notationSchema, type NotationDocument } from './notation';
 import { shapeSchema, type CustomShape, type EdgeOverride, type NodeOverride } from './appearance';
+import { pointOnRoute, type Point } from './diagram-geometry';
 import { hasSafeJsonDepth } from './json-depth';
 const LIMIT = 2_000_000;
 type Data = Record<string, unknown>;
@@ -240,6 +241,7 @@ export async function importDrawio(
       });
     }
     if (cells.size > 5000) throw new Error('Слишком много элементов на странице');
+    const layers = new Map([...cells.keys()].map((id, index) => [id, index]));
     const auxiliary = (c: Cell) => {
       const parent = cells.get(c.cell.getAttribute('parent') ?? '');
       return (
@@ -298,18 +300,32 @@ export async function importDrawio(
         parent?.cell.getAttribute('vertex') === '1' ? position(parent, seen) : { x: 0, y: 0 };
       const relative = c.geometry?.getAttribute('relative') === '1';
       const offset = c.geometry?.querySelector('[as="offset"]');
-      return {
+      const result = {
         x:
           p.x +
           finite(c.geometry?.getAttribute('x')) *
             (relative ? finite(parent?.geometry?.getAttribute('width'), 1) : 1) +
-          finite(offset?.getAttribute('x')),
+          (relative ? finite(offset?.getAttribute('x')) : 0),
         y:
           p.y +
           finite(c.geometry?.getAttribute('y')) *
             (relative ? finite(parent?.geometry?.getAttribute('height'), 1) : 1) +
-          finite(offset?.getAttribute('y')),
+          (relative ? finite(offset?.getAttribute('y')) : 0),
       };
+      if (relative && parent && finite(parent.style.rotation)) {
+        const angle = (finite(parent.style.rotation) * Math.PI) / 180;
+        const center = {
+          x: p.x + finite(parent.geometry?.getAttribute('width')) / 2,
+          y: p.y + finite(parent.geometry?.getAttribute('height')) / 2,
+        };
+        const width = finite(c.geometry?.getAttribute('width')),
+          height = finite(c.geometry?.getAttribute('height'));
+        const dx = result.x + width / 2 - center.x,
+          dy = result.y + height / 2 - center.y;
+        result.x = center.x + dx * Math.cos(angle) - dy * Math.sin(angle) - width / 2;
+        result.y = center.y + dx * Math.sin(angle) + dy * Math.cos(angle) - height / 2;
+      }
+      return result;
     };
     const scale = Math.min(
       1,
@@ -507,7 +523,7 @@ export async function importDrawio(
           width: clamp(finite(c.geometry?.getAttribute('width'), 180) * scale, 40, 2000),
           height: clamp(finite(c.geometry?.getAttribute('height'), 80) * scale, 30, 1600),
         },
-        layer: nodes.length,
+        layer: layers.get(c.id),
         appearance: {
           shape,
           shapeId,
@@ -531,6 +547,73 @@ export async function importDrawio(
         },
       });
     }
+    const parentOrigin = (c: Cell) => {
+      const parent = cells.get(c.cell.getAttribute('parent') ?? '');
+      return parent?.cell.getAttribute('vertex') === '1' ? position(parent) : { x: 0, y: 0 };
+    };
+    const globalPoint = (c: Cell, point: Element): Point => {
+      const origin = parentOrigin(c);
+      return {
+        x: (origin.x + finite(point.getAttribute('x'))) * scale,
+        y: (origin.y + finite(point.getAttribute('y'))) * scale,
+      };
+    };
+    const nodeFor = (id: string | null) => nodes.find((n) => n.id === repIds.get(id ?? ''));
+    const terminalCenter = (
+      id: string | null,
+      point: Element | null | undefined,
+      c: Cell,
+    ): Point => {
+      const n = nodeFor(id);
+      if (n) return { x: n.position.x + n.size!.width / 2, y: n.position.y + n.size!.height / 2 };
+      const route = edges.find((e) => e.id === repIds.get(id ?? ''));
+      if (route) {
+        const attachedPoint = (side: 'source' | 'target') => {
+          const rawId = cells.get(id!)?.cell.getAttribute(side) ?? null;
+          const terminal = nodeFor(rawId),
+            point = route[side === 'source' ? 'sourceAnchor' : 'targetAnchor'];
+          return terminal && point
+            ? {
+                x: terminal.position.x + point.x * terminal.size!.width,
+                y: terminal.position.y + point.y * terminal.size!.height,
+              }
+            : terminalCenter(rawId, undefined, c);
+        };
+        const source = route.detachedSource ?? attachedPoint('source');
+        const target = route.detachedTarget ?? attachedPoint('target');
+        return pointOnRoute([source, ...(route.waypoints ?? []), target]);
+      }
+      return point ? globalPoint(c, point) : parentOrigin(c);
+    };
+    const anchor = (c: Cell, id: string | null, side: 'exit' | 'entry', toward: Point) => {
+      const n = nodeFor(id);
+      if (!n) return id && relationIds.has(id) ? { x: 0.5, y: 0.5 } : undefined;
+      const terminal = cells.get(id!)!;
+      const origin = position(terminal),
+        width = finite(terminal.geometry?.getAttribute('width'), 180),
+        height = finite(terminal.geometry?.getAttribute('height'), 80);
+      const fixed = c.style[side + 'X'] !== undefined && c.style[side + 'Y'] !== undefined;
+      let x = fixed ? finite(c.style[side + 'X'], 0.5) : (toward.x / scale - origin.x) / width;
+      let y = fixed ? finite(c.style[side + 'Y'], 0.5) : (toward.y / scale - origin.y) / height;
+      if (!fixed || c.style[side + 'Perimeter'] !== '0') {
+        const dx = x - 0.5,
+          dy = y - 0.5;
+        const shape = n.appearance?.shape;
+        const denominator =
+          shape === 'ellipse'
+            ? Math.hypot(dx, dy) * 2
+            : shape === 'diamond'
+              ? (Math.abs(dx) + Math.abs(dy)) * 2
+              : Math.max(Math.abs(dx), Math.abs(dy)) * 2;
+        x = denominator ? 0.5 + dx / denominator : side === 'exit' ? 1 : 0;
+        y = denominator ? 0.5 + dy / denominator : 0.5;
+      }
+      // Representation dimensions may be clamped by maket; preserve the imported point in pixels.
+      return {
+        x: ((x * width + finite(c.style[side + 'Dx'])) * scale) / n.size!.width,
+        y: ((y * height + finite(c.style[side + 'Dy'])) * scale) / n.size!.height,
+      };
+    };
     const semantic = (rawId: string | null) =>
       objectIds.get(rawId ?? '') ?? relationIds.get(rawId ?? '');
     const pending = [...lines];
@@ -600,12 +683,41 @@ export async function importDrawio(
           ? dash
           : undefined;
       const detached = (point: Element | null | undefined) =>
-        point
-          ? {
-              x: finite(point.getAttribute('x')) * scale,
-              y: finite(point.getAttribute('y')) * scale,
-            }
-          : undefined;
+        point ? globalPoint(c, point) : undefined;
+      const points = c.geometry?.querySelector(':scope > Array[as="points"]');
+      if (points && points.children.length > 256)
+        throw new Error('У стрелки больше 256 точек маршрута');
+      const controls = points
+        ? [...points.children].filter((p) => p.tagName === 'mxPoint').map((p) => globalPoint(c, p))
+        : [];
+      const waypoints = controls.length || !c.style.edgeStyle ? controls : undefined;
+      const offset = c.geometry?.querySelector(':scope > mxPoint[as="offset"]');
+      const labelCell = [...cells.values()].find(
+        (x) => x.cell.getAttribute('parent') === c.id && auxiliary(x),
+      );
+      const labelGeometry = labelCell?.geometry ?? c.geometry;
+      const labelOffset = labelGeometry?.querySelector(':scope > mxPoint[as="offset"]') ?? offset;
+      const labelPosition = {
+        relative: labelGeometry?.getAttribute('relative') === '1',
+        along: finite(labelGeometry?.getAttribute('x')) / 2 + 0.5,
+        normal: finite(labelGeometry?.getAttribute('y')) * scale,
+        offset: {
+          x: finite(labelOffset?.getAttribute('x')) * scale,
+          y: finite(labelOffset?.getAttribute('y')) * scale,
+        },
+      };
+      const sourceAnchor = anchor(
+        c,
+        source,
+        'exit',
+        waypoints?.[0] ?? terminalCenter(target, targetPoint, c),
+      );
+      const targetAnchor = anchor(
+        c,
+        target,
+        'entry',
+        waypoints?.at(-1) ?? terminalCenter(source, sourcePoint, c),
+      );
       edges.push({
         id: repIds.get(c.id)!,
         bindingId: null,
@@ -615,6 +727,11 @@ export async function importDrawio(
         target: repIds.get(target ?? '') ?? uuid(),
         sourcePort: 'out',
         targetPort: 'in',
+        layer: layers.get(c.id),
+        sourceAnchor,
+        targetAnchor,
+        waypoints,
+        labelPosition,
         detachedSource: source && repIds.has(source) ? undefined : detached(sourcePoint),
         detachedTarget: target && repIds.has(target) ? undefined : detached(targetPoint),
         properties: { label: label(c) },
@@ -638,8 +755,6 @@ export async function importDrawio(
             c.style.curved === '1' ? 'bezier' : c.style.edgeStyle ? 'smoothstep' : 'straight',
         },
       });
-      if (c.geometry?.querySelector('[as="points"]'))
-        warnings.add('Маршруты стрелок пересчитаны движком maket.');
     }
     for (const relation of relations.values()) {
       if (!['наследует', 'экземпляр'].includes(relation.relationType ?? '')) continue;

@@ -473,7 +473,7 @@ export function DiagramPreview({ document: d }: { document: DiagramDocument }) {
       n.position,
       { x: n.position.x + appearance(n).width, y: n.position.y + appearance(n).height },
     ]),
-    ...[...geometry.values()].flatMap((g) => [g.source, g.target, g.center]),
+    ...[...geometry.values()].flatMap((g) => [...g.points, g.label]),
   ];
   const minX = Math.min(...points.map((p) => p.x)),
     minY = Math.min(...points.map((p) => p.y)),

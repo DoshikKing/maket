@@ -69,6 +69,7 @@ import {
   type FreeEndpointNode,
   type RelationAnchorNode,
 } from './relation-anchor';
+import { importedEdgeTypes, importedHandleId, type ImportedHandle } from './imported-edge';
 import { edgeGeometry } from '@/lib/diagram-geometry';
 import { NumberField, TextAppearanceControls, EdgeAppearanceControls } from './appearance-controls';
 import {
@@ -527,7 +528,13 @@ function Editor({ initial }: { initial: Diagram }) {
     change({
       ...docRef.current,
       edges: docRef.current.edges.map((e) =>
-        e.id === selected.id ? { ...e, appearance: { ...e.appearance, ...patch } } : e,
+        e.id === selected.id
+          ? {
+              ...e,
+              ...(patch.routing ? { waypoints: undefined } : {}),
+              appearance: { ...e.appearance, ...patch },
+            }
+          : e,
       ),
     });
   }
@@ -748,8 +755,22 @@ function Editor({ initial }: { initial: Diagram }) {
         ...old,
         source: sourceFree ? old.source : c.source,
         target: targetFree ? old.target : c.target,
-        sourcePort: sourceFree ? old.sourcePort : (c.sourceHandle ?? ''),
-        targetPort: targetFree ? old.targetPort : (c.targetHandle ?? ''),
+        sourcePort:
+          sourceFree || c.sourceHandle === importedHandleId(id, 'source')
+            ? old.sourcePort
+            : (c.sourceHandle ?? ''),
+        targetPort:
+          targetFree || c.targetHandle === importedHandleId(id, 'target')
+            ? old.targetPort
+            : (c.targetHandle ?? ''),
+        sourceAnchor:
+          c.source === old.source && c.sourceHandle === importedHandleId(id, 'source')
+            ? old.sourceAnchor
+            : undefined,
+        targetAnchor:
+          c.target === old.target && c.targetHandle === importedHandleId(id, 'target')
+            ? old.targetAnchor
+            : undefined,
         detachedSource: sourceFree ? old.detachedSource : undefined,
         detachedTarget: targetFree ? old.detachedTarget : undefined,
       },
@@ -763,7 +784,11 @@ function Editor({ initial }: { initial: Diagram }) {
       ...current,
       edges: current.edges.map((e) =>
         e.id === id
-          ? { ...e, [end === 'source' ? 'detachedSource' : 'detachedTarget']: position }
+          ? {
+              ...e,
+              [end === 'source' ? 'detachedSource' : 'detachedTarget']: position,
+              [end === 'source' ? 'sourceAnchor' : 'targetAnchor']: undefined,
+            }
           : e,
       ),
     });
@@ -883,12 +908,38 @@ function Editor({ initial }: { initial: Diagram }) {
   );
   type CanvasNode = ShapeNode | RelationAnchorNode | FreeEndpointNode;
   const nodes = useMemo<CanvasNode[]>(() => {
+    const origins = new Map(document.nodes.map((n) => [n.id, n.position]));
+    for (const [id, g] of geometry)
+      origins.set(id, { x: g.center.x - 12, y: g.center.y + g.attachmentOffset - 8 });
+    const handles = new Map<string, ImportedHandle[]>();
+    for (const edge of document.edges)
+      for (const side of ['source', 'target'] as const) {
+        const point = geometry.get(edge.id)?.[side],
+          origin = origins.get(edge[side]);
+        if (
+          !point ||
+          !origin ||
+          !edge[side === 'source' ? 'sourceAnchor' : 'targetAnchor'] ||
+          edge[side === 'source' ? 'detachedSource' : 'detachedTarget']
+        )
+          continue;
+        const list = handles.get(edge[side]) ?? [];
+        list.push({
+          id: importedHandleId(edge.id, side),
+          side,
+          x: point.x - origin.x,
+          y: point.y - origin.y,
+        });
+        handles.set(edge[side], list);
+      }
     const result = document.nodes.map((n) => {
       const definition = document.notation.nodeTypes.find((t) => t.id === n.typeId)!;
       const isSelected = selected?.kind === 'node' && selected.id === n.id;
+      const importedHandles = handles.get(n.id) ?? [];
       const previous = nodeCache.current.get(n.id);
       if (
         previous?.data.node === n &&
+        JSON.stringify(previous.data.importedHandles) === JSON.stringify(importedHandles) &&
         previous.data.definition === definition &&
         previous.data.shapes === document.notation.shapes &&
         previous.data.object === objectLookup.get(n.objectId ?? '') &&
@@ -907,6 +958,7 @@ function Editor({ initial }: { initial: Diagram }) {
         data: {
           definition,
           node: n,
+          importedHandles,
           shapes: document.notation.shapes,
           object: objectLookup.get(n.objectId ?? ''),
         },
@@ -935,6 +987,7 @@ function Editor({ initial }: { initial: Diagram }) {
               selected: selected?.kind === 'edge' && selected.id === e.id,
               data: {
                 name: relationLookup.get(e.relationId ?? '')?.name ?? 'Связь',
+                importedHandles: handles.get(e.id),
               },
             },
           ]
@@ -993,9 +1046,23 @@ function Editor({ initial }: { initial: Diagram }) {
           id: e.id,
           source: e.detachedSource ? freeEndpointId(e.id, 'source') : e.source,
           target: e.detachedTarget ? freeEndpointId(e.id, 'target') : e.target,
-          sourceHandle: e.detachedSource ? 'free' : e.sourcePort,
-          targetHandle: e.detachedTarget ? 'free' : e.targetPort,
-          type: a.routing === 'bezier' ? 'default' : a.routing,
+          sourceHandle: e.detachedSource
+            ? 'free'
+            : e.sourceAnchor
+              ? importedHandleId(e.id, 'source')
+              : e.sourcePort,
+          targetHandle: e.detachedTarget
+            ? 'free'
+            : e.targetAnchor
+              ? importedHandleId(e.id, 'target')
+              : e.targetPort,
+          type:
+            e.waypoints || e.sourceAnchor || e.targetAnchor || e.labelPosition
+              ? 'imported'
+              : a.routing === 'bezier'
+                ? 'default'
+                : a.routing,
+          data: { geometry: geometry.get(e.id) },
           zIndex: e.layer ?? 0,
           label: String(
             effectiveEdge(
@@ -1020,6 +1087,7 @@ function Editor({ initial }: { initial: Diagram }) {
       }),
     [
       document.edges,
+      geometry,
       styledEdges,
       selected,
       initial.id,
@@ -2260,6 +2328,7 @@ function Editor({ initial }: { initial: Diagram }) {
                 nodes={nodes}
                 edges={edges}
                 nodeTypes={canvasNodeTypes}
+                edgeTypes={importedEdgeTypes}
                 connectionMode={ConnectionMode.Loose}
                 colorMode={user.settings.theme}
                 elevateNodesOnSelect={false}

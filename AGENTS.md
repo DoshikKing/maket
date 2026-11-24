@@ -22,4 +22,4 @@ Load only the applicable skills and referenced documents; do not read every guid
 
 ## Deferred editor tasks
 
-When asked to recall the remaining plan, read [docs/editor-improvements.md](docs/editor-improvements.md). The deferred items are draw.io import coordinates, multiline representation labels in properties, and standalone/portable save hangs after delete/undo. Do not implement these merely because a skill recommends a broader cleanup.
+When asked to recall the remaining plan, read [docs/editor-improvements.md](docs/editor-improvements.md). The deferred items are multiline representation labels in properties and standalone/portable save hangs after delete/undo. The draw.io coordinate fix is recorded as completed in that plan. Do not implement these merely because a skill recommends a broader cleanup.

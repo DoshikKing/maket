@@ -117,6 +117,7 @@ export const notationSchema = z
     }
   });
 export type NotationDocument = z.infer<typeof notationSchema>;
+export const pointSchema = z.object({ x: z.number().finite(), y: z.number().finite() });
 const values = z.record(
   z.string().max(100),
   z.union([z.string().max(2000), z.number().finite(), z.boolean()]),
@@ -156,6 +157,17 @@ export const diagramSchema = z.object({
         source: identifier,
         target: identifier,
         appearance: edgeOverrideSchema.optional(),
+        sourceAnchor: pointSchema.optional(),
+        targetAnchor: pointSchema.optional(),
+        waypoints: z.array(pointSchema).max(256).optional(),
+        labelPosition: z
+          .object({
+            along: z.number().finite(),
+            normal: z.number().finite(),
+            offset: pointSchema,
+            relative: z.boolean(),
+          })
+          .optional(),
         detachedSource: z.object({ x: z.number().finite(), y: z.number().finite() }).optional(),
         detachedTarget: z.object({ x: z.number().finite(), y: z.number().finite() }).optional(),
         sourcePort: identifier,

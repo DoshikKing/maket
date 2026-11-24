@@ -103,7 +103,7 @@ export function diagramLayerLayout(document?: DiagramDocument) {
       node.position,
       { x: node.position.x + a.width, y: node.position.y + a.height },
     ]),
-    ...[...edges.values()].flatMap((g) => [g.source, g.target, g.center]),
+    ...[...edges.values()].flatMap((g) => [...g.points, g.label]),
   ];
   const minX = points.length ? Math.min(...points.map((p) => p.x)) - 60 : 0;
   const minY = points.length ? Math.min(...points.map((p) => p.y)) - 60 : 0;
