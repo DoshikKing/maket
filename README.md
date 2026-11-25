@@ -10,7 +10,7 @@ A web application for diagram modeling with built-in and custom notations.
 
 - Solution explorer: solutions, projects, folders, objects, relations, and diagrams in a shared hierarchy. Organize elements and diagrams, drag them between containers, and use representation folders to navigate to a specific representation. [Model concepts and rules](docs/solutions.md).
 - Invitation-code registration, sign-in, sign-out, password recovery, and password changes. Passwords use scrypt; sessions use random tokens, hashes stored in the database, and an HttpOnly cookie. Password recovery terminates existing sessions.
-- Personal library: create, search, sort, rename, duplicate, and delete diagrams, and browse recent changes.
+- Unified workspace: browse the model tree and diagrams; create, import, search, sort, rename, duplicate, and delete diagrams.
 - Editor: notation-based palette, canvas, shapes, ports, connections, element and relation properties, dragging, resizing with handles or the inspector, arbitrary stacking levels, zoom, minimap, deletion, undo, and redo. Double-click to edit text; font size, rotation, and alignment are configurable. Additional attributes can appear on objects.
 - Notations: built-in flowchart notation, duplication, appearance and shape editors based on basic shapes and control points, a full JSON editor, import, export, and immutable versions. Properties, ports, and complex rules are edited through JSON. Connections support different line styles, widths, routes, and markers at both ends.
 - Client- and server-side validation of structure and rules: property types, required fields, permitted connection directions, loops, and port limits.
@@ -119,7 +119,7 @@ The separate SQL runner exists because Prisma 6.19's JavaScript Schema Engine ca
 
 ## Workspaces
 
-The switcher above the sidebar menu lets you create a workspace or open an existing one. Each workspace has independent objects, solutions, projects, relations, viewpoints, diagrams, and history. The library, tree, and graph display only the current workspace. Notations and user settings are available across the account's workspaces.
+The switcher above the sidebar menu lets you create a workspace or open an existing one. Each workspace has independent objects, solutions, projects, relations, viewpoints, diagrams, and history. The diagram browser, tree, and graph display only the current workspace. Notations and user settings are available across the account's workspaces.
 
 When upgrading, the existing model remains the first workspace; new workspaces start empty. Your selection is remembered for subsequent visits. An open tab continues using its own workspace even if another tab selects a different one. The editor's unsaved-changes protection applies before switching.
 
@@ -147,7 +147,7 @@ The graph is available to the authenticated model owner. It is a viewer: draggin
 
 The personal model tree is available next to the palette. Create an object in the tree, choose its appearance for placement, and drag it onto the canvas; "Place" creates another representation of the same object. A palette item creates a new object and its first representation. Nesting in the tree does not change the canvas.
 
-"Diagram notations" lets you connect several fixed notation versions. The palette is divided by notation, and "Object appearance" in the inspector changes the selected representation's skin. When starting a connection, the editor selects a relation type from the source representation's notation, preserving an explicitly chosen type within that notation; the connection list is grouped by notation. Shared properties are accessible through the tree and inspector; double-clicking sets a local label. Archiving an object preserves its representations and history. The tree's trash action deletes an unused object without representations or children; for objects still in use, the reason deletion is blocked is displayed.
+In diagram properties (open the title in the editor or the diagram entry in the tree), "Diagram notations" lets you connect several fixed notation versions. The palette is divided by notation, and "Object appearance" in the inspector changes the selected representation's skin. When starting a connection, the editor selects a relation type from the source representation's notation, preserving an explicitly chosen type within that notation; the connection list is grouped by notation. Shared properties are accessible through the tree and inspector; double-clicking sets a local label. Archiving an object preserves its representations and history. The tree's trash action deletes an unused object without representations or children; for objects still in use, the reason deletion is blocked is displayed.
 
 Arrows also have a shared model: "Model relations" stores the name, description, attributes, and two participants of a relation. References to relations are grouped under each participant in a collapsible "Relations" folder. "Place relation" creates another arrow between selected representations, with an independent label and appearance. Deleting an arrow leaves its relation in the model. A relation without representations can be deleted from the explorer; an object with remaining relations cannot be deleted. Shared relation properties support history and archiving.
 

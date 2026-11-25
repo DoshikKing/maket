@@ -26,7 +26,7 @@ export default function WikiLayout({ children }: { children: React.ReactNode }) 
         </Link>
         <div className="wiki-header-actions">
           <WikiTheme />
-          <Link className="secondary" href="/library">
+          <Link className="secondary" href="/solutions">
             В приложение <ArrowUpRight size={16} />
           </Link>
         </div>

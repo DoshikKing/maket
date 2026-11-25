@@ -1,4 +1,4 @@
-import { LibraryPage } from '@/components/library';
+import { redirect } from 'next/navigation';
 export default function Page() {
-  return <LibraryPage />;
+  redirect('/solutions?view=diagrams');
 }

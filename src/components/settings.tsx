@@ -18,9 +18,8 @@ export function SettingsPage() {
     <main className="page narrow">
       <div className="page-heading">
         <div>
-          <div className="eyebrow">ВАШЕ ПРОСТРАНСТВО</div>
           <h1>Настройки</h1>
-          <p className="muted">Сделайте maket удобным для себя.</p>
+          <p className="muted">Оформление, редактор, сочетания клавиш и интеграции</p>
         </div>
       </div>
       {message && (

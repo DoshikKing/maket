@@ -45,6 +45,7 @@ import { Modal } from './modal';
 import { ShareDialog } from './share-dialog';
 import { useTreeExpansion } from './use-tree-expansion';
 import { EntityRelations } from './entity-relations';
+import { ObjectDiagramNotations } from './diagram-notations';
 export function ObjectEditor({
   object,
   kind = 'object',
@@ -56,6 +57,8 @@ export function ObjectEditor({
   onSaved,
   onClose,
   onRelationsChanged,
+  diagramSettings,
+  diagramId,
 }: {
   object?: ModelObject;
   kind?: ModelObject['kind'];
@@ -67,6 +70,8 @@ export function ObjectEditor({
   onSaved: (o: ModelObject) => void;
   onClose: () => void;
   onRelationsChanged?: () => void;
+  diagramSettings?: ReactNode;
+  diagramId?: string;
 }) {
   const editable = useContext(CommandEditingContext);
   const lease = useEditLease(object?.id, editable);
@@ -116,7 +121,13 @@ export function ObjectEditor({
   }
   return (
     <Modal
-      title={object ? 'Общие свойства объекта' : `Создать: ${entityLabels[kind ?? 'object']}`}
+      title={
+        object
+          ? object.kind === 'diagram'
+            ? 'Свойства диаграммы'
+            : 'Общие свойства объекта'
+          : `Создать: ${entityLabels[kind ?? 'object']}`
+      }
       onClose={onClose}
       className="object-modal"
     >
@@ -387,6 +398,15 @@ export function ObjectEditor({
           </button>
         </form>
       </fieldset>
+      {object?.kind === 'diagram' &&
+        (diagramSettings ??
+          (diagramId ? (
+            <ObjectDiagramNotations
+              diagramId={diagramId}
+              disabled={!editable || !lease.held}
+              onChanged={onRelationsChanged}
+            />
+          ) : null))}
       {object && <EntityRelations entityId={object.id} onChanged={onRelationsChanged} />}
       {object && (
         <div className="object-history">
@@ -493,7 +513,9 @@ export function ObjectTree({
   onRelationEdit,
   onRelationPlace,
   onRelationSaved,
+  diagramSettings,
 }: {
+  diagramSettings?: ReactNode;
   footer?: ReactNode;
   onHide?: () => void;
   defaultParentId?: string | null;
@@ -1222,6 +1244,13 @@ export function ObjectTree({
       {editing && (
         <ObjectEditor
           onRelationsChanged={onRefresh}
+          diagramId={diagrams.find((d) => d.entityId === editing.object?.id)?.id}
+          diagramSettings={
+            editing.object?.id &&
+            diagrams.find((d) => d.id === diagramId)?.entityId === editing.object.id
+              ? diagramSettings
+              : undefined
+          }
           object={editing.object}
           parentId={editing.parentId}
           baseId={editing.baseId}

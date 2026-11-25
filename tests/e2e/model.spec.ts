@@ -2703,8 +2703,8 @@ test('browser: native beforeunload protects links and browser history', async ({
   await page.getByRole('link', { name: 'Открыть диаграмму →', exact: true }).click();
   await expect(page.locator('.react-flow__node-notation')).toHaveCount(1);
   const editorUrl = page.url();
-  await page.getByRole('link', { name: 'Библиотека', exact: true }).click();
-  await expect(page).toHaveURL(/\/library$/);
+  await page.getByRole('link', { name: 'Диаграммы', exact: true }).click();
+  await expect(page).toHaveURL(/\/solutions\?view=diagrams$/);
   await page.evaluate(() => history.back());
   await expect(page).toHaveURL(editorUrl);
   await expect(page.locator('.react-flow__node-notation')).toHaveCount(1);
@@ -2714,7 +2714,7 @@ test('browser: native beforeunload protects links and browser history', async ({
   await expect(page.getByText('Есть изменения', { exact: true })).toBeVisible();
   let dialog = page.waitForEvent('dialog', { timeout: 10000 });
   const leaving = page
-    .getByRole('link', { name: 'Библиотека', exact: true })
+    .getByRole('link', { name: 'Диаграммы', exact: true })
     .click({ noWaitAfter: true });
   const linkDialog = await dialog;
   expect(linkDialog.type()).toBe('beforeunload');
@@ -4197,7 +4197,7 @@ test('browser: create and switch workspaces without sharing objects or changing 
   await expect(otherTab.locator(`.solutions-tree [data-tree-entity="${entity.id}"]`)).toBeVisible();
   await expect(otherTab.locator(`.solutions-tree [data-tree-entity="${other.id}"]`)).toHaveCount(0);
   expect(await otherTab.evaluate(() => document.documentElement.dataset.workspace)).toBe(first.id);
-  await page.getByRole('link', { name: 'Библиотека', exact: true }).click();
+  await page.getByRole('link', { name: 'Диаграммы', exact: true }).click();
   await expect(page.locator('.diagram-card')).toHaveCount(0);
   await page.reload();
   expect(await page.evaluate(() => document.documentElement.dataset.workspace)).toBe(second.id);

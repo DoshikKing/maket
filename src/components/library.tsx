@@ -1,31 +1,22 @@
 'use client';
 import { layeredElements } from './layered-elements';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
   Plus,
   Search,
-  Upload,
-  ArrowUpRight,
-  Clock,
   Copy,
   Trash2,
   Pencil,
-  GitBranch,
   Workflow,
-  Layers,
+  ArrowUpRight,
+  GitBranch,
 } from 'lucide-react';
-import { api, date, readJson } from '@/lib/client';
-import { importDrawio } from '@/lib/drawio-import';
+import { api, date } from '@/lib/client';
+import { ImportDiagramButton } from './import-diagram';
 import { DiagramDocument } from '@/lib/notation';
-import {
-  portableDiagramSchema,
-  projectDocument,
-  displayedView,
-  type ModelDocument,
-} from '@/lib/model';
-import { ViewpointBrowser } from './viewpoint-browser';
+import { projectDocument, displayedView, type ModelDocument } from '@/lib/model';
 import type { Viewpoint } from '@/lib/structure';
 import { Modal } from './modal';
 import { edgeGeometry } from '@/lib/diagram-geometry';
@@ -53,23 +44,19 @@ export type NotationItem = {
   versionId: string | null;
   document: DiagramDocument['notation'];
 };
-export function LibraryPage() {
+export function DiagramBrowser({ parentId }: { parentId?: string | null }) {
   const [items, setItems] = useState<Item[]>([]),
     [viewpoints, setViewpoints] = useState<Viewpoint[]>([]),
-    [viewpointsOpen, setViewpointsOpen] = useState(false),
     [viewpointId, setViewpointId] = useState(''),
     [notations, setNotations] = useState<NotationItem[]>([]),
     [loading, setLoading] = useState(true),
     [error, setError] = useState(''),
-    [importWarnings, setImportWarnings] = useState<string[]>([]),
-    [importFolderId, setImportFolderId] = useState<string>(),
     [query, setQuery] = useState(''),
     [sort, setSort] = useState('recent'),
     [create, setCreate] = useState(false),
     [notationIds, setNotationIds] = useState<string[]>(['builtin']),
     [busy, setBusy] = useState(false);
-  const router = useRouter(),
-    file = useRef<HTMLInputElement>(null);
+  const router = useRouter();
   useEffect(() => {
     const refresh = () => void load();
     window.addEventListener('maket:workspace-changed', refresh);
@@ -124,68 +111,16 @@ export function LibraryPage() {
     }
   }
   return (
-    <main className="page">
+    <div className="diagram-browser">
       <div className="page-heading">
         <div>
-          <div className="eyebrow">ВАШИ ИДЕИ В ОДНОМ МЕСТЕ</div>
-          <h1>
-            Библиотека <span className="count">{items.length}</span>
-          </h1>
-          <p className="muted">Создавайте, исследуйте и связывайте идеи.</p>
+          <h2>
+            Диаграммы <span className="count">{items.length}</span>
+          </h2>
+          <p className="muted small-text">Все диаграммы рабочего пространства</p>
         </div>
         <div className="button-row">
-          <input
-            ref={file}
-            type="file"
-            accept=".json,.drawio,.xml"
-            hidden
-            onChange={async (e) => {
-              const f = e.target.files?.[0];
-              e.target.value = '';
-              if (!f) return;
-              setError('');
-              setImportWarnings([]);
-              setImportFolderId(undefined);
-              setBusy(true);
-              try {
-                if (/\.(drawio|xml)$/i.test(f.name)) {
-                  const imported = await importDrawio(f);
-                  const result = await api<{ folder: { id: string }; diagrams: { id: string }[] }>(
-                    'diagram-imports',
-                    'POST',
-                    {
-                      folderName: imported.folderName,
-                      pages: imported.pages,
-                    },
-                  );
-                  if (imported.warnings.length) {
-                    setImportWarnings(imported.warnings);
-                    setImportFolderId(result.folder.id);
-                    await load();
-                  } else router.push(`/solutions?parent=${result.folder.id}`);
-                  return;
-                }
-                const raw = await readJson(f);
-                const document = portableDiagramSchema.parse(raw.document ?? raw);
-                const d = await api<Item>('diagrams', 'POST', {
-                  name:
-                    typeof raw.name === 'string'
-                      ? raw.name
-                      : f.name.replace(/\.maket\.json$|\.json$/, ''),
-                  document,
-                });
-                router.push(`/diagrams/${d.id}`);
-              } catch (e) {
-                setError((e as Error).message);
-              } finally {
-                setBusy(false);
-              }
-            }}
-          />
-          <button className="secondary" disabled={busy} onClick={() => file.current?.click()}>
-            <Upload size={17} />
-            Импорт
-          </button>
+          <ImportDiagramButton onImported={() => void load()} />
           <button className="primary" onClick={() => setCreate(true)}>
             <Plus size={18} />
             Создать диаграмму
@@ -197,83 +132,8 @@ export function LibraryPage() {
           {error}
         </div>
       )}
-      {importWarnings.length > 0 && (
-        <div className="welcome-banner" role="status">
-          <div>
-            <strong>Импорт завершён</strong>
-            <ul>
-              {importWarnings.map((warning) => (
-                <li key={warning}>{warning}</li>
-              ))}
-            </ul>
-            {importFolderId && (
-              <Link className="text-link" href={`/solutions?parent=${importFolderId}`}>
-                Открыть папку импорта
-              </Link>
-            )}
-          </div>
-        </div>
-      )}
-      {!loading && items.length === 0 && (
-        <section className="welcome-banner">
-          <div>
-            <span className="tag">ПРОСТРАНСТВО ДЛЯ БОЛЬШИХ ИДЕЙ</span>
-            <h2>Сложное становится понятным</h2>
-            <p>Начните с одного элемента. Соедините мысли в целую картину.</p>
-            <button className="text-button" onClick={() => setCreate(true)}>
-              Начать моделирование <ArrowUpRight size={16} />
-            </button>
-          </div>
-          <div className="banner-visual" aria-hidden="true">
-            <div className="mini-node">
-              <Workflow size={22} />
-            </div>
-            <span />
-            <div className="mini-node mid">
-              <GitBranch size={24} />
-            </div>
-            <span />
-            <div className="mini-node">
-              <Layers size={22} />
-            </div>
-            <i className="visual-dot d1" />
-            <i className="visual-dot d2" />
-          </div>
-        </section>
-      )}
-      {items.length > 0 && (
-        <section className="recent">
-          <div className="section-title">
-            <h2>
-              <Clock size={18} />
-              Недавние изменения
-            </h2>
-            <span className="muted">Продолжите с того места, где остановились</span>
-          </div>
-          <div className="recent-grid">
-            {items.slice(0, 3).map((d) => (
-              <Link key={d.id} href={`/diagrams/${d.id}`} className="recent-item">
-                <span className="file-icon">
-                  <Workflow size={20} />
-                </span>
-                <div>
-                  <strong>{d.name}</strong>
-                  <small>
-                    {date(d.updatedAt)} · версия {d.revision}
-                  </small>
-                </div>
-                <ArrowUpRight size={17} />
-              </Link>
-            ))}
-          </div>
-        </section>
-      )}
       <section>
         <div className="list-toolbar">
-          <h2>Все диаграммы</h2>
-          <button className="secondary small" onClick={() => setViewpointsOpen(true)}>
-            Ракурсы
-          </button>
           <div className="button-row">
             <div className="search">
               <Search size={17} />
@@ -291,17 +151,17 @@ export function LibraryPage() {
           </div>
         </div>
         {loading ? (
-          <div className="empty">Загружаем библиотеку…</div>
+          <div className="empty">Загружаем диаграммы…</div>
         ) : (
           <div className="diagram-grid">
             {filtered.map((d) => (
               <article className="diagram-card" key={d.id}>
-                <Link href={`/diagrams/${d.id}`} className="diagram-preview">
+                <Link href={`/solutions?diagram=${d.id}`} className="diagram-preview">
                   <DiagramPreview document={d.document} />
                   <span className="notation-badge">{d.document.notation.name}</span>
                 </Link>
                 <div className="card-body">
-                  <Link className="card-title" href={`/diagrams/${d.id}`}>
+                  <Link className="card-title" href={`/solutions?diagram=${d.id}`}>
                     {d.name}
                   </Link>
                   <small>Изменена {date(d.updatedAt)}</small>
@@ -342,14 +202,10 @@ export function LibraryPage() {
                 </div>
               </article>
             ))}
-            {!query && (
-              <button className="create-card" onClick={() => setCreate(true)}>
-                <span>
-                  <Plus size={25} />
-                </span>
-                <strong>Новая диаграмма</strong>
-                <small>Дайте форму новой идее</small>
-              </button>
+            {!query && !filtered.length && (
+              <div className="empty">
+                Диаграмм пока нет. Создайте диаграмму или импортируйте файл.
+              </div>
             )}
             {query && !filtered.length && (
               <div className="empty">Ничего не найдено. Попробуйте другое название.</div>
@@ -357,9 +213,6 @@ export function LibraryPage() {
           </div>
         )}
       </section>
-      {viewpointsOpen && (
-        <ViewpointBrowser onClose={() => setViewpointsOpen(false)} onChanged={() => void load()} />
-      )}
       {create && (
         <Modal title="Новая диаграмма" onClose={() => setCreate(false)}>
           <form
@@ -372,10 +225,11 @@ export function LibraryPage() {
                 const name = new FormData(e.currentTarget).get('name');
                 const d = await api<Item>('diagrams', 'POST', {
                   name,
+                  parentId: parentId ?? null,
                   notationIds,
                   viewpointId: viewpointId || null,
                 });
-                router.push(`/diagrams/${d.id}`);
+                router.push(`/solutions?diagram=${d.id}`);
               } catch (e) {
                 setError((e as Error).message);
               } finally {
@@ -443,7 +297,7 @@ export function LibraryPage() {
           </form>
         </Modal>
       )}
-    </main>
+    </div>
   );
 }
 function ShapesIcon() {
@@ -459,7 +313,7 @@ export function DiagramPreview({ document: d }: { document: DiagramDocument }) {
     return (
       <div className="preview-empty">
         <Workflow size={34} />
-        <span>Чистый лист для ваших идей</span>
+        <span>Пустая диаграмма</span>
       </div>
     );
 

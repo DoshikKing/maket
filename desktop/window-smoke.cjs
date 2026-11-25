@@ -21,12 +21,14 @@ const assert = require('node:assert/strict');
     const deadline = Date.now() + 120000;
     let window;
     while (Date.now() < deadline) {
-      window = app.windows().find((w) => w.url().endsWith('/library'));
+      window = app.windows().find((w) => w.url().endsWith('/solutions'));
       if (window) break;
       await new Promise((r) => setTimeout(r, 250));
     }
     assert.ok(window, 'Desktop workspace did not open');
-    await window.getByRole('heading', { name: /^Библиотека/ }).waitFor({ timeout: 30000 });
+    await window
+      .getByRole('heading', { name: 'Рабочая область', exact: true })
+      .waitFor({ timeout: 30000 });
     assert.equal(await window.getByRole('button', { name: 'Выйти', exact: true }).count(), 0);
     assert.equal(await window.evaluate(() => typeof window.require), 'undefined');
     await window.goto(new URL('/settings', window.url()).href);

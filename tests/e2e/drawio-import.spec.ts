@@ -109,10 +109,10 @@ test('imports exported metadata, custom shapes, alias identity, inheritance and 
   const pending = Promise.race([
     page.waitForResponse((r) => r.url().endsWith('/api/diagram-imports')),
     page
-      .locator('.page > .error[role=alert]')
+      .locator('.modal .error[role=alert]')
       .waitFor()
       .then(async () => {
-        throw new Error(await page.locator('.page > .error[role=alert]').innerText());
+        throw new Error(await page.locator('.modal .error[role=alert]').innerText());
       }),
   ]);
   await page.locator('input[type=file]').setInputFiles({
@@ -166,7 +166,7 @@ test('rejects invalid XML, DTD and oversized decompression before upload; rolls 
       mimeType: 'application/xml',
       buffer: Buffer.from(payload),
     });
-    await expect(page.locator('.page > .error[role=alert]')).toBeVisible();
+    await expect(page.locator('.modal .error[role=alert]')).toBeVisible();
   }
   expect(writes).toBe(0);
   const f = drawioFixture();

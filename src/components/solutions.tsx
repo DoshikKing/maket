@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useState, type CSSProperties } from 'react';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import {
   ChevronRight,
   Folder,
@@ -16,6 +17,7 @@ import {
 } from 'lucide-react';
 import { graphSolutionId } from '@/lib/solution-graph';
 import { api } from '@/lib/client';
+import { appPath } from '@/lib/base-path';
 import { entityLabels, relationEntity, type ModelObject, type ModelDiagram } from '@/lib/model';
 import { treeObjectPath, visibleTreeEntities, type Structure } from '@/lib/structure';
 import { ObjectEditor } from './object-tree';
@@ -23,7 +25,9 @@ import { RelationEditor } from './relation-browser';
 import { RepresentationFolder } from './representation-folder';
 import { RelationFolder } from './relation-folder';
 import { Modal } from './modal';
-import type { NotationItem } from './library';
+import { DiagramBrowser, type NotationItem } from './library';
+import { WorkspaceViews } from './workspace-views';
+import { ImportDiagramButton } from './import-diagram';
 import { useTreeExpansion } from './use-tree-expansion';
 import { EntityRelations } from './entity-relations';
 import { DiagramLinks } from './diagram-links';
@@ -39,7 +43,9 @@ const icons = {
   relation: GitBranch,
 };
 type Kind = keyof typeof icons;
-export function SolutionsPage() {
+export function SolutionsPage({ view = 'model' }: { view?: 'model' | 'diagrams' }) {
+  const searchParams = useSearchParams();
+  const parentParam = searchParams.get('parent');
   const { panels, setPanels } = useWorkspacePanels();
   const [space, setSpace] = useState<Structure | null>(null),
     [notations, setNotations] = useState<NotationItem[]>([]),
@@ -82,9 +88,11 @@ export function SolutionsPage() {
     }
   }
   useEffect(() => {
-    setSelectedId(new URLSearchParams(window.location.search).get('parent'));
     void load();
   }, []);
+  useEffect(() => {
+    setSelectedId(parentParam);
+  }, [parentParam]);
   const relationIds = new Set(space?.relations.map((r) => r.id));
   const entities = [...(space?.objects ?? []), ...(space?.relations.map(relationEntity) ?? [])];
   const focusPath = selectedId
@@ -117,7 +125,9 @@ export function SolutionsPage() {
     window.history.replaceState(
       null,
       '',
-      id ? `/solutions?parent=${encodeURIComponent(id)}` : '/solutions',
+      appPath(
+        `/solutions?${new URLSearchParams({ ...(view === 'diagrams' ? { view: 'diagrams' } : {}), ...(id ? { parent: id } : {}) })}`,
+      ),
     );
   }
   async function move(id: string, parentId: string | null) {
@@ -477,12 +487,12 @@ export function SolutionsPage() {
     <main className="page solutions-page">
       <div className="page-heading">
         <div>
-          <div className="eyebrow">ОТ РЕШЕНИЯ К ДЕТАЛЯМ</div>
-          <h1>Решения</h1>
-          <p className="muted">Единая модель, проекты, диаграммы и ракурсы.</p>
+          <h1>Рабочая область</h1>
         </div>
       </div>
+      <WorkspaceViews active={view} parentId={selectedId} />
       <div className="solution-actions button-row">
+        {view === 'model' && <ImportDiagramButton onImported={() => void load()} />}
         {space && (
           <Link
             className="secondary"
@@ -580,112 +590,118 @@ export function SolutionsPage() {
             />
           </div>
           <section className="solution-content">
-            <nav className="solution-breadcrumb" aria-label="Путь в модели">
-              <button onClick={() => select(null)}>Пространство</button>
-              {ancestors.map((o) => (
-                <span key={o.id}>
-                  <ChevronRight size={13} />
-                  <button onClick={() => select(o.id)}>{o.name}</button>
-                </span>
-              ))}
-            </nav>
-            <div className="solution-heading">
-              <div>
-                <span className="eyebrow">
-                  {selected ? entityLabels[entityKind(selected)] : 'КОРЕНЬ'}
-                </span>
-                <h2>{selected?.name ?? 'Модель решений'}</h2>
-              </div>
-              {selected && (
-                <div className="button-row">
-                  <button className="secondary small" onClick={() => setEditing(true)}>
-                    <Pencil size={14} /> Свойства
-                  </button>
-                  <button
-                    className="icon-button"
-                    aria-label="Удалить выбранный элемент"
-                    disabled={busy}
-                    onClick={() => void remove()}
+            {view === 'diagrams' ? (
+              <DiagramBrowser parentId={selectedId} />
+            ) : (
+              <>
+                <nav className="solution-breadcrumb" aria-label="Путь в модели">
+                  <button onClick={() => select(null)}>Пространство</button>
+                  {ancestors.map((o) => (
+                    <span key={o.id}>
+                      <ChevronRight size={13} />
+                      <button onClick={() => select(o.id)}>{o.name}</button>
+                    </span>
+                  ))}
+                </nav>
+                <div className="solution-heading">
+                  <div>
+                    <span className="eyebrow">
+                      {selected ? entityLabels[entityKind(selected)] : 'КОРЕНЬ'}
+                    </span>
+                    <h2>{selected?.name ?? 'Модель решений'}</h2>
+                  </div>
+                  {selected && (
+                    <div className="button-row">
+                      <button className="secondary small" onClick={() => setEditing(true)}>
+                        <Pencil size={14} /> Свойства
+                      </button>
+                      <button
+                        className="icon-button"
+                        aria-label="Удалить выбранный элемент"
+                        disabled={busy}
+                        onClick={() => void remove()}
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
+                  )}
+                </div>
+                {selected?.description && <p className="muted">{selected.description}</p>}
+                {selected?.kind === 'diagram' &&
+                  space.diagrams.some((d) => d.entityId === selected.id) && (
+                    <Link
+                      className="primary"
+                      href={`/solutions?diagram=${space.diagrams.find((d) => d.entityId === selected.id)?.id}`}
+                    >
+                      Открыть диаграмму →
+                    </Link>
+                  )}
+                <div className="solution-create">
+                  <select
+                    aria-label="Тип нового элемента"
+                    value={kind}
+                    onChange={(e) => setKind(e.target.value as Kind)}
                   >
-                    <Trash2 size={16} />
+                    {Object.keys(icons).map((k) => (
+                      <option key={k} value={k}>
+                        {entityLabels[k as Kind]}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    className="primary"
+                    disabled={selected?.archived}
+                    onClick={() => {
+                      setError('');
+                      setCreating(true);
+                    }}
+                  >
+                    <Plus size={16} /> Создать внутри
                   </button>
                 </div>
-              )}
-            </div>
-            {selected?.description && <p className="muted">{selected.description}</p>}
-            {selected?.kind === 'diagram' &&
-              space.diagrams.some((d) => d.entityId === selected.id) && (
-                <Link
-                  className="primary"
-                  href={`/solutions?diagram=${space.diagrams.find((d) => d.entityId === selected.id)?.id}`}
-                >
-                  Открыть диаграмму →
-                </Link>
-              )}
-            <div className="solution-create">
-              <select
-                aria-label="Тип нового элемента"
-                value={kind}
-                onChange={(e) => setKind(e.target.value as Kind)}
-              >
-                {Object.keys(icons).map((k) => (
-                  <option key={k} value={k}>
-                    {entityLabels[k as Kind]}
-                  </option>
-                ))}
-              </select>
-              <button
-                className="primary"
-                disabled={selected?.archived}
-                onClick={() => {
-                  setError('');
-                  setCreating(true);
-                }}
-              >
-                <Plus size={16} /> Создать внутри
-              </button>
-            </div>
-            <p className="muted small-text">
-              Дочерние элементы организуют хранение. Декомпозиции и переходы к ракурсам
-              настраиваются в контекстном меню. Одна сущность может иметь несколько представлений на
-              разных диаграммах.
-            </p>
-            {selected && !['folder', 'diagram'].includes(selected.kind ?? '') && (
-              <>
-                <RepresentationFolder
-                  key={selected.id}
-                  entityId={selected.id}
-                  items={space.representations}
-                />
+                <p className="muted small-text">
+                  Дочерние элементы организуют хранение. Декомпозиции и переходы к ракурсам
+                  настраиваются в контекстном меню. Одна сущность может иметь несколько
+                  представлений на разных диаграммах.
+                </p>
+                {selected && !['folder', 'diagram'].includes(selected.kind ?? '') && (
+                  <>
+                    <RepresentationFolder
+                      key={selected.id}
+                      entityId={selected.id}
+                      items={space.representations}
+                    />
+                  </>
+                )}
+                {selected &&
+                  (!['folder', 'diagram'].includes(selected.kind ?? '') ||
+                    linkedRelations(selected.id).length > 0) &&
+                  relationFolder(selected.id, selected.name)}
+                <div className="solution-cards">
+                  {children.map((o) => {
+                    const Icon = icons[entityKind(o)];
+                    const diagram = space.diagrams.find((d) => d.entityId === o.id);
+                    return (
+                      <article className="solution-card" key={o.id}>
+                        <button onClick={() => select(o.id)}>
+                          <Icon size={23} />
+                          <strong>{o.name}</strong>
+                          <small>
+                            {entityLabels[entityKind(o)]}
+                            {o.archived ? ' · Архив' : ''}
+                          </small>
+                        </button>
+                        {diagram && (
+                          <Link href={`/solutions?diagram=${diagram.id}`}>Открыть диаграмму →</Link>
+                        )}
+                      </article>
+                    );
+                  })}
+                </div>
+                {children.length === 0 && (
+                  <p className="muted">На этом уровне пока нет дочерних элементов.</p>
+                )}
               </>
-            )}
-            {selected &&
-              (!['folder', 'diagram'].includes(selected.kind ?? '') ||
-                linkedRelations(selected.id).length > 0) &&
-              relationFolder(selected.id, selected.name)}
-            <div className="solution-cards">
-              {children.map((o) => {
-                const Icon = icons[entityKind(o)];
-                const diagram = space.diagrams.find((d) => d.entityId === o.id);
-                return (
-                  <article className="solution-card" key={o.id}>
-                    <button onClick={() => select(o.id)}>
-                      <Icon size={23} />
-                      <strong>{o.name}</strong>
-                      <small>
-                        {entityLabels[entityKind(o)]}
-                        {o.archived ? ' · Архив' : ''}
-                      </small>
-                    </button>
-                    {diagram && (
-                      <Link href={`/solutions?diagram=${diagram.id}`}>Открыть диаграмму →</Link>
-                    )}
-                  </article>
-                );
-              })}
-            </div>
-            {children.length === 0 && (
-              <p className="muted">На этом уровне пока нет дочерних элементов.</p>
             )}
           </section>
         </div>
@@ -749,6 +765,7 @@ export function SolutionsPage() {
         <ObjectEditor
           onRelationsChanged={() => void load()}
           object={selected}
+          diagramId={space?.diagrams.find((d) => d.entityId === selected.id)?.id}
           objects={entities}
           baseObjects={space?.objects}
           onClose={() => setEditing(false)}

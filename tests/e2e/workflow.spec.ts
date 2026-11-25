@@ -237,11 +237,12 @@ test('browser: login, create, connect, edit, undo, save, reopen and export', asy
   await page.getByLabel('Электронная почта', { exact: true }).fill(email);
   await page.getByLabel('Пароль', { exact: true }).fill(password);
   await page.getByRole('button', { name: 'Войти в maket' }).click();
-  await expect(page).toHaveURL(/\/library/);
+  await expect(page).toHaveURL(/\/solutions/);
+  await page.getByRole('link', { name: 'Диаграммы', exact: true }).click();
   await page.getByRole('button', { name: 'Создать диаграмму', exact: true }).click();
   await page.getByLabel('Название', { exact: true }).fill('Заказ — браузерный тест');
   await page.getByRole('button', { name: 'Открыть редактор' }).click();
-  await expect(page).toHaveURL(/\/diagrams\//, { timeout: 15000 });
+  await expect(page).toHaveURL(/\/solutions\?diagram=/, { timeout: 15000 });
   await page
     .getByRole('region', { name: 'Палитра Блок-схема' })
     .getByRole('button', { name: 'Процесс', exact: true })
@@ -320,19 +321,21 @@ test('browser: custom notation through JSON, diagram import and persistent dark 
   await page.getByRole('button', { name: 'Сохранить нотацию', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Карта сервисов', exact: true })).toBeVisible();
   await page.screenshot({ path: 'test-results/notations.png', fullPage: true });
-  await page.getByRole('link', { name: 'Библиотека', exact: true }).click();
+  await page.getByRole('link', { name: 'Рабочая область', exact: true }).click();
+  await page.getByRole('link', { name: 'Диаграммы', exact: true }).click();
   await page.getByRole('button', { name: 'Создать диаграмму', exact: true }).click();
   await page.getByLabel('Название', { exact: true }).fill('Архитектура магазина');
   await page.getByRole('button', { name: /Карта сервисов/ }).click();
   await page.getByRole('button', { name: 'Открыть редактор' }).click();
-  await expect(page).toHaveURL(/\/diagrams\//, { timeout: 15000 });
+  await expect(page).toHaveURL(/\/solutions\?diagram=/, { timeout: 15000 });
   await page.getByRole('button', { name: 'Сервис', exact: true }).click();
   await page.getByLabel('Реплики', { exact: false }).fill('3');
   await page.getByLabel('Активен', { exact: false }).uncheck();
   await page.getByLabel('Название', { exact: false }).fill('Каталог');
   // Navigate immediately: the editor must flush the pending autosave before following the link.
-  await page.getByRole('link', { name: 'Библиотека', exact: true }).click();
-  await expect(page).toHaveURL(/\/library/);
+  await page.getByRole('link', { name: 'Рабочая область', exact: true }).click();
+  await page.getByRole('link', { name: 'Диаграммы', exact: true }).click();
+  await expect(page).toHaveURL(/\/solutions/);
   await page.getByRole('link', { name: 'Архитектура магазина', exact: true }).click();
   await expect(page.locator('.node-label')).toHaveText('Каталог');
   await page.locator('.react-flow__node-notation').click();
@@ -345,14 +348,15 @@ test('browser: custom notation through JSON, diagram import and persistent dark 
   const file = await exported;
   await page.getByRole('button', { name: 'Закрыть', exact: true }).click();
   const path = (await file.path())!;
-  await page.getByRole('link', { name: 'Библиотека', exact: true }).click();
-  await expect(page).toHaveURL(/\/library/);
+  await page.getByRole('link', { name: 'Рабочая область', exact: true }).click();
+  await page.getByRole('link', { name: 'Диаграммы', exact: true }).click();
+  await expect(page).toHaveURL(/\/solutions/);
   await page.locator('input[type=file]').setInputFiles({
     name: 'diagram.maket.json',
     mimeType: 'application/json',
     buffer: await readFile(path),
   });
-  await expect(page).toHaveURL(/\/diagrams\//, { timeout: 15000 });
+  await expect(page).toHaveURL(/\/solutions\?diagram=/, { timeout: 15000 });
   await expect(page.locator('.node-label')).toHaveText('Каталог');
   await page.getByRole('link', { name: 'Настройки', exact: true }).click();
   await page.getByRole('radio', { name: 'Тёмная', exact: true }).check();
@@ -363,7 +367,8 @@ test('browser: custom notation through JSON, diagram import and persistent dark 
   await page.getByRole('radio', { name: 'Светлая', exact: true }).check();
   await page.getByRole('button', { name: 'Сохранить настройки' }).click();
   await expect(page.locator('.workspace')).not.toHaveClass(/dark/);
-  await page.getByRole('link', { name: 'Библиотека', exact: true }).click();
+  await page.getByRole('link', { name: 'Рабочая область', exact: true }).click();
+  await page.getByRole('link', { name: 'Диаграммы', exact: true }).click();
   await page.screenshot({ path: 'test-results/library.png', fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.reload();
@@ -425,7 +430,7 @@ test('browser: invitation registration needs no email and cannot change an exist
   await page.getByLabel('Электронная почта', { exact: true }).fill(email);
   await page.getByLabel('Пароль', { exact: true }).fill(password);
   await page.getByRole('button', { name: 'Войти в maket', exact: true }).click();
-  await expect(page).toHaveURL(/\/library/);
+  await expect(page).toHaveURL(/\/solutions/);
   const original = await db.user.findUniqueOrThrow({ where: { email } });
   expect(
     (

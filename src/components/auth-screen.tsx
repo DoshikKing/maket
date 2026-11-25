@@ -33,7 +33,7 @@ export function AuthScreen({
     try {
       const result = await api<{ message?: string }>(`auth/${mode}`, 'POST', { ...values, token });
       if (mode === 'login') {
-        router.push('/library');
+        router.push('/solutions');
         router.refresh();
       } else if (mode === 'reset' || mode === 'verify') {
         setMessage(

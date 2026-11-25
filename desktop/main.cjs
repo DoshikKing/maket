@@ -242,6 +242,6 @@ async function launch() {
       },
     ]),
   );
-  window = secureWindow(`${runtime.origin}/library`);
+  window = secureWindow(`${runtime.origin}/solutions`);
   splash.destroy();
 }

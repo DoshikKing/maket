@@ -53,11 +53,10 @@ export function NotationsPage() {
     <main className="page">
       <div className="page-heading">
         <div>
-          <div className="eyebrow">МОДЕЛИРУЙТЕ ПО-СВОЕМУ</div>
           <h1>
             Нотации <span className="count">{items.length}</span>
           </h1>
-          <p className="muted">Элементы, свойства и правила — язык ваших диаграмм.</p>
+          <p className="muted">Готовые и пользовательские нотации</p>
         </div>
         <div className="button-row">
           <input

@@ -112,10 +112,10 @@ test('workspace opens wiki in a new tab from both full and compact navigation', 
   const wiki = await popup;
   await expect(wiki).toHaveURL(/\/wiki$/);
   await expect(wiki.getByRole('heading', { level: 1 })).toHaveText('От идеи до общей модели.');
-  await expect(page).toHaveURL(/\/library$/);
+  await expect(page).toHaveURL(/\/solutions\?view=diagrams$/);
   await wiki.getByRole('button', { name: 'Включить тёмную тему вики' }).click();
   await wiki.getByRole('link', { name: 'В приложение', exact: true }).click();
-  await expect(wiki).toHaveURL(/\/library$/);
+  await expect(wiki).toHaveURL(/\/solutions$/);
   await expect(wiki.locator('html')).toHaveAttribute('data-theme', 'light');
   await wiki.close();
 });

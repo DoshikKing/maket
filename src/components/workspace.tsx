@@ -4,7 +4,6 @@ import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import {
   Workflow,
-  Library,
   Shapes,
   Settings,
   LogOut,
@@ -80,7 +79,6 @@ export function Workspace({
   const editor = pathname.startsWith('/diagrams/') || !!searchParams.get('diagram');
   const links = [
     { href: '/solutions', label: 'Рабочая область', icon: Workflow },
-    { href: '/library', label: 'Библиотека', icon: Library },
     { href: '/notations', label: 'Нотации', icon: Shapes },
     { href: '/settings', label: 'Настройки', icon: Settings },
   ];
@@ -111,7 +109,7 @@ export function Workspace({
             >
               {collapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
             </button>
-            <Link href="/library" className="brand" aria-label="maket" title="maket">
+            <Link href="/solutions" className="brand" aria-label="maket" title="maket">
               <span className="brand-icon">
                 <Workflow size={23} />
               </span>

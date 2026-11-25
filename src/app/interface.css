@@ -976,3 +976,106 @@ textarea {
   color: var(--positive);
   background: color-mix(in srgb, var(--positive) 10%, var(--panel));
 }
+
+/* Workspace collections share the model's canvas and existing color tokens. */
+.workspace-views {
+  display: flex;
+  gap: 24px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 16px;
+}
+.workspace-views a {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  gap: 8px;
+  padding: 12px 0;
+  position: relative;
+  color: var(--muted);
+  font-size: 14px;
+}
+.workspace-views a[aria-current='page'] {
+  color: var(--text);
+}
+.workspace-views a[aria-current='page']::after {
+  content: '';
+  position: absolute;
+  inset: auto 0 0;
+  border-bottom: 2px solid var(--accent);
+}
+.solutions-page > .page-heading {
+  margin-bottom: 8px;
+}
+.solutions-page > .solution-actions {
+  margin: 0 0 16px;
+}
+.solutions-page .solutions-layout {
+  gap: 16px;
+}
+.solution-content .diagram-browser {
+  min-width: 0;
+}
+.diagram-browser .page-heading {
+  margin: 0 0 20px;
+  align-items: center;
+}
+.diagram-browser .page-heading h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 20px;
+  font-weight: 500;
+}
+.diagram-browser .list-toolbar {
+  margin-top: 16px;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.diagram-browser .diagram-grid {
+  grid-template-columns: repeat(auto-fill, minmax(min(240px, 100%), 1fr));
+}
+.diagram-browser .diagram-card {
+  box-shadow: none;
+}
+.diagram-browser .diagram-card:hover {
+  transform: none;
+}
+.diagram-notations {
+  margin-block: 20px;
+  padding-block: 16px;
+  border-block: 1px solid var(--border);
+}
+.diagram-notations h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 500;
+}
+.diagram-notations .revision-row {
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.diagram-notations > label {
+  margin-top: 16px;
+}
+@media (max-width: 650px) {
+  .diagram-browser .page-heading {
+    align-items: flex-start;
+  }
+  .diagram-browser .page-heading > .button-row {
+    width: 100%;
+  }
+  .diagram-browser .list-toolbar .button-row {
+    flex-direction: column;
+    align-items: stretch;
+    width: 100%;
+  }
+  .diagram-browser .search,
+  .diagram-browser .list-toolbar select {
+    width: 100%;
+    max-width: none;
+    flex: none;
+  }
+}

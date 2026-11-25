@@ -89,7 +89,9 @@ import {
 } from '@/lib/appearance';
 import { RelationEditor, RelationPlacement } from './relation-browser';
 import { ObjectTree, ObjectEditor } from './object-tree';
-import { DiagramPreview, type NotationItem } from './library';
+import { DiagramPreview } from './library';
+import { DiagramNotations } from './diagram-notations';
+import { ImportDiagramButton } from './import-diagram';
 import {
   projectDocument,
   connectionTypeForSource,
@@ -221,8 +223,7 @@ function Editor({ initial }: { initial: Diagram }) {
     [linksOpen, setLinksOpen] = useState(false),
     [commandBusy, setCommandBusy] = useState(false),
     [objectSaving, setObjectSaving] = useState(false),
-    [notationsOpen, setNotationsOpen] = useState(false),
-    [availableNotations, setAvailableNotations] = useState<NotationItem[]>([]),
+    [diagramPropertiesOpen, setDiagramPropertiesOpen] = useState(false),
     [placementType, setPlacementType] = useState(initial.document.notation.nodeTypes[0].id),
     [skinChange, setSkinChange] = useState<{
       nodeId: string;
@@ -1481,7 +1482,10 @@ function Editor({ initial }: { initial: Diagram }) {
     if (!editable.current) return;
     setCommandBusy(true);
     try {
-      if (!(await flush())) return;
+      if (!(await flush()))
+        throw new Error(
+          'Не удалось сохранить текущие изменения. Закройте свойства и повторите сохранение диаграммы.',
+        );
       adopt(
         await api<ModelDiagram>(`diagrams/${initial.id}/notations`, 'POST', {
           revision: revisionRef.current,
@@ -1491,6 +1495,7 @@ function Editor({ initial }: { initial: Diagram }) {
       );
     } catch (err) {
       setError((err as Error).message);
+      throw err;
     } finally {
       setCommandBusy(false);
     }
@@ -1741,6 +1746,14 @@ function Editor({ initial }: { initial: Diagram }) {
     </div>
   );
 
+  const notationSettings = (
+    <DiagramNotations
+      bindings={document.bindings}
+      usedBindings={[...document.nodes, ...document.edges].map((e) => splitType(e.typeId)[0])}
+      disabled={!canEdit || commandBusy || saving || interacting || objectSaving}
+      onUpdate={updateNotations}
+    />
+  );
   return (
     <CommandEditingContext.Provider value={canEdit}>
       <main
@@ -1764,19 +1777,9 @@ function Editor({ initial }: { initial: Diagram }) {
             <div>
               <button
                 className="title-button"
-                disabled={!canEdit}
-                onClick={async () => {
-                  const next = prompt('Название диаграммы', name);
-                  if (!next?.trim()) return;
-                  try {
-                    const result = await api<Diagram>(`diagrams/${initial.id}`, 'PATCH', {
-                      name: next,
-                    });
-                    setName(result.name);
-                  } catch (e) {
-                    setError((e as Error).message);
-                  }
-                }}
+                aria-label={`Свойства диаграммы ${name}`}
+                title="Свойства диаграммы"
+                onClick={() => setDiagramPropertiesOpen(true)}
               >
                 {name}
                 <ChevronDown size={14} />
@@ -1826,6 +1829,9 @@ function Editor({ initial }: { initial: Diagram }) {
             )}
           </div>
           <div className="button-row">
+            <Link className="secondary small" href="/solutions?view=diagrams">
+              Диаграммы
+            </Link>
             <button
               className="secondary small"
               onClick={async () => {
@@ -1895,6 +1901,7 @@ function Editor({ initial }: { initial: Diagram }) {
               <Share2 size={16} />
               Поделиться
             </button>
+            <ImportDiagramButton compact beforeImport={flush} />
             <button className="secondary small" onClick={() => setExportOpen(true)}>
               <Download size={16} />
               Экспорт
@@ -2009,6 +2016,7 @@ function Editor({ initial }: { initial: Diagram }) {
             }
           />
           <ObjectTree
+            diagramSettings={notationSettings}
             beforeNavigate={flush}
             onHide={() => setPanels((p) => ({ ...p, tree: false }))}
             focusId={initial.entityId}
@@ -2164,19 +2172,6 @@ function Editor({ initial }: { initial: Diagram }) {
               </div>
             </div>
             <p className="muted small-text">Нажмите, чтобы добавить элемент</p>
-            <button
-              className="secondary wide small"
-              onClick={async () => {
-                try {
-                  setAvailableNotations(await api<NotationItem[]>('notations'));
-                  setNotationsOpen(true);
-                } catch (err) {
-                  setError((err as Error).message);
-                }
-              }}
-            >
-              Нотации диаграммы
-            </button>
             <label className="small-text">
               Отображение при размещении
               <select
@@ -2299,13 +2294,15 @@ function Editor({ initial }: { initial: Diagram }) {
                       parsed = portableDiagramSchema.parse(raw.document ?? raw);
                     if (parsed.schemaVersion !== 2 || parsed.modelSpaceId !== document.modelSpaceId)
                       throw new Error(
-                        'Импортируйте этот файл как новую диаграмму через библиотеку.',
+                        'Импортируйте этот файл как новую диаграмму в рабочей области на вкладке «Диаграммы».',
                       );
                     if (JSON.stringify(parsed.bindings) !== JSON.stringify(document.bindings))
-                      throw new Error('Другой набор нотаций. Используйте импорт через библиотеку.');
+                      throw new Error(
+                        'Другой набор нотаций. Используйте импорт в рабочей области на вкладке «Диаграммы».',
+                      );
                     if (parsed.nodes.some((n) => !objectLookup.has(n.objectId)))
                       throw new Error(
-                        'Объекты файла отсутствуют в модели. Используйте библиотеку.',
+                        'Объекты файла отсутствуют в модели. Используйте «Импорт» для создания новой диаграммы.',
                       );
                     const next = packDocument(
                       projectDocument(parsed),
@@ -2326,7 +2323,7 @@ function Editor({ initial }: { initial: Diagram }) {
                 onClick={() => file.current?.click()}
               >
                 <Upload size={15} />
-                Импорт файла
+                Заменить раскладку (JSON)
               </button>
               <span className="muted small-text">
                 Перемещение поля:{' '}
@@ -3064,6 +3061,8 @@ function Editor({ initial }: { initial: Diagram }) {
         {objectEditing && (
           <ObjectEditor
             onRelationsChanged={() => void refreshObjects()}
+            diagramId={diagrams.find((d) => d.entityId === objectEditing.id)?.id}
+            diagramSettings={objectEditing.id === initial.entityId ? notationSettings : undefined}
             key={`${objectEditing.id}:${objectEditing.revision}`}
             object={objectEditing}
             objects={objects}
@@ -3071,52 +3070,40 @@ function Editor({ initial }: { initial: Diagram }) {
             onClose={() => setObjectEditing(null)}
           />
         )}
-        {notationsOpen && (
-          <Modal title="Нотации диаграммы" onClose={() => setNotationsOpen(false)}>
-            <p className="muted">
-              Каждая нотация закреплена на выбранной версии. Подключено {document.bindings.length}{' '}
-              из 12.
-            </p>
-            <div className="notation-bindings">
-              {document.bindings.map((b) => (
-                <div className="revision-row" key={b.id}>
-                  <span>
-                    <strong>{b.document.name}</strong>
-                    <small>v{b.document.version}</small>
-                  </span>
-                  <button
-                    className="secondary small danger"
-                    disabled={
-                      commandBusy ||
-                      document.bindings.length === 1 ||
-                      document.nodes.some((n) => splitType(n.typeId)[0] === b.id) ||
-                      document.edges.some((e) => splitType(e.typeId)[0] === b.id)
-                    }
-                    onClick={() => void updateNotations(undefined, b.id)}
-                  >
-                    Отключить {b.document.name}
-                  </button>
-                </div>
-              ))}
-            </div>
-            <h3>Добавить из библиотеки</h3>
-            {availableNotations.map((n) => (
-              <button
-                key={n.id}
-                className="secondary notation-add"
-                disabled={
-                  commandBusy ||
-                  document.bindings.length >= 12 ||
-                  document.bindings.some(
-                    (b) =>
-                      b.document.id === n.document.id && b.document.version === n.document.version,
-                  )
+        {diagramPropertiesOpen && (
+          <Modal title="Свойства диаграммы" onClose={() => setDiagramPropertiesOpen(false)}>
+            <form
+              className="form-stack"
+              onSubmit={async (e) => {
+                e.preventDefault();
+                const next = new FormData(e.currentTarget).get('name');
+                try {
+                  if (!(await flush())) return;
+                  const result = await api<Diagram>(`diagrams/${initial.id}`, 'PATCH', {
+                    name: next,
+                  });
+                  setName(result.name);
+                  void refreshObjects();
+                } catch (e) {
+                  setError((e as Error).message);
                 }
-                onClick={() => void updateNotations(n.id)}
-              >
-                Добавить {n.name} · v{n.document.version}
+              }}
+            >
+              <label>
+                Название диаграммы
+                <input
+                  name="name"
+                  defaultValue={name}
+                  required
+                  maxLength={100}
+                  disabled={!canEdit || commandBusy}
+                />
+              </label>
+              <button className="secondary" disabled={!canEdit || commandBusy}>
+                Сохранить название
               </button>
-            ))}
+            </form>
+            {notationSettings}
             {error && (
               <div className="error" role="alert">
                 {error}

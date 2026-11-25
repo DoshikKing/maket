@@ -88,7 +88,7 @@ test('appearance, native dialogs, keyboard navigation, compact sidebar and reduc
     }
   };
   await page.goto('/library');
-  await expect(page.getByRole('link', { name: 'Библиотека', exact: true })).toHaveAttribute(
+  await expect(page.getByRole('link', { name: 'Диаграммы', exact: true })).toHaveAttribute(
     'aria-current',
     'page',
   );
@@ -164,6 +164,9 @@ test('appearance, native dialogs, keyboard navigation, compact sidebar and reduc
       true,
     );
   await noOverflow();
+  expect(
+    (await page.getByRole('textbox', { name: 'Поиск диаграмм', exact: true }).boundingBox())!.width,
+  ).toBeGreaterThan(180);
   await capture('library-mobile');
   await page.getByRole('link', { name: 'Настройки', exact: true }).click();
   await expect(page.getByRole('radio', { name: 'Светлая', exact: true })).toBeVisible();
