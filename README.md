@@ -1,49 +1,51 @@
 # maket
 
-Веб-приложение для моделирования диаграмм с готовыми и пользовательскими нотациями.
+English | [Русский](README.ru.md)
 
-**Стек:** Next.js 15, React 19, TypeScript, React Flow, PostgreSQL 17, Prisma 6 (JavaScript engine + pg), Zod.
+A web application for diagram modeling with built-in and custom notations.
 
-## Реализовано
+**Stack:** Next.js 15, React 19, TypeScript, React Flow, PostgreSQL 17, Prisma 6 (JavaScript engine + pg), Zod.
 
-- Обозреватель решений: решения, проекты, папки, объекты, связи и диаграммы в общей иерархии. Организационная вложенность элементов и диаграмм, перетаскивание между контейнерами, папки представлений с переходом к конкретному экземпляру. [Концепция и правила модели](docs/solutions.md).
-- Регистрация по коду приглашения, вход, выход, восстановление и смена пароля. Пароли: scrypt; сессии: случайные токены, хеши в БД, HttpOnly cookie. Восстановление пароля завершает существующие сессии.
-- Личная библиотека: создание, поиск, сортировка, переименование, дублирование, удаление, последние изменения.
-- Редактор: палитра из нотации, канвас, фигуры, порты, связи, свойства элементов и связей, перемещение, изменение размеров рамкой или через инспектор, произвольные уровни слоёв, масштаб, миникарта, удаление, отмена и повтор. Текст редактируется двойным щелчком; доступны размер шрифта, поворот и выравнивание. Дополнительные атрибуты отображаются на объектах.
-- Нотации: готовая блок-схема, копирование, конструктор внешнего вида и форм из базовых фигур с контрольными точками, полный JSON-редактор, импорт, экспорт, неизменяемые версии. Свойства, порты и сложные правила редактируются через JSON. Связи поддерживают разные линии, толщины, маршруты и маркеры обоих концов.
-- Проверка структуры и правил на клиенте и сервере: типы свойств, обязательные поля, разрешённые направления связей, петли и лимиты портов.
-- Автосохранение после завершения перемещения, изменения размеров и редактирования текста, ручное сохранение, история последних 100 ревизий и восстановление. Один жест — один шаг отмены. Защита от перезаписи параллельных изменений.
-- Импорт/экспорт `.maket.json` со встроенной нотацией; `.notation.json` для нотаций.
-- Имя пользователя, светлая/тёмная тема, привязка к сетке и автосохранение.
+## Features
 
-Ракурсы диаграмм и переходы между ними описаны в [docs/viewpoints.md](docs/viewpoints.md).
-Обозреватель ракурсов доступен в рабочей области и редакторе. Декомпозиция раскрывает
-объект в том же ракурсе, углубление открывает его отображение в другом контексте;
-переходы не ограничиваются соседними уровнями.
-В контекстном меню объекта, связи и представления доступны прямые переходы к существующим
-декомпозициям и другим ракурсам. Меню показывает только диаграммы, связанные с этим
-объектом; рядом указаны ракурс и смысл перехода. Перед уходом из редактора изменения
-сохраняются, а в целевом ракурсе выбирается существующее представление, если оно есть.
+- Solution explorer: solutions, projects, folders, objects, relations, and diagrams in a shared hierarchy. Organize elements and diagrams, drag them between containers, and use representation folders to navigate to a specific representation. [Model concepts and rules](docs/solutions.md).
+- Invitation-code registration, sign-in, sign-out, password recovery, and password changes. Passwords use scrypt; sessions use random tokens, hashes stored in the database, and an HttpOnly cookie. Password recovery terminates existing sessions.
+- Personal library: create, search, sort, rename, duplicate, and delete diagrams, and browse recent changes.
+- Editor: notation-based palette, canvas, shapes, ports, connections, element and relation properties, dragging, resizing with handles or the inspector, arbitrary stacking levels, zoom, minimap, deletion, undo, and redo. Double-click to edit text; font size, rotation, and alignment are configurable. Additional attributes can appear on objects.
+- Notations: built-in flowchart notation, duplication, appearance and shape editors based on basic shapes and control points, a full JSON editor, import, export, and immutable versions. Properties, ports, and complex rules are edited through JSON. Connections support different line styles, widths, routes, and markers at both ends.
+- Client- and server-side validation of structure and rules: property types, required fields, permitted connection directions, loops, and port limits.
+- Autosave after dragging, resizing, or editing text; manual saving; the last 100 revisions and restoration. Each gesture is one undo step. Protection against overwriting concurrent changes.
+- Import/export of `.maket.json` files with embedded notation; `.notation.json` files for notations.
+- User name, light/dark theme, grid snapping, and autosave preferences.
 
-## Локальный запуск
+Diagram viewpoints and navigation between them are described in [docs/viewpoints.md](docs/viewpoints.md).
+The viewpoint explorer is available in the workspace and editor. Decomposition expands
+an object within the same viewpoint; drilling down opens its representation in another
+context. Navigation is not restricted to adjacent levels.
+Context menus for objects, relations, and representations provide direct links to existing
+decompositions and other viewpoints. Each menu lists only diagrams linked to that object,
+with the viewpoint and the meaning of the transition. Changes are saved before leaving
+the editor, and an existing representation is selected in the destination viewpoint when available.
 
-Нужны Node.js 22+ и PostgreSQL 17 (или Docker Compose).
+## Local setup
+
+Requires Node.js 22+ and PostgreSQL 17 (or Docker Compose).
 
 ```bash
 npm ci
 cp .env.example .env
-# Если PostgreSQL уже работает, заполните POSTGRES_HOST/PORT/USER/PASSWORD/DB/SCHEMA и пропустите Compose.
+# If PostgreSQL is already running, configure POSTGRES_HOST/PORT/USER/PASSWORD/DB/SCHEMA and skip Compose.
 docker compose up -d --wait
 npm run db:generate
 npm run db:migrate
 npm run dev
 ```
 
-Prisma Client генерируется автоматически после `npm ci`, перед `npm run dev` и перед созданием тестового пользователя. Для генерации установите зависимости вместе с devDependencies: CLI `prisma` нужен до сборки приложения. `npm run build` также выполняет генерацию.
+Prisma Client is generated automatically after `npm ci`, before `npm run dev`, and before creating a test user. Install dependencies including devDependencies: the `prisma` CLI is required before building the application. `npm run build` also generates the client.
 
-Генерация работает до создания `.env` и не подключается к БД. Скрипт передаёт технический URL только дочернему процессу Prisma, если `DATABASE_URL` отсутствует. Приложение и миграции используют вашу реальную конфигурацию без такого запасного значения.
+Generation works before `.env` exists and does not connect to the database. If `DATABASE_URL` is absent, the script passes a placeholder URL only to the Prisma child process. The application and migrations use your actual configuration without this fallback.
 
-Если появляется `Cannot find module '.prisma/client/default'`, остановите сервер и выполните из корня проекта:
+If you see `Cannot find module '.prisma/client/default'`, stop the server and run the following from the project root:
 
 ```bash
 npm ci --include=dev
@@ -51,32 +53,32 @@ npm run db:generate
 npm run dev
 ```
 
-При установке с `--ignore-scripts` автоматические npm-хуки отключены; перед запуском явно выполните `npm run db:generate`. Не переносите `node_modules` между машинами: установите зависимости и сгенерируйте клиент на целевой машине. Для production после генерации выполните `npm run build`, затем `npm start`.
+Installing with `--ignore-scripts` disables automatic npm hooks; explicitly run `npm run db:generate` before starting. Do not copy `node_modules` between machines: install dependencies and generate the client on the target machine. For production, run `npm run build` after generation, then `npm start`.
 
-Откройте `http://localhost:3000`. После готовности приложения в консоли появится строка `[maket invite] <код>`. Создайте аккаунт, указав этот код на странице регистрации; подтверждение почты не требуется. Код общий для текущего запуска и меняется при перезапуске. В режиме разработки ссылки восстановления пароля выводятся в консоль с префиксом `[maket mail]`. Проверочный аккаунт или общий пароль автоматически не создаются.
+Open `http://localhost:3000`. Once the application is ready, the console prints `[maket invite] <code>`. Enter this code on the registration page to create an account; email verification is not required. The code is shared for the current run and changes after a restart. In development, password recovery links are printed to the console with the `[maket mail]` prefix. No test account or shared password is created automatically.
 
-В подготовленной облачной среде PostgreSQL находится в контейнере `maket-postgres`, поэтому для повторного запуска используйте `docker start maket-postgres`, а не создавайте второй сервер на порту 5432.
+In the configured cloud environment, PostgreSQL runs in the `maket-postgres` container. Use `docker start maket-postgres` to restart it instead of creating a second server on port 5432.
 
-`.env` не коммитится. Пример пароля БД предназначен только для локальной разработки; на сервере используйте собственные секреты и управляемую БД.
+`.env` is not committed. The example database password is for local development only; use your own secrets and a managed database on the server.
 
-## Тестовый пользователь
+## Test user
 
-После настройки БД и выполнения миграций можно создать пользователя без почтового сервиса:
+After configuring the database and applying migrations, you can create a user without an email service:
 
 ```bash
-# Bash: введите пароль без отображения на экране и сохранения в истории команд.
-read -r -s -p 'Пароль тестового пользователя: ' TEST_USER_PASSWORD
+# Bash: enter a password without displaying it or saving it in shell history.
+read -r -s -p 'Test user password: ' TEST_USER_PASSWORD
 printf '\n'
 export TEST_USER_PASSWORD
-npm run user:create-test -- --email test@example.com --name "Тестовый пользователь"
+npm run user:create-test -- --email test@example.com --name "Test user"
 unset TEST_USER_PASSWORD
 ```
 
-Пароль должен содержать 10–128 символов. Почта нового пользователя сразу подтверждена, вход — через обычную форму. Пароль хранится как scrypt-хеш и не выводится скриптом. Повторный запуск не меняет существующий аккаунт, его пароль или статус подтверждения.
+The password must contain 10–128 characters. The new user's email is immediately marked as verified, and the account uses the regular sign-in form. The password is stored as a scrypt hash and is never printed by the script. Running the command again does not change an existing account, its password, or its verification status.
 
-Для автоматизации можно передать пароль через `TEST_USER_PASSWORD` или стандартный ввод с `--password-stdin`. Без аргументов используется `test@example.com`; email и имя также можно задать через `TEST_USER_EMAIL` и `TEST_USER_NAME`. Команда работает с БД из полей `POSTGRES_*` в `.env`. Справка: `npm run user:create-test -- --help`.
+For automation, supply the password through `TEST_USER_PASSWORD` or standard input with `--password-stdin`. The default email is `test@example.com`; email and name can also be set through `TEST_USER_EMAIL` and `TEST_USER_NAME`. The command uses the database configured by the `POSTGRES_*` fields in `.env`. Help: `npm run user:create-test -- --help`.
 
-## Проверки
+## Checks
 
 ```bash
 npm run typecheck
@@ -86,165 +88,165 @@ npx playwright install chromium
 npm run test:e2e
 ```
 
-E2E запускает dev-сервер и проверяет код приглашения и ссылки восстановления из его локального журнала `/tmp/maket-e2e-server.log`, API и браузерный сценарий. Используйте отдельную тестовую БД: тесты создают временных пользователей и удаляют их после выполнения. Перед E2E остановите другой сервер на порту 3000, иначе журнал его писем может быть недоступен. В облачной среде можно использовать уже установленный браузер:
+E2E tests start a development server and check the invitation code and recovery links from its local log at `/tmp/maket-e2e-server.log`, the API, and browser workflows. Use a separate test database: tests create temporary users and delete them afterward. Stop any other server on port 3000 before running E2E tests, or its email log may be unavailable. In the cloud environment, you can use the preinstalled browser:
 
 ```bash
 PLAYWRIGHT_CHROMIUM_EXECUTABLE=/usr/bin/chromium npm run test:e2e
 ```
 
-Сборка для рабочего сервера: `npm run build && npm start`. Сборка не запускает миграции автоматически.
+Production build and startup: `npm run build && npm start`. Building does not run migrations automatically.
 
-## Почта и развёртывание
+## Email and deployment
 
-Регистрация работает по коду приглашения из логов приложения, без отправки писем. Для восстановления пароля через почту дополнительно задайте:
+Registration uses an invitation code from the application logs and does not send email. To enable password recovery by email, also configure:
 
-- `PUBLIC_ORIGIN`: канонический HTTPS origin для ссылок восстановления, без подпути;
-- `APP_URL`: только подпуть (`/maket` или пустое значение), не URL сайта;
-- `MAIL_WEBHOOK_URL`: HTTPS endpoint вашего почтового сервиса;
-- `MAIL_WEBHOOK_TOKEN`: секрет авторизации сервиса.
+- `PUBLIC_ORIGIN`: the canonical HTTPS origin for recovery links, without a subpath;
+- `APP_URL`: only the subpath (`/maket` or an empty value), not the website URL;
+- `MAIL_WEBHOOK_URL`: your email service's HTTPS endpoint;
+- `MAIL_WEBHOOK_TOKEN`: the service's authorization secret.
 
-Сервис принимает `POST` JSON `{ "to": "...", "subject": "...", "text": "ссылка" }` с заголовком `Authorization: Bearer ...` и должен вернуть 2xx. Без сервиса восстановление по почте в production недоступно; регистрация по приглашению продолжает работать. Не публикуйте dev-сервер или журналы писем. При смене конфигурации перезапустите процесс.
+The service receives a `POST` JSON body `{ "to": "...", "subject": "...", "text": "link" }` with an `Authorization: Bearer ...` header and must return a 2xx response. Without this service, password recovery by email is unavailable in production; invitation-based registration still works. Do not expose the development server or email logs publicly. Restart the process after changing the configuration.
 
-Перед выпуском настройте HTTPS, резервное копирование PostgreSQL, мониторинг и проверьте восстановление БД. Google OAuth в этой версии не подключён. PNG/JPEG/PDF-экспорт и совместная работа описаны ниже.
+Before releasing, configure HTTPS, PostgreSQL backups, and monitoring, and test database restoration. Google OAuth is not integrated in this version. PNG/JPEG/PDF export and collaboration are described below.
 
-## Форматы и архитектура
+## Formats and architecture
 
-См. [форматы документов](docs/formats.md) и [архитектуру и следующие шаги](docs/architecture.md).
+See [document formats](docs/formats.md) and [architecture and next steps](docs/architecture.md).
 
-SQL-миграции хранятся в `prisma/migrations`. `npm run db:migrate` применяет их через pg: блокировка от параллельного запуска, транзакция на миграцию и контроль SHA-256 уже применённых файлов. История — в `_maket_migrations`. Не смешивайте этот процесс с `prisma migrate deploy` для той же БД: у Prisma отдельная таблица истории.
+SQL migrations are stored in `prisma/migrations`. `npm run db:migrate` applies them through pg, using a lock against concurrent execution, a transaction per migration, and SHA-256 verification of previously applied files. History is stored in `_maket_migrations`. Do not mix this process with `prisma migrate deploy` for the same database: Prisma uses a separate history table.
 
-Причина отдельного SQL-runner: JavaScript Schema Engine Prisma 6.19 не десериализует PostgreSQL catalog type `name` при introspection. Генерация Prisma Client и запросы через драйвер pg работают без нативных бинарников. Для последующих изменений схемы создавайте проверенные SQL-миграции, обновляйте `schema.prisma` и запускайте `db:generate`. Применённые миграции нельзя редактировать.
+The separate SQL runner exists because Prisma 6.19's JavaScript Schema Engine cannot deserialize the PostgreSQL catalog type `name` during introspection. Prisma Client generation and queries through the pg driver work without native binaries. For future schema changes, create reviewed SQL migrations, update `schema.prisma`, and run `db:generate`. Never edit an applied migration.
 
-## Рабочие области
+## Workspaces
 
-Переключатель над меню в боковой панели позволяет создать новую рабочую область и открыть любую существующую. У каждой области независимые объекты, решения, проекты, связи, ракурсы, диаграммы и их история. Библиотека, дерево и граф показывают только текущую область. Нотации и пользовательские настройки доступны во всех областях аккаунта.
+The switcher above the sidebar menu lets you create a workspace or open an existing one. Each workspace has independent objects, solutions, projects, relations, viewpoints, diagrams, and history. The library, tree, and graph display only the current workspace. Notations and user settings are available across the account's workspaces.
 
-При обновлении существующая модель остаётся первой областью; новые области создаются пустыми. Переключение сохраняется для последующих открытий приложения. Открытая вкладка продолжает работать со своей областью, даже если в другой вкладке выбрана иная. Перед переключением действует защита несохранённых изменений редактора.
+When upgrading, the existing model remains the first workspace; new workspaces start empty. Your selection is remembered for subsequent visits. An open tab continues using its own workspace even if another tab selects a different one. The editor's unsaved-changes protection applies before switching.
 
-Сервер проверяет принадлежность всех ID текущей области. Перенос через экспорт/импорт создаёт новые независимые объекты. Публичная ссылка по-прежнему открывает только свою диаграмму, независимо от выбранной области владельца.
+The server checks that every ID belongs to the current workspace. Transferring data through export/import creates new, independent objects. A public link still opens only its diagram, regardless of the owner's selected workspace.
 
-Для API текущая область задаётся заголовком `X-Maket-Workspace`; без него используется первая область, чтобы сохранить совместимость старых клиентов. `GET /api/workspaces` возвращает собственные и доступные по членству области, `POST /api/workspaces` с `{ "name": "Название" }` создаёт пустую область. После обновления нужно выполнить `npm run db:migrate` и `npm run db:generate`.
+For the API, the current workspace is selected with the `X-Maket-Workspace` header. Without it, the first workspace is used for compatibility with older clients. `GET /api/workspaces` returns owned workspaces and those accessible through membership; `POST /api/workspaces` with `{ "name": "Name" }` creates an empty workspace. After upgrading, run `npm run db:migrate` and `npm run db:generate`.
 
-## Слои ракурсов · 2.5D
+## Viewpoint layers · 2.5D
 
-Кнопка «Слои ракурсов · 2.5D» в рабочей области и редакторе открывает отдельный режим той же области работы. Ракурсы расположены на наклонных плоскостях в заданном порядке, диаграммы показаны объёмными плитками с миниатюрами и именем на верхней грани. Подписи ракурсов вынесены вправо и соединены со слоями пунктиром; изогнутые стрелки слева показывают порядок ракурсов и не являются модельными связями. Вид использует SVG и React Flow; WebGL и Three.js не требуются.
+The "Viewpoint layers · 2.5D" button in the workspace and editor opens a separate mode within the same work area. Viewpoints appear as tilted planes in the configured order, with diagrams shown as three-dimensional tiles containing previews and names on their top faces. Viewpoint labels sit on the right, connected to layers by dashed lines; curved arrows on the left indicate viewpoint order and are not model relations. The view uses SVG and React Flow; WebGL and Three.js are not required.
 
-Можно сворачивать и раскрывать слои, скрывать отдельные ракурсы, искать диаграммы, фильтровать типы связей и показывать только межслойные переходы. Масштаб, перемещение фона и миникарта позволяют изучать большие сцены. При сворачивании межслойные связи агрегируются; выбор линии показывает конкретные переходы и их смысл. Из инспектора можно открыть диаграмму или связь в дереве. Перед переходом из редактора сохраняются изменения.
+You can collapse and expand layers, hide individual viewpoints, search diagrams, filter relation types, and show only cross-layer transitions. Zoom, background panning, and a minimap help navigate large scenes. Cross-layer connections are aggregated when layers are collapsed; selecting a line reveals specific transitions and their meaning. The inspector provides links to a diagram or a relation in the tree. Changes are saved before navigating away from the editor.
 
-Обозреватель показывает существующие декомпозиции, переходы к другим ракурсам и прямые модельные связи между диаграммами. Если у перехода не задана исходная диаграмма, используются реальные представления объекта на других диаграммах; это явно отмечается в инспекторе. Переходы без известного источника перечислены отдельно, линии для них не придумываются. Диаграммы без назначенного ракурса находятся в отдельном слое. Просмотр работает только с выбранной рабочей областью и не создаёт объектов или представлений.
+The explorer displays existing decompositions, transitions to other viewpoints, and direct model relations between diagrams. If a transition has no source diagram, actual representations of the object on other diagrams are used; this is explicitly noted in the inspector. Transitions with no known source are listed separately, without inventing connecting lines. Diagrams without an assigned viewpoint appear on a separate layer. The view operates only within the selected workspace and does not create objects or representations.
 
-## Граф связей решения
+## Solution relation graph
 
-Кнопка «Граф решения» в рабочей области и редакторе открывает интерактивный граф в той же области работы. Можно выбрать решение или всю личную модель, искать объекты и связи, перемещать узлы, менять масштаб, подсвечивать тип связи и показывать только окружение выбранного элемента. Инспектор содержит свойства, участников связи и переходы к дереву или диаграмме. Перед переходом из редактора сохраняются текущие изменения.
+The "Solution graph" button in the workspace and editor opens an interactive graph in the same work area. Select a solution or the entire personal model, search objects and relations, drag nodes, zoom, highlight relation types, and show only a selected element's neighborhood. The inspector shows properties, relation participants, and links to the tree or diagram. Current changes are saved before leaving the editor.
 
-В графе каждый объект показан один раз, независимо от количества его представлений на диаграммах. Связи — самостоятельные узлы между источником и назначением: видны связи без диаграмм, декомпозиция, углубление, связи со связями и объекты внутри связей. Участники из другого решения помечены «Вне решения»; остальные объекты чужого решения не включаются. Организационная вложенность включается отдельно и показана пунктиром.
+Each object appears once in the graph, regardless of how many representations it has on diagrams. Relations are independent nodes between their sources and targets: the graph includes relations without diagrams, decomposition, drilling down, relations connected to other relations, and objects nested inside relations. Participants from another solution are marked "Outside the solution"; other objects from that solution are not included. Organizational containment can be enabled separately and appears as dashed lines.
 
-Граф доступен авторизованному владельцу модели. Он служит для просмотра: перетаскивание узлов не меняет объекты или диаграммы. «Обновить» загружает актуальную модель, сохраняя текущую расстановку; «Разложить заново» восстанавливает автоматическую раскладку. Расстановка живёт только до закрытия графа.
+The graph is available to the authenticated model owner. It is a viewer: dragging nodes does not change objects or diagrams. "Refresh" loads the current model while preserving the arrangement; "Reset layout" restores the automatic layout. The arrangement lasts only until the graph is closed.
 
-## Модель объектов и несколько нотаций
+## Object model and multiple notations
 
-Рядом с палитрой доступно дерево личной модели. Создайте объект в дереве, выберите отображение при размещении и перетащите его на канвас; кнопка «Разместить» создаёт ещё одно представление того же объекта. Элемент из палитры создаёт новый объект и его первое представление. Вложенность в дереве не меняет канвас.
+The personal model tree is available next to the palette. Create an object in the tree, choose its appearance for placement, and drag it onto the canvas; "Place" creates another representation of the same object. A palette item creates a new object and its first representation. Nesting in the tree does not change the canvas.
 
-«Нотации диаграммы» позволяет подключить несколько фиксированных версий. Палитра разделена по нотациям, а «Отображение объекта» в инспекторе меняет скин выбранного представления. При начале соединения редактор выбирает тип связи из нотации исходного представления, сохраняя явно выбранный тип в той же нотации; список связей сгруппирован по нотациям. Общие свойства доступны через дерево и инспектор; двойной щелчок задаёт локальную подпись. Архивирование объекта сохраняет представления и историю. Корзина в дереве удаляет ненужный объект без представлений и дочерних объектов; для используемых объектов отображается причина отказа.
+"Diagram notations" lets you connect several fixed notation versions. The palette is divided by notation, and "Object appearance" in the inspector changes the selected representation's skin. When starting a connection, the editor selects a relation type from the source representation's notation, preserving an explicitly chosen type within that notation; the connection list is grouped by notation. Shared properties are accessible through the tree and inspector; double-clicking sets a local label. Archiving an object preserves its representations and history. The tree's trash action deletes an unused object without representations or children; for objects still in use, the reason deletion is blocked is displayed.
 
-Стрелки также имеют общую модель: раздел «Связи модели» хранит имя, описание, атрибуты и двух участников связи. В дереве под каждым участником ссылки на связи собраны в сворачиваемой папке «Связи». Кнопка «Разместить связь» создаёт ещё одну стрелку между выбранными представлениями; её подпись и оформление независимы. Удаление стрелки оставляет связь в модели. Связь без представлений можно удалить из обозревателя; объект с оставшимися связями удалить нельзя. Общие свойства связи имеют историю и архивирование.
+Arrows also have a shared model: "Model relations" stores the name, description, attributes, and two participants of a relation. References to relations are grouped under each participant in a collapsible "Relations" folder. "Place relation" creates another arrow between selected representations, with an independent label and appearance. Deleting an arrow leaves its relation in the model. A relation without representations can be deleted from the explorer; an object with remaining relations cannot be deleted. Shared relation properties support history and archiving.
 
-Кнопка в заголовке каждой панели скрывает дерево, палитру или свойства. Наведите указатель на край рабочей области, чтобы раскрыть скрытую панель; эта же кнопка доступна с клавиатуры и касанием. Ширину дерева можно менять перетаскиванием границы или стрелками на клавиатуре. Ширина и видимость панелей сохраняются для пользователя. Кнопка с прицелом находит представление, плюс размещает его на диаграмме, а папка с плюсом создаёт дочерний объект.
+The button in each panel's header hides the tree, palette, or properties. Hover over the work area's edge to reveal a hidden panel; the same button is available through the keyboard and touch. Resize the tree by dragging its boundary or using the arrow keys. Panel widths and visibility are saved per user. The crosshair action locates a representation, the plus action places one on the diagram, and the folder-plus action creates a child object.
 
-Кнопка «Вернуть представление связи» доступна прямо у ссылки в дереве. Объекты и связи можно вкладывать под связь: создать дочерний объект, перетащить существующий или выбрать родителя в свойствах. Ниже середины каждой стрелки есть две нейтральные точки подключения для соединения с объектами и другими стрелками; такие соединения используют «Поясняющую связь». Конец стрелки можно перетащить к совместимому порту другого элемента или на свободное место. Также в инспекторе есть команды «Отвязать начало» и «Отвязать конец». Свободный конец сохраняет положение при сохранении, импорте и восстановлении. При перепривязке к другому модельному участнику создаётся отдельная связь с отметкой об исходной связи; другие представления сохраняют прежнюю связь. Стрелки, привязанные к изменяемой стрелке, обновляются согласованно. Удаление представления убирает также привязанные к нему стрелки с канваса, сохраняя все общие связи в модели для повторного размещения. Связь с детьми или участием в другой связи удалить из модели нельзя.
+"Restore relation representation" is available directly on a relation reference in the tree. Objects and relations can be nested under a relation: create a child object, drag an existing one, or select a parent in properties. Below the midpoint of each arrow, two neutral connection points allow connections to objects and other arrows through an "Explanatory relation". Drag an arrow end to a compatible port on another element or to an empty location. The inspector also provides "Detach source" and "Detach target" commands. Free endpoints retain their positions across saving, import, and restoration. Rebinding to a different model participant creates a separate relation with a reference to the original; other representations keep their previous relation. Arrows attached to the modified arrow are updated consistently. Deleting a representation also removes arrows attached to it from the canvas, while retaining all shared relations in the model for later placement. A relation with children or participation in another relation cannot be deleted from the model.
 
-Копии объектов и связей содержат «Скопировано из»: ID и имя источника на момент копирования. Это справочная запись без внешнего ключа и синхронизации; оригинал можно удалить, а происхождение копии сохранится. Повторное размещение создаёт представление того же объекта/связи и не считается копированием.
+Copies of objects and relations include "Copied from": the source ID and name at the time of copying. This is informational metadata without a foreign key or synchronization; the original can be deleted while the copy's provenance remains. Placing another representation uses the same object or relation and does not count as copying.
 
-После обновления выполните `npm ci`, `npm run db:migrate` и перезапустите приложение. Старые диаграммы автоматически переводятся в v2 при первом открытии модели/библиотеки; старые файлы принимаются через импорт библиотеки. Перед обновлением рабочей БД сделайте резервную копию. Подробности нового формата, импорта, свойств и истории — в [docs/formats.md](docs/formats.md).
+After upgrading, run `npm ci` and `npm run db:migrate`, then restart the application. Older diagrams are automatically converted to v2 when the model or library is first opened; older files are accepted through library import. Back up the production database before upgrading. Details of the new format, import, properties, and history are in [docs/formats.md](docs/formats.md).
 
-## Публичный просмотр и экспорт
+## Public viewing and export
 
-Кнопка «Поделиться» в редакторе сохраняет изменения и открывает управление доступом. Включение «Доступ по ссылке» создаёт случайный адрес `/view/<token>`. Внешний пользователь видит последнюю сохранённую диаграмму и дерево её объектов, может перемещать и масштабировать вид и выбирать элементы. Управление объектами и изменение диаграммы доступны только владельцу после входа. Остальная библиотека и посторонние объекты модели не передаются во вьюер.
+The editor's "Share" button saves changes and opens access management. Enabling "Access by link" creates a random address at `/view/<token>`. An external user sees the latest saved diagram and its object tree, can pan and zoom, and can select elements. Object management and diagram editing remain available only to the owner after signing in. The rest of the library and unrelated model objects are not sent to the viewer.
 
-Ссылка остаётся постоянной при отключении и повторном включении доступа. Только кнопка «Сгенерировать новую» меняет адрес и делает прежний недействительным; текущее состояние доступа при этом сохраняется. Открытый вьюер проверяет доступ каждые 15 секунд. Скачанные ранее файлы остаются у получателя. Отключение доступа временно закрывает просмотр по той же ссылке. Дублирование диаграммы не переносит публичный доступ.
+The link remains stable when access is disabled and re-enabled. Only "Generate new" changes the address and invalidates the previous link; the current access state is preserved. An open viewer checks access every 15 seconds. Previously downloaded files remain with the recipient. Disabling access temporarily closes viewing through the same link. Duplicating a diagram does not copy public access.
 
-Добавьте `?element=<идентификатор представления>` для ссылки на конкретную фигуру или стрелку, включая отдельную копию объекта. Также поддерживается `?object=<идентификатор объекта>` для первого его представления. В редакторе поле «Ссылка на выделенный элемент» появляется в окне «Поделиться», а во вьюере выбор элемента обновляет адрес и позволяет скопировать его кнопкой «Ссылка на элемент».
+Add `?element=<representation-id>` to link to a specific shape or arrow, including an individual representation of an object. `?object=<object-id>` is also supported and selects its first representation. In the editor, "Link to selected element" appears in the Share dialog; in the viewer, selecting an element updates the address and lets you copy it using "Link to element".
 
-«Экспорт» предлагает PNG, JPEG, PDF и draw.io; в редакторе также остаётся JSON для повторного импорта. Изображение включает всю диаграмму, подписи, отображаемые атрибуты, формы, слои и оформление стрелок на белом фоне. PDF содержит изображение диаграммы на одной странице. Для больших диаграмм разрешение автоматически ограничивается 8192 пикселями по стороне и 16 миллионами пикселей по площади.
+"Export" offers PNG, JPEG, PDF, and draw.io; the editor also retains JSON for re-import. The image includes the entire diagram, labels, visible attributes, shapes, layers, and arrow styling on a white background. The PDF contains the diagram image on one page. For large diagrams, resolution is automatically limited to 8192 pixels per side and 16 million pixels in total.
 
-Файл `.drawio` открывается в draw.io / diagrams.net как редактируемая диаграмма. Сохраняются координаты, размеры, подписи, оформление, контуры пользовательских форм и соединения. В данных элементов доступны `maket_object_id`, `maket_representation_id`, `maket_relation_id`, свойства и снимки исходных сущностей. Несколько представлений одного объекта сохраняют общий ID объекта и разные ID ячеек. Подробнее — [формат экспорта draw.io](docs/formats.md#экспорт-в-drawio).
+A `.drawio` file opens in draw.io / diagrams.net as an editable diagram. Coordinates, dimensions, labels, appearance, custom shape outlines, and connections are preserved. Element data includes `maket_object_id`, `maket_representation_id`, `maket_relation_id`, properties, and snapshots of the original entities. Multiple representations of one object retain a shared object ID and distinct cell IDs. See [the draw.io export format](docs/formats.md#экспорт-в-drawio).
 
-Импорт `.drawio` и XML доступен кнопкой «Импорт» библиотеки. Все страницы файла, их объекты и связи создаются в новой папке в корне области с именем файла. Поддерживаются обычные и сжатые файлы, свойства и повторные представления из метаданных maket. Подробности и ограничения — [импорт draw.io](docs/formats.md#импорт-из-drawio).
+Import `.drawio` and XML files through the library's "Import" button. All pages, their objects, and their relations are created in a new folder at the workspace root, named after the file. Both plain and compressed files, properties, and repeated representations from maket metadata are supported. Details and limits: [draw.io import](docs/formats.md#импорт-из-drawio).
 
-При обновлении приложения выполните `npm ci`, `npm run db:migrate` и перезапустите сервер. Миграция `20261008000000_public_viewer` добавляет nullable-поле ссылки; существующие диаграммы остаются закрытыми.
+When updating the application, run `npm ci` and `npm run db:migrate`, then restart the server. Migration `20261008000000_public_viewer` adds a nullable link field; existing diagrams remain private.
 
-Миграция `20261008010000_persistent_share_links` отделяет постоянный адрес от состояния доступа. Ранее включённые ссылки сохраняют адрес и доступ.
+Migration `20261008010000_persistent_share_links` separates the persistent address from access status. Previously enabled links retain their addresses and access.
 
-## Наследование объектов и реализации
+## Object inheritance and instances
 
-В контекстном меню объекта в рабочей области и дереве редактора доступны «Создать наследника» и «Создать реализацию». Создание атомарно добавляет новый объект и семантическую связь от базы к потомку с типом `наследует` или `экземпляр`. Вложенность дерева и отметка об источнике обычной копии не задают наследование. Существующие объекты можно связать этими типами в менеджере связей: источник — база, назначение — потомок. У потомка одна активная база; циклы и связи между разными рабочими областями запрещены.
+Object context menus in the workspace and editor tree provide "Create derived object" and "Create instance". Creation atomically adds a new object and a semantic relation from the base to the descendant, with type `наследует` (inherits) or `экземпляр` (instance). Tree containment and an ordinary copy's source reference do not define inheritance. Existing objects can be connected using these types in the relation manager: the source is the base, and the target is the descendant. A descendant has one active base; cycles and relations across workspaces are prohibited.
 
-Атрибуты вычисляются по всей цепочке: база → собственные значения объекта → локальные значения представления. Изменения базы применяются автоматически. Карточка объекта показывает унаследованные атрибуты и позволяет создавать собственные переопределения; удаление переопределения возвращает значение базы. Архивирование или удаление специальной связи прекращает наследование. Реализации отмечены `«instance»` на диаграмме, в публичном просмотре, экспорте и 2.5D-виде; представления связей получают подписи `«extends»` / `«instance»` и разные стили линий. Создание связи не создаёт представления автоматически — её можно разместить из дерева, как остальные связи.
+Attributes are resolved across the entire chain: base → the object's own values → local representation values. Base changes apply automatically. The object card shows inherited attributes and supports local overrides; deleting an override restores the base value. Archiving or deleting the special relation ends inheritance. Instances are marked with `«instance»` on diagrams, in public viewing, exports, and the 2.5D view; relation representations receive `«extends»` / `«instance»` labels and different line styles. Creating a relation does not create a representation automatically: it can be placed from the tree like other relations.
 
-API создания: `POST /api/objects` с `name`, `baseId`, `derivation: "inheritance" | "instance"` и необязательными собственными `attributes`. JSON диаграммы включает все необходимые базовые объекты и связи даже без их представлений; при импорте создаётся независимая цепочка с новыми идентификаторами. Изменений схемы БД не требуется.
+Creation API: `POST /api/objects` with `name`, `baseId`, `derivation: "inheritance" | "instance"`, and optional local `attributes`. Diagram JSON includes all required base objects and relations even without their representations; importing creates an independent chain with new identifiers. No database schema changes are required.
 
-## Публичные свойства объекта
+## Public object properties
 
-В карточке «Общие свойства объекта» ID отображается в неизменяемом поле. Кнопка «Поделиться объектом» включает просмотр без авторизации по ссылке `/view/object/<id>/<ключ>`. Карточка показывает имя, описание, тип и эффективные атрибуты с указанием собственных и унаследованных значений. Дерево рабочей области, связи, данные других объектов и настройки доступа не публикуются.
+The "Shared object properties" card displays the ID in a read-only field. "Share object" enables unauthenticated viewing through `/view/object/<id>/<key>`. The card shows the name, description, type, and effective attributes, distinguishing local and inherited values. The workspace tree, relations, other objects' data, and access settings are not published.
 
-Ссылка сохраняется при отключении и повторном включении доступа. «Сгенерировать новую» заменяет ключ и отменяет старую ссылку; ID объекта остаётся прежним. Импорт и копирование объектов не переносят доступ по ссылке. API управления: `GET/POST /api/objects/<id>/share`, тело изменения — `{ "enabled": true, "rotate": false }`.
+The link is preserved when access is disabled and re-enabled. "Generate new" replaces the key and revokes the previous link; the object ID stays unchanged. Importing or copying objects does not transfer link access. Management API: `GET/POST /api/objects/<id>/share`; update body: `{ "enabled": true, "rotate": false }`.
 
-После обновления существующей БД примените миграцию: `npm run db:migrate`. Генерация клиента Prisma выполняется при установке зависимостей и сборке.
+After updating an existing database, apply the migration with `npm run db:migrate`. Prisma Client generation runs during dependency installation and builds.
 
-### Совместная работа в пространстве
+### Workspace collaboration
 
-Кнопка с ролью в верхней панели открывает «Участники и доступ». Владелец или администратор может добавить существующего пользователя по подтверждённому email, назначить роль и отозвать доступ. Приглашённая область появляется в переключателе пользователя; личные нотации и настройки остаются его собственными. Публичные ссылки на просмотр работают независимо от членства.
+The role button in the top bar opens "Members and access". The owner or an administrator can add an existing user by verified email, assign a role, and revoke access. An invited workspace appears in that user's switcher; personal notations and settings remain their own. Public viewing links work independently of membership.
 
-Стандартные роли: администратор управляет доступом и содержимым; модератор также может удалять, публиковать и снимать блокировки; редактор создаёт и изменяет содержимое; просмотр не разрешает изменения. Владелец сохраняет полный доступ. Пользовательские роли задают действия и необязательный список изменяемых элементов по ID. Все участники видят всё пространство: список элементов ограничивает изменения, а не конфиденциальность просмотра. Ограничения не наследуются по дереву. Для изменения диаграммы нужны права на неё, её объект в дереве и все задействованные объекты и связи. Роли с административными действиями действуют на всю область.
+Built-in roles: administrators manage access and content; moderators can also delete, publish, and release locks; editors create and edit content; viewers cannot make changes. The owner retains full access. Custom roles specify actions and an optional list of editable element IDs. All members can view the entire workspace: the element list restricts changes, not viewing confidentiality. Restrictions are not inherited through the tree. Editing a diagram requires permissions for the diagram, its tree object, and all involved objects and relations. Roles with administrative actions apply to the whole workspace.
 
-Несколько участников могут одновременно редактировать одну диаграмму. Открытие канваса не блокирует диаграмму целиком. Изменения фигур, связей и их отдельных свойств объединяются по общей сохранённой ревизии: независимые изменения сохраняются вместе, конфликтующие изменения одного свойства и удаление одновременно изменяемого элемента отклоняются с кодом 409. Перемещение и размер считаются целыми жестами, чтобы координаты двух авторов не смешивались. Добавление представлений выполняется атомарно поверх актуальной версии. Входящие изменения объединяются с несохранёнными правками, история отмены сохраняет изменения соавтора. При конфликте локальный вариант остаётся в редакторе: можно экспортировать его и сравнить с серверной версией; автоматического перезаписывания нет. Посимвольного CRDT-редактирования одного текстового поля здесь нет.
+Multiple participants can edit the same diagram simultaneously. Opening the canvas does not lock the entire diagram. Changes to shapes, connections, and their individual properties are merged against a shared saved revision: independent edits are saved together, while conflicting changes to the same property and deletion of a concurrently edited element are rejected with HTTP 409. Position and size are treated as complete gestures so that coordinates from two authors are never mixed. Representations are added atomically on top of the current version. Incoming updates are merged with unsaved changes, and undo history preserves collaborators' edits. On conflict, the local version remains in the editor for export and comparison with the server version; it is not overwritten automatically. Character-level CRDT editing within a single text field is not implemented.
 
-Карточки общих свойств объектов и связей по-прежнему получают временные блокировки. Блокировка конкретного объекта препятствует изменению его представлений, но не мешает редактировать другие фигуры этой диаграммы. Блокировка продлевается каждые 12 секунд, истекает через 45 секунд без продления и освобождается при закрытии карточки. После потери или принудительного снятия блокировки используйте «Получить доступ». Явная блокировка всей диаграммы через API продолжает действовать на всё её содержимое.
+Shared property cards for objects and relations still acquire temporary locks. Locking a specific object prevents changes to its representations but allows editing other shapes in the diagram. Locks are renewed every 12 seconds, expire after 45 seconds without renewal, and are released when the card closes. If a lock is lost or forcibly released, use "Acquire access". Explicitly locking an entire diagram through the API still applies to all its content.
 
-Версия пространства проверяется раз в 2 секунды, обновления подгружаются в открытые деревья, библиотеку, граф, ракурсы и открытые диаграммы. Несохранённые локальные правки объединяются с входящими данными; при конфликте сохраняется локальный вариант. Журнал показывает последние 100 успешных операций с автором, временем и элементом. Членство, роли, блокировки и проверки сохранения обеспечиваются сервером и PostgreSQL, в том числе при нескольких экземплярах приложения. Записи внутри одной области кратковременно сериализуются PostgreSQL advisory lock; при высокой нагрузке потребуется более узкая блокировка операций.
+The workspace version is checked every 2 seconds; updates are loaded into open trees, the library, graph, viewpoints, and diagrams. Unsaved local changes are merged with incoming data; conflicts preserve the local version. The log displays the last 100 successful operations with their author, time, and affected element. Membership, roles, locks, and save validation are enforced by the server and PostgreSQL, including deployments with multiple application instances. Writes within a workspace are briefly serialized with a PostgreSQL advisory lock; high loads will require more narrowly scoped operation locks.
 
-Перед обновлением выполните `npm run db:generate` и `npm run db:migrate`. Проверка совместной работы: `npm run test:e2e -- tests/e2e/collaboration.spec.ts` (для установленного Chromium задайте `PLAYWRIGHT_CHROMIUM_EXECUTABLE`).
+Before upgrading, run `npm run db:generate` and `npm run db:migrate`. Check collaboration with `npm run test:e2e -- tests/e2e/collaboration.spec.ts` (set `PLAYWRIGHT_CHROMIUM_EXECUTABLE` for an installed Chromium browser).
 
-Для API совместное сохранение включается полем `concurrent: true` в `PUT /api/diagrams/:id` вместе с `revision` базовой версии и `document`. Без этого поля действует прежняя строгая проверка ревизии. То же поле у `POST /api/diagrams/:id/representations` разрешает атомарное добавление на актуальную диаграмму при устаревшем номере версии. Изменения БД для этого обновления не требуются.
+For the API, collaborative saving is enabled by `concurrent: true` in `PUT /api/diagrams/:id`, alongside the base `revision` and `document`. Without this field, the previous strict revision check applies. The same field in `POST /api/diagrams/:id/representations` allows atomic addition to the current diagram when the supplied revision is outdated. This update requires no database changes.
 
-## Дизайн интерфейса
+## Interface design
 
-Общие принципы оформления, поведение элементов, доступность и проверка снимков описаны в [документе по интерфейсу](docs/interface-design.md).
+Shared visual principles, element behavior, accessibility, and screenshot checks are described in [the interface design document](docs/interface-design.md).
 
-## Docker на сервере
+## Docker deployment
 
-Production-образ, PostgreSQL, автоматические миграции, `APP_URL` через `.env.production`, резервное копирование и обновление: [инструкция развёртывания](docs/deployment.md). Стандартные блок-схема, BPMN и UML доступны автоматически. Локальный `compose.yaml` запускает только PostgreSQL.
+For the production image, PostgreSQL, automatic migrations, `APP_URL` through `.env.production`, backups, and updates, see [the deployment guide](docs/deployment.md). Standard flowchart, BPMN, and UML notations are available automatically. The local `compose.yaml` starts PostgreSQL only.
 
-Для `/maket` задайте `APP_URL=/maket` и используйте [фрагмент Nginx](deploy/nginx/maket.conf). Параметры БД задаются отдельными `POSTGRES_*`; вручную собирать URL подключения не нужно.
+For `/maket`, set `APP_URL=/maket` and use [the Nginx snippet](deploy/nginx/maket.conf). Database settings use separate `POSTGRES_*` fields; you do not need to assemble a connection URL manually.
 
-## Безопасность
+## Security
 
-Результаты проверки, исправления и условия безопасного развёртывания: [аудит безопасности](docs/security-audit.md).
+Audit findings, fixes, and secure deployment requirements: [security audit](docs/security-audit.md).
 
-## Вики продукта
+## Product wiki
 
-Встроенная справка доступна без авторизации по `/wiki` (при `APP_URL=/maket` — `/maket/wiki`). Кнопка «Вики и справка» в главном меню открывает её в новой вкладке. Есть поиск по текстам, тематическая навигация, оглавления статей, мобильный вид и отдельный переключатель темы.
+Built-in documentation is available without authentication at `/wiki` (or `/maket/wiki` when `APP_URL=/maket`). "Wiki and help" in the main menu opens it in a new tab. It includes full-text search, topic navigation, article tables of contents, a mobile layout, and a separate theme switcher.
 
-16 статей описывают текущие возможности: начало работы, объектную модель, библиотеку и историю, редактор, связи, нотации, ракурсы, граф и 2.5D, наследование, совместную работу, публикацию, настройки, подключение LLM через MCP, desktop/portable, развёртывание и устранение ошибок. Материалы редактируются в `src/lib/wiki.ts` и поставляются вместе с приложением; отдельный сервис, база или настройка Nginx для вики не нужны. Статьи общедоступны: не добавляйте в них реальные пароли, коды приглашения или данные рабочих областей.
+The 16 articles cover current features: getting started, the object model, library and history, editor, relations, notations, viewpoints, the graph and 2.5D, inheritance, collaboration, publishing, settings, connecting LLMs through MCP, desktop/portable, deployment, and troubleshooting. Content is maintained in `src/lib/wiki.ts` and ships with the application; no separate service, database, or Nginx configuration is needed for the wiki. Articles are public: do not include real passwords, invitation codes, or workspace data.
 
-## MCP для LLM
+## MCP for LLMs
 
-В «Настройки → Интеграция с LLM · MCP» создайте Bearer-ключ, выберите рабочие области и функции отдельно для каждой. Endpoint: `/api/mcp` (при `APP_URL=/maket` — `/maket/api/mcp`), транспорт **Streamable HTTP**, заголовок `Authorization: Bearer <ключ>`. Используйте HTTPS и MCP-клиент, поддерживающий этот заголовок; OAuth пока не реализован. Никаких ключей поставщика LLM на сервере maket не требуется.
+Under "Settings → LLM integration · MCP", create a Bearer key, select workspaces, and choose capabilities separately for each workspace. Endpoint: `/api/mcp` (or `/maket/api/mcp` when `APP_URL=/maket`); transport: **Streamable HTTP**; header: `Authorization: Bearer <key>`. Use HTTPS and an MCP client that supports this header; OAuth is not implemented yet. The maket server does not require any LLM provider keys.
 
-- Поиск по имени/ID, списки с пагинацией, свойства объектов/связей и наследуемые атрибуты.
-- Создание решений, проектов, папок, объектов, связей, диаграмм и представлений. Вложенность через `parentId`, связь через `sourceId`/`targetId` — отдельные действия.
-- Экспорт JSON, draw.io, PNG, JPEG, PDF; импорт JSON и draw.io/XML. Файл экспорта возвращается MCP embedded resource с base64 `blob`; входной файл — UTF-8 или base64. draw.io создаёт новую корневую папку по имени файла.
-- Разрешения на каждую функцию/формат, срок действия, изменение прав и отзыв ключа. Ключ отображается однократно; хранится SHA-256. Смена/сброс пароля отзывает ключи.
-- Проверяются актуальное участие в области, роли, ограничения на элементы, ревизии и блокировки. Ключ не расширяет права владельца. Публичная ссылка просмотра не даёт доступа к области. Импорт требует права создания во всей области и сам разрешает создание импортируемых объектов/связей. JSON/draw.io экспортируют свойства независимо от разрешения отдельного инструмента чтения свойств.
+- Search by name/ID, paginated lists, object/relation properties, and inherited attributes.
+- Create solutions, projects, folders, objects, relations, diagrams, and representations. Containment through `parentId` and relations through `sourceId`/`targetId` are separate operations.
+- Export JSON, draw.io, PNG, JPEG, and PDF; import JSON and draw.io/XML. Exports return an MCP embedded resource with a base64 `blob`; input files use UTF-8 or base64. draw.io import creates a new root folder named after the file.
+- Permissions per capability/format, expiration, permission updates, and key revocation. A key is shown only once; its SHA-256 hash is stored. Changing or resetting a password revokes keys.
+- Current workspace membership, roles, element restrictions, revisions, and locks are checked. A key cannot expand its owner's permissions. A public viewing link does not grant workspace access. Import requires workspace-wide creation permission and itself authorizes the creation of imported objects and relations. JSON/draw.io exports include properties independently of access to the separate property-reading tool.
 
-Списки ограничены 100 элементами на страницу, чтение свойств — 50 ID, запрос — 2 МБ целиком (base64 увеличивает размер), файл экспорта — 8 МБ, растр — 16 млн пикселей. На ключ — 600 запросов за 15 минут. Изменения прав применяются к следующим запросам. Отдельные инструменты изменения/удаления существующих объектов не предоставляются.
+Lists are limited to 100 entries per page, property reads to 50 IDs, and the entire request to 2 MB (base64 increases size). Export files are limited to 8 MB, raster images to 16 million pixels, and each key to 600 requests per 15 minutes. Permission changes apply to subsequent requests. Separate tools for updating or deleting existing objects are not provided.
 
-Подробности и пример SDK-клиента: `/wiki/mcp`. После обновления контейнеров штатный migrate применит миграцию `20261124000000_mcp_keys`.
+Details and an SDK client example: `/wiki/mcp`. After updating containers, the standard migrate service applies migration `20261124000000_mcp_keys`.
 
-## Desktop и portable
+## Desktop and portable
 
-Автономная версия выпускается отдельно для Windows x64, Linux x64, macOS Intel и Apple Silicon. Готовые установщики и portable находятся в [GitHub Releases](https://github.com/DoshikKing/maket/releases), теги `desktop-v…`. Установка Node.js, Docker или PostgreSQL не требуется: всё необходимое входит в приложение. Локальный профиль создаётся автоматически.
+The standalone edition is released separately for Windows x64, Linux x64, macOS Intel, and Apple Silicon. Installers and portable builds are available in [GitHub Releases](https://github.com/DoshikKing/maket/releases) under `desktop-v…` tags. Node.js, Docker, and PostgreSQL do not need to be installed: everything required is bundled. A local profile is created automatically.
 
-Desktop использует отдельные зависимости в `desktop/`, отдельный Next output `.next-desktop` и свою локальную базу. Серверные `.env`, СУБД и Docker-запуск остаются самостоятельными. Portable хранит данные рядом с приложением; установленная версия — в профиле пользователя. Перед обновлением базы автоматически создаётся резервная копия. Публичная публикация и совместная работа через интернет доступны в серверной версии; локальный MCP работает с клиентом на том же компьютере.
+Desktop uses separate dependencies in `desktop/`, a separate Next output directory at `.next-desktop`, and its own local database. Server `.env` files, databases, and Docker startup remain independent. Portable stores data next to the application; the installed edition stores it in the user profile. A backup is created automatically before upgrading the database. Public publishing and collaboration over the internet are available in the server edition; local MCP works with a client on the same computer.
 
-Инструкции по платформам, хранению, сборке и выпуску: [desktop/README.md](desktop/README.md), встроенная справка `/wiki/desktop`. Сборки пока без подписи разработчика и Apple notarization.
+Platform, storage, build, and release instructions: [desktop/README.md](desktop/README.md), and built-in help at `/wiki/desktop`. Builds are not yet signed or notarized by Apple.
