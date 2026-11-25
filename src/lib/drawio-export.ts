@@ -130,8 +130,20 @@ export async function drawioXml(name: string, document: ViewDocument, objects: M
       fontSize: a.fontSize ?? 12,
       fontColor: a.shape === 'text' ? '#232334' : contrastColor(a.fill),
       align: a.textAlign ?? 'center',
-      verticalAlign: 'middle',
-      spacing: 8,
+      verticalAlign: a.textVerticalAlign ?? 'middle',
+      labelPosition: a.textPosition?.horizontal ?? 'center',
+      verticalLabelPosition: a.textPosition?.vertical ?? 'middle',
+      fontStyle:
+        ((a.fontWeight ?? 400) >= 600 ? 1 : 0) |
+        (a.fontStyle === 'italic' ? 2 : 0) |
+        (a.underline ? 4 : 0) |
+        (a.strikethrough ? 8 : 0),
+      ...(a.fontFamily ? { fontFamily: a.fontFamily } : {}),
+      spacing: 0,
+      spacingTop: a.textPadding?.top ?? 8,
+      spacingRight: a.textPadding?.right ?? 12,
+      spacingBottom: a.textPadding?.bottom ?? 8,
+      spacingLeft: a.textPadding?.left ?? 12,
     };
     const styles = {
       ...common,
@@ -167,13 +179,13 @@ export async function drawioXml(name: string, document: ViewDocument, objects: M
             Object.entries(n.attributes ?? {}).map(([key, value]) => [`attribute_${key}`, value]),
           ),
         },
-        `<mxCell${attributes({ vertex: 1, parent: '1', style: style(styles) })}><mxGeometry${attributes({ ...n.position, width: a.width, height: a.height, as: 'geometry' })}/></mxCell>`,
+        `<mxCell${attributes({ vertex: 1, parent: '1', style: style(styles) })}><mxGeometry${attributes({ ...n.position, width: a.width, height: a.height, as: 'geometry' })}>${a.textOffset ? point('offset', a.textOffset) : ''}</mxGeometry></mxCell>`,
       ),
     );
     // A transparent child text cell rotates the label without rotating its shape or connection ports.
     if (a.textRotation)
       cells.push(
-        `<mxCell${attributes({ id: `label_${n.id}`, value: label, vertex: 1, connectable: 0, parent: nodeId(n.id), style: style({ ...common, shape: 'rectangle', fillColor: 'none', strokeColor: 'none', rotation: a.textRotation }) })}><mxGeometry x="0.5" y="0.5" relative="1"${attributes({ width: a.width, height: a.height, as: 'geometry' })}>${point('offset', { x: -a.width / 2, y: -a.height / 2 })}</mxGeometry></mxCell>`,
+        `<mxCell${attributes({ id: `label_${n.id}`, value: label, vertex: 1, connectable: 0, parent: nodeId(n.id), style: style({ ...common, shape: 'rectangle', fillColor: 'none', strokeColor: 'none', rotation: a.textRotation }) })}><mxGeometry x="0.5" y="0.5" relative="1"${attributes({ width: a.width, height: a.height, as: 'geometry' })}>${point('offset', { x: -a.width / 2 + (a.textOffset?.x ?? 0), y: -a.height / 2 + (a.textOffset?.y ?? 0) })}</mxGeometry></mxCell>`,
       );
     rendered.set(n.id, cells.slice(cellStart).join(''));
   }
@@ -190,6 +202,12 @@ export async function drawioXml(name: string, document: ViewDocument, objects: M
       rounded: 1,
       fontSize: a.fontSize ?? 12,
       fontColor: '#232334',
+      fontStyle:
+        ((a.fontWeight ?? 400) >= 600 ? 1 : 0) |
+        (a.fontStyle === 'italic' ? 2 : 0) |
+        (a.underline ? 4 : 0) |
+        (a.strikethrough ? 8 : 0),
+      ...(a.fontFamily ? { fontFamily: a.fontFamily } : {}),
       labelBackgroundColor: '#ffffff',
       strokeColor: a.color,
       strokeWidth: a.width ?? 2,

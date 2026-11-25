@@ -1,3 +1,5 @@
+import { NodeText } from './node-text';
+import { nodeTextBounds } from '@/lib/node-text';
 import { layeredElements } from './layered-elements';
 import type { Ref, SVGProps } from 'react';
 import { NodeShape } from './node-shape';
@@ -5,6 +7,7 @@ import { EdgeMarkerDefs, markerId } from './edge-markers';
 import { edgeGeometry } from '@/lib/diagram-geometry';
 import {
   nodeAppearance,
+  fontCss,
   nodeLabel,
   visibleProperties,
   contrastColor,
@@ -15,11 +18,19 @@ import { displayedView, effectiveEdge, type ViewDocument, type ModelObject } fro
 export type Bounds = { x: number; y: number; width: number; height: number };
 export function diagramBounds(d: ViewDocument): Bounds {
   const points = d.nodes.flatMap((n) => {
-    const a = nodeAppearance(
-      n,
-      d.notation.nodeTypes.find((t) => t.id === n.typeId)!,
-    );
-    return [n.position, { x: n.position.x + a.width, y: n.position.y + a.height }];
+    const definition = d.notation.nodeTypes.find((t) => t.id === n.typeId)!;
+    const a = nodeAppearance(n, definition);
+    return [
+      n.position,
+      { x: n.position.x + a.width, y: n.position.y + a.height },
+      ...nodeTextBounds(
+        a,
+        nodeLabel(n, definition),
+        a.showAttributes === false
+          ? []
+          : visibleProperties(n, definition).map((p) => `${p.label}: ${p.value}`),
+      ).map((p) => ({ x: p.x + n.position.x, y: p.y + n.position.y })),
+    ];
   });
   for (const g of edgeGeometry(d).values()) points.push(...g.points, g.label);
   if (!points.length) return { x: 0, y: 0, width: 600, height: 400 };
@@ -31,11 +42,6 @@ export function diagramBounds(d: ViewDocument): Bounds {
     width: Math.max(...points.map((p) => p.x)) - x + 60,
     height: Math.max(...points.map((p) => p.y)) - y + 60,
   };
-}
-function lines(text: string, columns: number) {
-  return text
-    .split('\n')
-    .flatMap((row) => row.match(new RegExp(`.{1,${Math.max(1, columns)}}`, 'gu')) ?? ['']);
 }
 export function DiagramSvg({
   document,
@@ -129,6 +135,7 @@ export function DiagramSvg({
                     stroke="#ffffff"
                     strokeWidth="4"
                     paintOrder="stroke"
+                    {...fontCss(a)}
                     fontSize={a.fontSize ?? 12}
                   >
                     {label}
@@ -151,21 +158,10 @@ export function DiagramSvg({
           ...d.nodes.map((n) => {
             const t = d.notation.nodeTypes.find((t) => t.id === n.typeId)!,
               a = nodeAppearance(n, t);
-            const font = a.fontSize ?? 12,
-              vertical = Math.abs(a.textRotation ?? 0) === 90;
-            const w = (vertical ? a.height : a.width) - 24,
-              h = (vertical ? a.width : a.height) - 16;
-            const text = lines(nodeLabel(n, t), Math.floor(w / (font * 0.6)));
             const attrs =
-              a.showAttributes !== false
-                ? visibleProperties(n, t).flatMap((p) =>
-                    lines(`${p.label}: ${p.value}`, Math.floor(w / (Math.max(8, font - 2) * 0.6))),
-                  )
-                : [];
-            const height = text.length * font * 1.25 + attrs.length * Math.max(8, font - 2) * 1.25;
-            const align = a.textAlign ?? 'center',
-              anchor = align === 'left' ? 'start' : align === 'right' ? 'end' : 'middle';
-            const x = align === 'left' ? -w / 2 : align === 'right' ? w / 2 : 0;
+              a.showAttributes === false
+                ? []
+                : visibleProperties(n, t).map((p) => `${p.label}: ${p.value}`);
             return (
               <g
                 key={n.id}
@@ -187,38 +183,13 @@ export function DiagramSvg({
                     «instance»
                   </text>
                 )}
-                <defs>
-                  <clipPath id={`text-${n.id}`}>
-                    <rect x={-w / 2} y={-h / 2} width={Math.max(1, w)} height={Math.max(1, h)} />
-                  </clipPath>
-                </defs>
-                <g
-                  transform={`translate(${a.width / 2},${a.height / 2}) rotate(${a.textRotation ?? 0})`}
-                  clipPath={`url(#text-${n.id})`}
-                >
-                  <text
-                    x={x}
-                    y={-Math.min(height, h) / 2 + font}
-                    textAnchor={anchor}
-                    fill={a.shape === 'text' ? '#232334' : contrastColor(a.fill)}
-                    fontSize={font}
-                  >
-                    {text.map((line, i) => (
-                      <tspan key={i} x={x} dy={i ? font * 1.25 : 0}>
-                        {line}
-                      </tspan>
-                    ))}
-                    {attrs.map((line, i) => (
-                      <tspan
-                        key={`a${i}`}
-                        x={x}
-                        dy={Math.max(8, font - 2) * 1.25}
-                        fontSize={Math.max(8, font - 2)}
-                      >
-                        {line}
-                      </tspan>
-                    ))}
-                  </text>
+                <g fill={a.shape === 'text' ? '#232334' : contrastColor(a.fill)}>
+                  <NodeText
+                    appearance={a}
+                    title={nodeLabel(n, t)}
+                    attributes={attrs}
+                    clipId={`text-${n.id}`}
+                  />
                 </g>
                 {selectedId === n.id && (
                   <rect

@@ -57,6 +57,9 @@ test('imports plain and compressed draw.io pages into one root folder with atomi
   expect(imported.status(), await imported.text()).toBe(201);
   const result = await imported.json();
   expect(result.diagrams).toHaveLength(2);
+  const notice = page.getByRole('dialog');
+  await expect(notice).toContainText('Смешанное HTML-форматирование');
+  await notice.getByRole('link', { name: 'Открыть папку импорта' }).click();
   await expect(page).toHaveURL(new RegExp(`/solutions\\?parent=${result.folder.id}$`));
   expect(result.folder).toMatchObject({ name: 'Native import', parentId: null, kind: 'folder' });
   const children = await db.modelObject.findMany({ where: { parentId: result.folder.id } });

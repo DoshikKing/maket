@@ -1,6 +1,8 @@
 'use client';
+import { NodeText } from './node-text';
+import { nodeTextBounds } from '@/lib/node-text';
 import { layeredElements } from './layered-elements';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useId } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
@@ -308,6 +310,7 @@ function ShapesIcon() {
   );
 }
 export function DiagramPreview({ document: d }: { document: DiagramDocument }) {
+  const textPrefix = useId().replace(/[^a-zA-Z0-9_-]/g, '');
   const geometry = edgeGeometry(d);
   if (!d.nodes.length && !geometry.size)
     return (
@@ -326,6 +329,13 @@ export function DiagramPreview({ document: d }: { document: DiagramDocument }) {
     ...d.nodes.flatMap((n) => [
       n.position,
       { x: n.position.x + appearance(n).width, y: n.position.y + appearance(n).height },
+      ...nodeTextBounds(
+        appearance(n),
+        nodeLabel(
+          n,
+          d.notation.nodeTypes.find((t) => t.id === n.typeId)!,
+        ),
+      ).map((p) => ({ x: p.x + n.position.x, y: p.y + n.position.y })),
     ]),
     ...[...geometry.values()].flatMap((g) => [...g.points, g.label]),
   ];
@@ -371,9 +381,7 @@ export function DiagramPreview({ document: d }: { document: DiagramDocument }) {
         ...d.nodes.map((n) => {
           const t = d.notation.nodeTypes.find((t) => t.id === n.typeId);
           if (!t) return null;
-          const a = nodeAppearance(n, t),
-            w = a.width,
-            h = a.height;
+          const a = nodeAppearance(n, t);
           return (
             <g key={n.id} transform={`translate(${n.position.x},${n.position.y})`}>
               <NodeShape appearance={a} shapes={d.notation.shapes} className="preview-shape" />
@@ -382,17 +390,13 @@ export function DiagramPreview({ document: d }: { document: DiagramDocument }) {
                   «instance»
                 </text>
               )}
-              <text
-                x={w / 2}
-                y={h / 2}
-                textAnchor="middle"
-                dominantBaseline="middle"
-                fontSize={a.fontSize ?? 12}
-                transform={`rotate(${a.textRotation ?? 0},${w / 2},${h / 2})`}
-                fill={a.shape === 'text' ? 'var(--text)' : contrastColor(a.fill)}
-              >
-                {nodeLabel(n, t).slice(0, 24)}
-              </text>
+              <g fill={a.shape === 'text' ? 'var(--text)' : contrastColor(a.fill)}>
+                <NodeText
+                  appearance={a}
+                  title={nodeLabel(n, t)}
+                  clipId={`preview-text-${textPrefix}-${n.id}`}
+                />
+              </g>
             </g>
           );
         }),

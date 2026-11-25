@@ -94,6 +94,55 @@ export function TextAppearanceControls({
           <option value="right">Справа</option>
         </select>
       </label>
+      <label>
+        Выравнивание по вертикали
+        <select
+          aria-label="Выравнивание по вертикали"
+          value={value.textVerticalAlign ?? 'middle'}
+          onChange={(e) =>
+            onChange({ textVerticalAlign: e.target.value as NodeOverride['textVerticalAlign'] })
+          }
+        >
+          <option value="top">Сверху</option>
+          <option value="middle">По центру</option>
+          <option value="bottom">Снизу</option>
+        </select>
+      </label>
+      <details>
+        <summary>Начертание</summary>
+        <label className="inline-check">
+          <input
+            type="checkbox"
+            checked={(value.fontWeight ?? 400) >= 600}
+            onChange={(e) => onChange({ fontWeight: e.target.checked ? 700 : 400 })}
+          />
+          Жирный
+        </label>
+        <label className="inline-check">
+          <input
+            type="checkbox"
+            checked={value.fontStyle === 'italic'}
+            onChange={(e) => onChange({ fontStyle: e.target.checked ? 'italic' : 'normal' })}
+          />
+          Курсив
+        </label>
+        <label className="inline-check">
+          <input
+            type="checkbox"
+            checked={value.underline === true}
+            onChange={(e) => onChange({ underline: e.target.checked })}
+          />
+          Подчёркнутый
+        </label>
+        <label className="inline-check">
+          <input
+            type="checkbox"
+            checked={value.strikethrough === true}
+            onChange={(e) => onChange({ strikethrough: e.target.checked })}
+          />
+          Зачёркнутый
+        </label>
+      </details>
       <label className="inline-check">
         <input
           type="checkbox"

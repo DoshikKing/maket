@@ -155,3 +155,65 @@ it('connects an arrow to the actual midpoint of another imported arrow, even in 
   expect(geometry.get(child.id)?.source).toEqual(geometry.get(parent.id)?.center);
   expect(geometry.get(child.id)?.source).toEqual({ x: 95, y: 170 });
 });
+
+it('keeps inner vertical alignment separate from external label position, padding and absolute label offsets', async () => {
+  const xml =
+    vertex(
+      'top',
+      '1',
+      'x="100" y="100" width="160" height="100"',
+      'verticalAlign=top;align=left;spacing=4;spacingTop=6;fontStyle=1;fontFamily=Courier New;',
+    ) +
+    vertex(
+      'bottom',
+      '1',
+      'x="300" y="100" width="160" height="100"',
+      'verticalAlign=bottom;fontStyle=0;',
+    ) +
+    '<mxCell id="outside" vertex="1" parent="1" value="Caption" style="verticalLabelPosition=bottom;verticalAlign=top;labelPosition=right;align=left;spacing=0;fontStyle=6;"><mxGeometry x="500" y="100" width="120" height="80" as="geometry"><mxPoint x="15" y="-3" as="offset"/></mxGeometry></mxCell>';
+  const first = (await parse(xml)).pages[0].document;
+  expect(first.nodes[0].appearance).toMatchObject({
+    textVerticalAlign: 'top',
+    textAlign: 'left',
+    textPadding: { top: 10, right: 4, bottom: 4, left: 4 },
+    fontWeight: 700,
+    fontFamily: 'Courier New',
+  });
+  expect(first.nodes[1].appearance).toMatchObject({ textVerticalAlign: 'bottom', fontWeight: 400 });
+  const external = first.nodes[2];
+  expect(external.position).toEqual({ x: 500, y: 100 });
+  expect(external.appearance).toMatchObject({
+    textPosition: { horizontal: 'right', vertical: 'bottom' },
+    textOffset: { x: 15, y: -3 },
+    fontStyle: 'italic',
+    underline: true,
+  });
+  const again = (await parse(await drawioXml('Text', projectDocument(first), first.objects)))
+    .pages[0].document;
+  for (let i = 0; i < first.nodes.length; i++)
+    expect(again.nodes[i].appearance).toMatchObject(first.nodes[i].appearance!);
+});
+it('reads uniform HTML font styles without applying markup or remote resources to the document', async () => {
+  const d = (
+    await parse(
+      '<mxCell id="html" vertex="1" parent="1" style="html=1;verticalAlign=top;" value="&lt;div style=&quot;font-weight:300;font-style:italic;text-align:right;font-family:Georgia;font-size:16px&quot;&gt;Thin caption&lt;/div&gt;"><mxGeometry width="200" height="80" as="geometry"/></mxCell>',
+    )
+  ).pages[0].document;
+  expect(d.nodes[0].label).toBe('Thin caption');
+  expect(d.nodes[0].appearance).toMatchObject({
+    fontWeight: 300,
+    fontStyle: 'italic',
+    fontFamily: 'Georgia',
+    fontSize: 16,
+    textAlign: 'right',
+    textVerticalAlign: 'top',
+  });
+  const roundtrip = (await parse(await drawioXml('Thin', projectDocument(d), d.objects))).pages[0]
+    .document;
+  expect(roundtrip.nodes[0].appearance).toMatchObject(d.nodes[0].appearance!);
+  const mixed = await parse(
+    '<mxCell id="mixed" vertex="1" parent="1" style="html=1;" value="&lt;b&gt;Bold&lt;/b&gt; plain"><mxGeometry width="200" height="80" as="geometry"/></mxCell>',
+  );
+  expect(mixed.pages[0].document.nodes[0].label).toBe('Bold plain');
+  expect(mixed.warnings.some((w) => w.includes('Смешанное'))).toBe(true);
+});

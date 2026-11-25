@@ -2114,16 +2114,13 @@ body {
   line-height: 1.4;
 }
 .node-content .node-label {
+  text-align: inherit;
   position: static;
   padding: 0;
   max-height: none;
   white-space: pre-wrap;
   font-size: inherit;
   line-height: inherit;
-}
-.node-content.diamond-content {
-  width: 65% !important;
-  max-height: 65% !important;
 }
 .node-attributes {
   border-top: 1px solid #64748b44;

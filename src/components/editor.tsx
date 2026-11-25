@@ -80,6 +80,7 @@ import { edgeGeometry } from '@/lib/diagram-geometry';
 import { NumberField, TextAppearanceControls, EdgeAppearanceControls } from './appearance-controls';
 import {
   nodeAppearance,
+  fontCss,
   nodeLabel,
   edgeAppearance,
   lineDash,
@@ -1106,7 +1107,7 @@ function Editor({ initial }: { initial: Diagram }) {
           markerEnd: a.targetMarker === 'none' ? undefined : markerId(initial.id, e.id, 'end'),
           markerStart:
             (a.sourceMarker ?? 'none') === 'none' ? undefined : markerId(initial.id, e.id, 'start'),
-          labelStyle: { fontSize: a.fontSize, fill: 'var(--text)' },
+          labelStyle: { ...fontCss(a), fontSize: a.fontSize, fill: 'var(--text)' },
           labelBgStyle: { fill: 'var(--panel)' },
           style: {
             stroke: a.color,

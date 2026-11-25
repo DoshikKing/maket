@@ -19,6 +19,7 @@ import {
 import type { NotationDocument } from '@/lib/notation';
 import {
   contrastColor,
+  fontCss,
   nodeAppearance,
   nodeLabel,
   visibleProperties,
@@ -27,6 +28,7 @@ import {
 } from '@/lib/appearance';
 import { ImportedHandles, type ImportedHandle } from './imported-edge';
 import { NodeShape } from './node-shape';
+import { nodeTextBox } from '@/lib/node-text';
 import { effectiveNode, type ModelObject } from '@/lib/model';
 export type ShapeData = {
   definition: NotationDocument['nodeTypes'][number];
@@ -75,7 +77,7 @@ export const DiagramNodeView = memo(function DiagramNodeView({
     [actions.end],
   );
   const rotation = a.textRotation ?? 0;
-  const vertical = Math.abs(rotation) === 90;
+  const textBox = nodeTextBox(a);
   function finish(cancel = false) {
     if (!active.current) return;
     active.current = false;
@@ -126,12 +128,15 @@ export const DiagramNodeView = memo(function DiagramNodeView({
       <div
         className={`node-content ${a.shape === 'diamond' ? 'diamond-content' : ''}`}
         style={{
-          width: (vertical ? a.height : a.width) - 24,
-          maxHeight: (vertical ? a.width : a.height) - 16,
+          left: textBox.x,
+          top: textBox.y,
+          width: textBox.width,
+          maxHeight: textBox.height,
+          ...fontCss(a),
           color: a.shape === 'text' ? 'var(--text)' : contrastColor(a.fill),
           fontSize: a.fontSize ?? 12,
           textAlign: a.textAlign ?? 'center',
-          transform: `translate(-50%, -50%) rotate(${rotation}deg)`,
+          transform: `translate(-50%, ${-textBox.anchor * 100}%) rotate(${rotation}deg)`,
         }}
       >
         {editing ? (

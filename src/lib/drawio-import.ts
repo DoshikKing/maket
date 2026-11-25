@@ -7,7 +7,13 @@ import {
   type ModelRelation,
 } from './model';
 import { notationSchema, type NotationDocument } from './notation';
-import { shapeSchema, type CustomShape, type EdgeOverride, type NodeOverride } from './appearance';
+import {
+  fontAppearanceSchema,
+  shapeSchema,
+  type CustomShape,
+  type EdgeOverride,
+  type NodeOverride,
+} from './appearance';
 import { pointOnRoute, type Point } from './diagram-geometry';
 import { hasSafeJsonDepth } from './json-depth';
 const LIMIT = 2_000_000;
@@ -58,6 +64,100 @@ function plain(value: string, html: boolean, dom?: DrawioDom) {
   template.innerHTML = value.replace(/<br\s*\/?\s*>|<\/(?:div|p|tr|li|h[1-6])\s*>/gi, '\n');
   template.content.querySelectorAll('script,style,iframe,object').forEach((el) => el.remove());
   return (template.content.textContent ?? '').trimEnd();
+}
+function importedTextStyle(
+  c: Cell,
+  scale: number,
+  dom: DrawioDom | undefined,
+  warn: (message: string) => void,
+  maxSize = 72,
+  original: Data = {},
+) {
+  const flags = Math.trunc(finite(c.style.fontStyle));
+  const family = (value: string | undefined) => {
+    const result = fontAppearanceSchema.shape.fontFamily.safeParse(value?.slice(0, 200));
+    return result.success ? result.data : undefined;
+  };
+  const base = {
+    fontWeight:
+      typeof original.fontWeight === 'number' &&
+      Number.isInteger(original.fontWeight) &&
+      original.fontWeight >= 100 &&
+      original.fontWeight <= 900 &&
+      (original.fontWeight >= 600 ? 1 : 0) === (flags & 1)
+        ? original.fontWeight
+        : flags & 1
+          ? 700
+          : 400,
+    fontStyle: flags & 2 ? ('italic' as const) : ('normal' as const),
+    underline: !!(flags & 4),
+    strikethrough: !!(flags & 8),
+    fontFamily: family(c.style.fontFamily),
+    fontSize: clamp(finite(c.style.fontSize, 12) * scale, 8, maxSize),
+    textAlign: ['left', 'right'].includes(c.style.align)
+      ? (c.style.align as 'left' | 'right')
+      : ('center' as const),
+  };
+  if (c.style.html !== '1') return base;
+  const template = (dom?.document ?? document).createElement('template');
+  template.innerHTML = c.data.getAttribute('label') ?? c.cell.getAttribute('value') ?? '';
+  template.content.querySelectorAll('script,style,iframe,object').forEach((el) => el.remove());
+  const walker = template.ownerDocument.createTreeWalker(template.content, 4);
+  let uniform: typeof base | undefined,
+    signature: string | undefined,
+    count = 0;
+  while (walker.nextNode()) {
+    if (!walker.currentNode.textContent?.trim()) continue;
+    const chain: HTMLElement[] = [];
+    let parent = walker.currentNode.parentElement;
+    while (parent && chain.length < 100) {
+      chain.unshift(parent);
+      parent = parent.parentElement;
+    }
+    if (parent || ++count > 2000) {
+      warn('Сложное HTML-форматирование приведено к общему стилю подписи.');
+      return base;
+    }
+    const value = { ...base };
+    for (const el of chain) {
+      const css = el.style;
+      if (!css) continue;
+      if (['B', 'STRONG'].includes(el.tagName.toUpperCase())) value.fontWeight = 700;
+      if (['I', 'EM'].includes(el.tagName.toUpperCase())) value.fontStyle = 'italic';
+      if (el.tagName.toUpperCase() === 'U') value.underline = true;
+      if (['S', 'STRIKE', 'DEL'].includes(el.tagName.toUpperCase())) value.strikethrough = true;
+      if (css.fontWeight === 'normal') value.fontWeight = 400;
+      else if (['bold', 'bolder'].includes(css.fontWeight)) value.fontWeight = 700;
+      else if (/^[1-9]00$/.test(css.fontWeight)) value.fontWeight = Number(css.fontWeight);
+      if (css.fontStyle) value.fontStyle = css.fontStyle === 'normal' ? 'normal' : 'italic';
+      const fontFamily = family(css.fontFamily || el.getAttribute('face') || undefined);
+      if (fontFamily) value.fontFamily = fontFamily;
+      if (['left', 'center', 'right'].includes(css.textAlign))
+        value.textAlign = css.textAlign as typeof value.textAlign;
+      const size = css.fontSize.match(/^([\d.]+)(px|pt)$/);
+      if (size)
+        value.fontSize = clamp(
+          Number(size[1]) * (size[2] === 'pt' ? 4 / 3 : 1) * scale,
+          8,
+          maxSize,
+        );
+      const decoration = css.textDecorationLine || css.textDecoration;
+      if (decoration) {
+        value.underline = decoration.includes('underline');
+        value.strikethrough = decoration.includes('line-through');
+      }
+    }
+    const next = JSON.stringify(value);
+    if (signature && next !== signature) {
+      warn(
+        'Смешанное HTML-форматирование приведено к общему стилю подписи. Текст сохранён полностью.',
+      );
+      return base;
+    }
+    signature = next;
+    uniform = value;
+  }
+  return uniform ?? base;
 }
 async function inflate(encoded: string) {
   let bytes: Uint8Array<ArrayBuffer>;
@@ -530,8 +630,50 @@ export async function importDrawio(
           fill: color(s.fillColor, '#ffffff'),
           stroke: color(s.strokeColor, '#000000'),
           strokeWidth: clamp(finite(s.strokeWidth, 2) * scale, 0.5, 12),
-          fontSize: clamp(finite(s.fontSize, 12) * scale, 8, 72),
-          textAlign: ['left', 'right'].includes(s.align) ? (s.align as 'left' | 'right') : 'center',
+          ...importedTextStyle(
+            rotated ? { ...rotated, style: { ...s, ...rotated.style } } : c,
+            scale,
+            dom,
+            (message) => warnings.add(message),
+            72,
+            record(rep.appearance),
+          ),
+          textVerticalAlign: ['top', 'bottom'].includes(s.verticalAlign)
+            ? (s.verticalAlign as 'top' | 'bottom')
+            : 'middle',
+          textPosition: {
+            horizontal: ['left', 'right'].includes(s.labelPosition)
+              ? (s.labelPosition as 'left' | 'right')
+              : 'center',
+            vertical: ['top', 'bottom'].includes(s.verticalLabelPosition)
+              ? (s.verticalLabelPosition as 'top' | 'bottom')
+              : 'middle',
+          },
+          textPadding: {
+            top: clamp((finite(s.spacing, 2) + finite(s.spacingTop)) * scale, -2000, 2000),
+            right: clamp((finite(s.spacing, 2) + finite(s.spacingRight)) * scale, -2000, 2000),
+            bottom: clamp((finite(s.spacing, 2) + finite(s.spacingBottom)) * scale, -2000, 2000),
+            left: clamp((finite(s.spacing, 2) + finite(s.spacingLeft)) * scale, -2000, 2000),
+          },
+          textOffset:
+            c.geometry?.getAttribute('relative') === '1'
+              ? { x: 0, y: 0 }
+              : {
+                  x: clamp(
+                    finite(
+                      c.geometry?.querySelector(':scope > mxPoint[as="offset"]')?.getAttribute('x'),
+                    ) * scale,
+                    -10000,
+                    10000,
+                  ),
+                  y: clamp(
+                    finite(
+                      c.geometry?.querySelector(':scope > mxPoint[as="offset"]')?.getAttribute('y'),
+                    ) * scale,
+                    -10000,
+                    10000,
+                  ),
+                },
           showAttributes: false,
           textRotation: clamp(
             finite(
@@ -746,7 +888,14 @@ export async function importDrawio(
         appearance: {
           color: color(c.style.strokeColor, '#64748b'),
           width: clamp(finite(c.style.strokeWidth, 2) * scale, 0.5, 12),
-          fontSize: clamp(finite(c.style.fontSize, 12) * scale, 8, 48),
+          ...importedTextStyle(
+            labelCell ? { ...labelCell, style: { ...c.style, ...labelCell.style } } : c,
+            scale,
+            dom,
+            (message) => warnings.add(message),
+            48,
+            record(rep.appearance),
+          ),
           line: c.style.dashed === '1' ? (customDash ? 'custom' : 'dashed') : 'solid',
           dashPattern: customDash,
           sourceMarker: marker(c.style.startArrow, c.style.startFill),

@@ -26,7 +26,37 @@ export const shapeSchema = z
       ctx.addIssue({ code: 'custom', message: 'Форма должна иметь ненулевую площадь' });
   });
 export type CustomShape = z.infer<typeof shapeSchema>;
-export const textAppearanceSchema = z.object({
+export const fontAppearanceSchema = z.object({
+  fontWeight: z.number().int().min(100).max(900).optional(),
+  fontStyle: z.enum(['normal', 'italic']).optional(),
+  fontFamily: z
+    .string()
+    .min(1)
+    .max(200)
+    .regex(/^[\p{L}\p{N} _,'"-]+$/u)
+    .optional(),
+  underline: z.boolean().optional(),
+  strikethrough: z.boolean().optional(),
+});
+export const textAppearanceSchema = fontAppearanceSchema.extend({
+  textVerticalAlign: z.enum(['top', 'middle', 'bottom']).optional(),
+  textPosition: z
+    .object({
+      horizontal: z.enum(['left', 'center', 'right']),
+      vertical: z.enum(['top', 'middle', 'bottom']),
+    })
+    .optional(),
+  textOffset: z
+    .object({ x: z.number().min(-10000).max(10000), y: z.number().min(-10000).max(10000) })
+    .optional(),
+  textPadding: z
+    .object({
+      top: z.number().min(-2000).max(2000),
+      right: z.number().min(-2000).max(2000),
+      bottom: z.number().min(-2000).max(2000),
+      left: z.number().min(-2000).max(2000),
+    })
+    .optional(),
   fontSize: z.number().min(8).max(72).optional(),
   textRotation: z.number().min(-180).max(180).optional(),
   textAlign: z.enum(['left', 'center', 'right']).optional(),
@@ -59,7 +89,7 @@ export const markers = [
   'hollow-diamond',
   'circle',
 ] as const;
-export const edgeAppearanceSchema = z.object({
+export const edgeAppearanceSchema = fontAppearanceSchema.extend({
   line: z.enum(['solid', 'dashed', 'dotted', 'dash-dot', 'custom']),
   targetMarker: z.enum(markers),
   sourceMarker: z.enum(markers).optional(),
@@ -209,4 +239,18 @@ export function contrastColor(fill: string) {
     g = parseInt(fill.slice(3, 5), 16),
     b = parseInt(fill.slice(5, 7), 16);
   return r * 0.299 + g * 0.587 + b * 0.114 > 150 ? '#242635' : '#f8fafc';
+}
+
+export function fontCss(a: z.infer<typeof fontAppearanceSchema>) {
+  return {
+    fontWeight: a.fontWeight,
+    fontStyle: a.fontStyle,
+    fontFamily: a.fontFamily ? `${a.fontFamily}, sans-serif` : undefined,
+    textDecoration:
+      a.underline === undefined && a.strikethrough === undefined
+        ? undefined
+        : [a.underline ? 'underline' : '', a.strikethrough ? 'line-through' : '']
+            .filter(Boolean)
+            .join(' ') || 'none',
+  };
 }
