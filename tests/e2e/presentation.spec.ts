@@ -152,8 +152,15 @@ test('inline text, resize, undo, layers and text styling persist', async ({ page
   await expect.poll(async () => (await node.boundingBox())!.width).toBeCloseTo(before.width, 0);
   await page.getByLabel('Ширина объекта', { exact: true }).fill('240');
   await page.getByLabel('Высота объекта', { exact: true }).fill('130');
-  await page.getByRole('button', { name: 'На передний план', exact: true }).click();
-  await expect(node).toHaveCSS('z-index', '1');
+  await page.getByRole('button', { name: 'Поверх всех', exact: true }).click();
+  const otherLayers = await page
+    .locator('.react-flow__node:not([data-id="a"]), .react-flow__edge')
+    .evaluateAll((elements) =>
+      elements.map((element) => Number(getComputedStyle(element).zIndex)).filter(Number.isFinite),
+    );
+  await expect
+    .poll(async () => Number(await node.evaluate((element) => getComputedStyle(element).zIndex)))
+    .toBeGreaterThan(Math.max(...otherLayers));
   await page.getByLabel('Уровень слоя', { exact: true }).fill('42');
   await page.getByLabel('Размер текста, px', { exact: true }).fill('18');
   await page.getByLabel('Поворот текста, °', { exact: true }).fill('90');

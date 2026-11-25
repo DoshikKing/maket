@@ -32,10 +32,12 @@ export function TreeContextMenu({
   children,
   entityId,
   beforeNavigate,
+  onOpen,
   ...props
 }: HTMLAttributes<HTMLDivElement> &
   DiagramNavigation & {
     actions: ReactNode;
+    onOpen?: () => void;
   }) {
   const { user } = useUser();
   actions = permittedActions(actions, useContext(CommandEditingContext));
@@ -57,9 +59,13 @@ export function TreeContextMenu({
       onContextMenu={(event) => {
         event.preventDefault();
         event.stopPropagation();
-        trigger.current = event.currentTarget.querySelector<HTMLElement>(
-          'button.tree-label, a.tree-label, button:not(.tree-toggle):not(:disabled), a[href]',
-        );
+        onOpen?.();
+        trigger.current =
+          Array.from(
+            event.currentTarget.querySelectorAll<HTMLElement>(
+              'button.tree-label, a.tree-label, button:not(.tree-toggle):not(:disabled), a[href]',
+            ),
+          ).find((element) => !element.closest('[data-shortcut-actions]')) ?? null;
         setPosition({ x: event.clientX, y: event.clientY });
       }}
       onKeyDown={(event) => {
@@ -68,6 +74,7 @@ export function TreeContextMenu({
         if (event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10')) return;
         event.preventDefault();
         event.stopPropagation();
+        onOpen?.();
         trigger.current = event.target as HTMLElement;
         const bounds = event.currentTarget.getBoundingClientRect();
         setPosition({ x: bounds.left + 20, y: bounds.bottom });
@@ -153,11 +160,13 @@ export function ContextMenu({
     const dismiss = () => onClose();
     document.addEventListener('pointerdown', outside);
     document.addEventListener('contextmenu', outside);
+    document.addEventListener('focusin', outside);
     window.addEventListener('resize', dismiss);
     document.addEventListener('wheel', outside);
     return () => {
       document.removeEventListener('pointerdown', outside);
       document.removeEventListener('contextmenu', outside);
+      document.removeEventListener('focusin', outside);
       window.removeEventListener('resize', dismiss);
       document.removeEventListener('wheel', outside);
     };
@@ -169,12 +178,20 @@ export function ContextMenu({
       if (child.props.hidden) return null;
       const onClick = child.props.onClick;
       const command = (child.props as { 'data-command'?: CommandId })['data-command'];
+      const label =
+        (child.props as { 'data-menu-label'?: string })['data-menu-label'] ??
+        (command ? commands[command]?.label : undefined) ??
+        child.props.title ??
+        child.props['aria-label'];
       const binding =
         command && commands[command] ? commandBinding(command, user.settings.shortcuts) : '';
       return cloneElement(
         child,
         {
+          ...(child.type === 'button' ? { type: 'button' as const } : {}),
           role: 'menuitem',
+          'aria-label': label,
+          title: label,
           tabIndex: -1,
           onClick: (event: MouseEvent<HTMLElement>) => {
             event.stopPropagation();
@@ -183,8 +200,8 @@ export function ContextMenu({
           },
         },
         child.props.children,
-        <span>{child.props.title ?? child.props['aria-label']}</span>,
-        binding ? <kbd>{shortcutLabel(binding, mac)}</kbd> : null,
+        <span>{label}</span>,
+        binding ? <kbd aria-hidden="true">{shortcutLabel(binding, mac)}</kbd> : null,
       );
     });
   }
@@ -197,13 +214,19 @@ export function ContextMenu({
         role="menu"
         aria-label="Действия элемента"
         style={{ left: position.x, top: position.y }}
+        onClick={(event) => event.stopPropagation()}
+        onPointerDown={(event) => event.stopPropagation()}
         onContextMenu={(event) => {
           event.preventDefault();
           event.stopPropagation();
         }}
         onKeyDown={(event) => {
           event.stopPropagation();
-          if (event.key === 'Escape' || event.key === 'Tab') {
+          if (event.key === 'Tab') {
+            close(true);
+            return;
+          }
+          if (event.key === 'Escape') {
             event.preventDefault();
             close(true);
             return;

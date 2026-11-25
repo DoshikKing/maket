@@ -282,7 +282,11 @@ export function SolutionsPage({ view = 'model' }: { view?: 'model' | 'diagrams' 
             role={level ? 'treeitem' : undefined}
             aria-level={level ? level + 1 : undefined}
           >
-            <TreeContextMenu entityId={r.id} actions={actions(relationEntity(r))}>
+            <TreeContextMenu
+              onOpen={() => select(r.id)}
+              entityId={r.id}
+              actions={actions(relationEntity(r))}
+            >
               <button
                 className={`solution-tree-select tree-row tree-row-leaf ${selectedId === r.id ? 'selected' : ''}`}
                 onClick={() => select(r.id)}
@@ -330,6 +334,7 @@ export function SolutionsPage({ view = 'model' }: { view?: 'model' | 'diagrams' 
             aria-expanded={hasChildren ? !collapsed : undefined}
           >
             <TreeContextMenu
+              onOpen={() => select(o.id)}
               entityId={o.id}
               actions={actions(o)}
               className={`solution-tree-row tree-row ${selected?.id === o.id ? 'selected' : ''}`}
@@ -431,6 +436,7 @@ export function SolutionsPage({ view = 'model' }: { view?: 'model' | 'diagrams' 
                         }}
                       >
                         <TreeContextMenu
+                          onOpen={() => select(r.id)}
                           entityId={r.id}
                           actions={actions(relationEntity(r))}
                           className={`tree-row ${selectedId === r.id ? 'selected' : ''}`}

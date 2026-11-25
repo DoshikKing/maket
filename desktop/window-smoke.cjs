@@ -156,6 +156,33 @@ const assert = require('node:assert/strict');
       data.diagramId,
     );
     assert.equal(saved, 'Проверка команд desktop');
+    const unplaced = await window.evaluate(async () => {
+      const response = await fetch('/api/objects', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'Проверка меню portable' }),
+      });
+      if (!response.ok) throw new Error('Could not create the menu test object');
+      return response.json();
+    });
+    await window.getByRole('button', { name: 'Обновить модель', exact: true }).click();
+    const treeRow = window.locator(`[data-object-id="${unplaced.id}"]`);
+    await treeRow.locator('button.tree-label').click();
+    await expect(treeRow).toHaveClass(/selected/);
+    await expect(window.getByRole('dialog')).toHaveCount(0);
+    await treeRow.click({ button: 'right' });
+    await window.getByRole('menuitem', { name: 'Свойства', exact: true }).click();
+    await expect(window.getByLabel('Имя объекта', { exact: true })).toHaveValue(unplaced.name);
+    await window.keyboard.press('Escape');
+    await treeRow.click({ button: 'right' });
+    await window.getByRole('menuitem', { name: 'Создать внутри', exact: true }).click();
+    await expect(
+      window.getByRole('dialog', { name: 'Создать: Объект', exact: true }),
+    ).toBeVisible();
+    await expect(window.getByLabel('Родительский объект', { exact: true })).toHaveValue(
+      unplaced.id,
+    );
+    await window.keyboard.press('Escape');
     await window.getByRole('button', { name: 'Просмотр', exact: true }).click();
     await node.dblclick();
     await expect(window.getByRole('textbox', { name: 'Текст объекта', exact: true })).toHaveCount(

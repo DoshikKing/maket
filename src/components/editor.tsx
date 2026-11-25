@@ -52,6 +52,7 @@ import { type DiagramDocument as LegacyDocument, defaults } from '@/lib/notation
 import { useUser } from './workspace';
 import { Modal } from './modal';
 import { handleCommandKey, CommandEditingContext, permittedActions } from './command-shortcuts';
+import { commands } from '@/lib/shortcuts';
 import { ContextMenu } from './tree-context-menu';
 import { RepresentationAttributes } from './representation-attributes';
 import { useUnsavedNavigation } from './use-unsaved-navigation';
@@ -1212,10 +1213,7 @@ function Editor({ initial }: { initial: Diagram }) {
         padding: 0.3,
         maxZoom: 1,
       });
-    } else {
-      const r = relationLookup.get(id);
-      if (r) void editRelation(r);
-    }
+    } else setConnectionNotice({ message: 'На текущей диаграмме нет представления этой связи' });
   }
   async function editRelation(r?: ModelRelation) {
     try {
@@ -1726,20 +1724,13 @@ function Editor({ initial }: { initial: Diagram }) {
         }}
       />
       <div className="layer-actions">
-        {(
-          [
-            ['front', 'На передний план'],
-            ['back', 'На задний план'],
-            ['forward', 'На уровень выше'],
-            ['backward', 'На уровень ниже'],
-          ] as const
-        ).map(([direction, label]) => (
+        {(['front', 'back', 'forward', 'backward'] as const).map((direction) => (
           <button
             key={direction}
             className="secondary small"
             onClick={() => reorderNode(selected!.id, direction)}
           >
-            {label}
+            {commands[direction].label}
           </button>
         ))}
       </div>
@@ -2137,6 +2128,13 @@ function Editor({ initial }: { initial: Diagram }) {
                 setCommandBusy(false);
               }
             }}
+            onSelect={(id) => {
+              const node = docRef.current.nodes.find((n) => n.objectId === id);
+              const edge = docRef.current.edges.find((e) => e.relationId === id);
+              setSelected(
+                node ? { kind: 'node', id: node.id } : edge ? { kind: 'edge', id: edge.id } : null,
+              );
+            }}
             onPlace={(id) => void addNode(placementType, id)}
             onLocate={(id) => {
               const n = docRef.current.nodes.find((n) => n.objectId === id);
@@ -2149,10 +2147,10 @@ function Editor({ initial }: { initial: Diagram }) {
                   padding: 0.5,
                   maxZoom: 1,
                 });
-              } else {
-                const o = objectLookup.get(id);
-                if (o) setObjectEditing(o);
-              }
+              } else
+                setConnectionNotice({
+                  message: 'На текущей диаграмме нет представления этого объекта',
+                });
             }}
           />
 

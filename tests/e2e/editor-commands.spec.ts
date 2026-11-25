@@ -75,7 +75,7 @@ test('arrows share stacking order with shapes, including menu, keyboard and pers
       new MouseEvent('contextmenu', { bubbles: true, clientX: 600, clientY: 300 }),
     ),
   );
-  await page.getByRole('menuitem', { name: 'На передний план', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Поверх всех', exact: true }).click();
   await expect(page.getByLabel('Уровень слоя', { exact: true })).toHaveValue('3');
   const frontmost = () =>
     page.evaluate(() => {
@@ -104,7 +104,7 @@ test('arrows share stacking order with shapes, including menu, keyboard and pers
       new MouseEvent('contextmenu', { bubbles: true, clientX: 600, clientY: 300 }),
     ),
   );
-  await expect(page.getByRole('menuitem', { name: 'На задний план', exact: true })).toBeVisible();
+  await expect(page.getByRole('menuitem', { name: 'Под всеми', exact: true })).toBeVisible();
   await page.keyboard.press('Escape');
   expect(await frontmost()).toBe('e');
 });
@@ -140,15 +140,15 @@ test('view mode pans with left button and blocks diagram mutation; edit mode sup
       new MouseEvent('contextmenu', { bubbles: true, clientX: 600, clientY: 300 }),
     ),
   );
-  await expect(
-    page.getByRole('menuitem', { name: 'Удалить представление', exact: true }),
-  ).toBeDisabled();
+  await expect(page.getByRole('menuitem', { name: 'Удалить', exact: true })).toBeDisabled();
   await page.keyboard.press('Escape');
   await page.getByRole('button', { name: 'Редактирование', exact: true }).click();
+  await expect(page.locator('.editor')).toHaveClass(/is-edit/);
   const beforeSpace = await viewport.getAttribute('style');
   const bounds = (await node.boundingBox())!;
   await page.locator('.react-flow').focus();
   await page.keyboard.down('Space');
+  await expect(node).not.toHaveClass(/draggable/);
   await page.mouse.move(bounds.x + 40, bounds.y + 20);
   await page.mouse.down();
   await page.mouse.move(bounds.x + 110, bounds.y + 65, { steps: 8 });
@@ -172,7 +172,7 @@ test('custom user shortcuts survive reload, match tree commands and respect text
   const save = page.getByLabel('Сочетание: Сохранить диаграмму', { exact: true });
   await save.focus();
   await page.keyboard.press('Control+Shift+k');
-  const properties = page.getByLabel('Сочетание: Свойства объекта / связи', { exact: true });
+  const properties = page.getByLabel('Сочетание: Свойства', { exact: true });
   await properties.focus();
   await page.keyboard.press('Control+Shift+k');
   await expect(page.getByRole('alert').filter({ hasText: 'Одинаковое сочетание' })).toBeVisible();
@@ -229,6 +229,6 @@ test('custom user shortcuts survive reload, match tree commands and respect text
     ),
   );
   await expect(
-    page.getByRole('menuitem', { name: 'Изменить свойства объекта', exact: true }).locator('kbd'),
+    page.getByRole('menuitem', { name: 'Свойства', exact: true }).locator('kbd'),
   ).toHaveText('Ctrl+Shift+J');
 });

@@ -452,7 +452,7 @@ test('browser: create in tree, drop aliases, change shared name and local captio
   await expect(page.locator('.inspector').getByLabel('Название', { exact: false })).toHaveValue(
     'Местная подпись',
   );
-  await treeAction(page, row, 'Изменить объект Общий заказ');
+  await treeAction(page, row, 'Свойства');
   await page.getByLabel('Имя объекта', { exact: true }).fill('Новое общее имя');
   await page.getByRole('button', { name: 'Сохранить объект', exact: true }).click();
   await expect(first.locator('.node-label')).toHaveText('Местная подпись');
@@ -768,13 +768,13 @@ test('browser: delete an unused tree object, including saving removal of its rep
   await expect(page.locator('.react-flow__node-notation')).toHaveCount(1);
   const treeRow = page.locator(`.object-tree-row[data-object-id="${o.id}"]`);
   page.on('dialog', (dialog) => dialog.accept());
-  await treeAction(page, treeRow, 'Удалить объект Удалить из дерева');
+  await treeAction(page, treeRow, 'Удалить');
   await expect(page.locator('.object-panel [role="alert"]')).toContainText('используется');
   await expect(treeRow).toBeVisible();
   await page.locator('.react-flow__node-notation').click();
   await page.getByRole('button', { name: 'Удалить элемент', exact: true }).click();
   await expect(page.locator('.react-flow__node-notation')).toHaveCount(0);
-  await treeAction(page, treeRow, 'Удалить объект Удалить из дерева');
+  await treeAction(page, treeRow, 'Удалить');
   await expect(treeRow).toHaveCount(0);
   await expect(page.locator('[role="treeitem"]')).toHaveCount(1);
   expect((await request.get(`/api/objects/${o.id}`)).status()).toBe(404);
@@ -1176,7 +1176,7 @@ test('browser: relation explorer, nested references, shared arrow placement and 
   await showObjectLinks(page, target);
   await expect(page.locator(`[data-relation-reference="${relation.id}"]`)).toHaveCount(2);
   for (let i = 0; i < 2; i++) {
-    await treeAction(page, row, 'Вернуть представление связи Ответственность');
+    await treeAction(page, row, 'Разместить');
     await page.getByRole('button', { name: 'Разместить стрелку', exact: true }).click();
     await expect(page.locator('.react-flow__edge')).toHaveCount(i + 1);
     await expect(page.getByText(/Сохранено · ревизия/)).toBeVisible({ timeout: 15000 });
@@ -1186,22 +1186,18 @@ test('browser: relation explorer, nested references, shared arrow placement and 
     relation.id,
     relation.id,
   ]);
-  await treeAction(page, row, 'Свойства вложенной связи Ответственность');
+  await treeAction(page, row, 'Свойства');
   await page.getByLabel('Имя связи', { exact: true }).fill('Владелец заказа');
   await page.getByRole('button', { name: 'Сохранить связь', exact: true }).click();
   await expect(row.locator('.tree-label')).toContainText('Владелец заказа');
   await expect(page.locator(`[data-relation-reference="${relation.id}"]`)).toHaveCount(2);
   const sourceRow = page.locator(`[data-object-id="${source.id}"]`);
-  await treeAction(page, sourceRow, 'Копировать объект Заказ');
+  await treeAction(page, sourceRow, 'Копировать');
   await expect(page.locator('.object-tree-row[data-object-id]')).toHaveCount(4);
   const copied = (await (await request.get('/api/model')).json()).objects.find(
     (o: ModelObject) => o.copiedFrom?.id === source.id,
   );
-  await treeAction(
-    page,
-    page.locator(`[data-object-id="${copied.id}"]`),
-    'Изменить объект Заказ — копия',
-  );
+  await treeAction(page, page.locator(`[data-object-id="${copied.id}"]`), 'Свойства');
   await expect(page.locator('.copy-origin')).toContainText('Заказ');
   await expect(page.locator('.copy-origin')).toContainText(source.id);
   await page.getByRole('button', { name: 'Закрыть', exact: true }).click();
@@ -1216,7 +1212,7 @@ test('browser: relation explorer, nested references, shared arrow placement and 
     .getByRole('button', { name: 'Закрыть', exact: true })
     .click();
   for (let i = 1; i >= 0; i--) {
-    await treeAction(page, row, 'Найти связь Владелец заказа');
+    await treeAction(page, row, 'Найти');
     await page.getByRole('button', { name: 'Удалить связь', exact: true }).click();
     await expect(page.locator('.react-flow__edge')).toHaveCount(i);
   }
@@ -1369,7 +1365,7 @@ test('browser: return a tree arrow, nest objects under it and connect objects to
     targetId: secondary.relationId,
   });
   const primaryRow = await revealRelation(page, primary.id);
-  await treeAction(page, primaryRow, 'Создать дочерний объект связи Переход');
+  await treeAction(page, primaryRow, 'Создать внутри');
   await page.getByLabel('Имя объекта', { exact: true }).fill('Деталь связи');
   await page.getByRole('button', { name: 'Сохранить объект', exact: true }).click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
@@ -1385,23 +1381,19 @@ test('browser: return a tree arrow, nest objects under it and connect objects to
     ).status(),
   ).toBe(400);
   await showObjectLinks(page, a);
-  await treeAction(page, primaryRow, 'Найти связь Переход');
+  await treeAction(page, primaryRow, 'Найти');
   await page.getByRole('button', { name: 'Удалить связь', exact: true }).click();
   await expect(page.locator('.react-flow__edge')).toHaveCount(0);
   await expect(page.getByText(/Сохранено · ревизия/)).toBeVisible({ timeout: 15000 });
   await treeAction(
     page,
     page.locator(`[data-relation-reference="${primary.id}"]`).first(),
-    'Вернуть представление связи Переход',
+    'Разместить',
   );
   await page.getByRole('button', { name: 'Разместить стрелку', exact: true }).click();
   await expect(page.locator('.react-flow__edge')).toHaveCount(1);
   for (const relationId of [secondary.relationId, tertiary.relationId]) {
-    await treeAction(
-      page,
-      await revealRelation(page, relationId!),
-      /Разместить связь|Вернуть представление связи/,
-    );
+    await treeAction(page, await revealRelation(page, relationId!), 'Разместить');
     await page.getByRole('button', { name: 'Разместить стрелку', exact: true }).click();
   }
   await expect(page.locator('.react-flow__edge')).toHaveCount(3);
@@ -1544,11 +1536,9 @@ test('browser: distinct tree actions, collapsible panels, detach and rebind arro
   await expect(page.getByRole('menu')).toHaveCount(0);
   await expect(row.locator('.tree-label')).toBeFocused();
   await page.keyboard.press('Shift+F10');
-  await expect(page.getByRole('menuitem', { name: 'Декомпозиция Источник' })).toBeFocused();
+  await expect(page.getByRole('menuitem', { name: 'Декомпозиция' })).toBeFocused();
   await page.keyboard.press('ArrowDown');
-  await expect(
-    page.getByRole('menuitem', { name: 'Углубление Источник', exact: true }),
-  ).toBeFocused();
+  await expect(page.getByRole('menuitem', { name: 'Углубление', exact: true })).toBeFocused();
   await page.locator('.palette-title').first().click();
   await expect(page.getByRole('menu')).toHaveCount(0);
   const viewport = page.viewportSize()!;
@@ -1569,7 +1559,7 @@ test('browser: distinct tree actions, collapsible panels, detach and rebind arro
   await page.setViewportSize({ ...viewport, height: viewport.height - 40 });
   await expect(page.getByRole('menu')).toHaveCount(0);
   await page.setViewportSize(viewport);
-  await treeAction(page, row, 'Найти объект Источник');
+  await treeAction(page, row, 'Найти');
   await expect(page.getByRole('menu')).toHaveCount(0);
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await showObjectLinks(page, a);
@@ -1586,7 +1576,7 @@ test('browser: distinct tree actions, collapsible panels, detach and rebind arro
   await folder.click();
   await expect(folder).toHaveAttribute('aria-expanded', 'true');
   const catalog = page.locator(`[data-relation-reference="${original.id}"]`).first();
-  await treeAction(page, catalog, `Вернуть представление связи ${original.name}`);
+  await treeAction(page, catalog, 'Разместить');
   await expect(
     page.getByRole('dialog', { name: `Разместить связь «${original.name}»`, exact: true }),
   ).toBeVisible();
@@ -1604,7 +1594,7 @@ test('browser: distinct tree actions, collapsible panels, detach and rebind arro
     await expect(page.locator(selector)).toBeVisible();
   }
   await page.locator('.react-flow__controls-fitview').click();
-  await treeAction(page, catalog, `Найти связь ${original.name}`);
+  await treeAction(page, catalog, 'Найти');
   await page.getByRole('button', { name: 'Отвязать конец', exact: true }).click();
   await expect(page.getByText(/Сохранено · ревизия/)).toBeVisible({ timeout: 15000 });
   d = await (await request.get(`/api/diagrams/${d.id}`)).json();
@@ -2255,8 +2245,12 @@ test('browser: solutions, projects, decomposition diagrams and representation de
   const treeFolderBox = await treeFolder.boundingBox();
   expect(treeFolderBox!.x).toBeGreaterThan(treeOwnerBox!.x);
   await representations.locator('summary').click();
-  await expect(representations.locator('a')).toHaveCount(2);
-  await representations.locator('a').nth(1).click();
+  await expect(representations.locator('.representation-entry button.tree-row')).toHaveCount(2);
+  await representations
+    .locator('.representation-entry button.tree-row')
+    .nth(1)
+    .click({ button: 'right' });
+  await page.getByRole('menuitem', { name: 'Найти', exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`element=${diagram.document.nodes[1].id}`), {
     timeout: 30000,
   });
@@ -2267,7 +2261,7 @@ test('browser: solutions, projects, decomposition diagrams and representation de
   );
   const row = page.locator(`[data-object-id="${product.id}"]`);
   await row.click({ button: 'right' });
-  await expect(page.getByRole('menuitem', { name: 'Декомпозиция Товар' })).toBeVisible();
+  await expect(page.getByRole('menuitem', { name: 'Декомпозиция' })).toBeVisible();
   await page.keyboard.press('Escape');
   const folder = row.locator('..').locator(':scope > [role="group"] > .representation-folder');
   await expect(folder).toHaveAttribute('data-parent-id', product.id);
@@ -2282,7 +2276,7 @@ test('browser: solutions, projects, decomposition diagrams and representation de
     `representations:${product.id}`,
   );
   if ((await folder.getAttribute('open')) === null) await folder.locator('summary').click();
-  await expect(folder.locator('a')).toHaveCount(2);
+  await expect(folder.locator('.representation-entry button.tree-row')).toHaveCount(2);
   await expect(folder.locator('.representation-entry').first()).toHaveAttribute('aria-level', '5');
   const ownerBox = await row.boundingBox();
   const folderBox = await folder.boundingBox();
@@ -2291,13 +2285,14 @@ test('browser: solutions, projects, decomposition diagrams and representation de
   expect(entryBox!.x).toBeGreaterThan(folderBox!.x);
   await expect(folder.getByRole('button', { name: /Удалить/ })).toHaveCount(0);
   await page.screenshot({ path: 'test-results/hierarchy-editor.png', fullPage: true });
-  await folder.locator('a').first().click();
+  await folder.locator('.representation-entry button.tree-row').first().click({ button: 'right' });
+  await page.getByRole('menuitem', { name: 'Найти', exact: true }).click();
   await expect(page.locator('.react-flow__node-notation.selected')).toHaveAttribute(
     'data-id',
     diagram.document.nodes[0].id,
   );
 
-  await treeAction(page, row, 'Дочерние элементы Товар');
+  await treeAction(page, row, 'Дочерние элементы');
   await expect(page.getByRole('heading', { name: 'Товар', exact: true })).toBeVisible();
   await expect(page.getByRole('link', { name: 'Открыть диаграмму →', exact: true })).toBeVisible();
   await page.screenshot({ path: 'test-results/hierarchy-solutions.png', fullPage: true });
@@ -2316,7 +2311,7 @@ test('browser: solutions, projects, decomposition diagrams and representation de
   await expect(treeRelations).toHaveAttribute('data-folder-id', `relations:${product.id}`);
   await expect(treeRelations).toHaveAttribute('aria-level', '3');
   await treeFolder.locator('summary').click();
-  await expect(treeFolder.locator('a')).toHaveCount(2);
+  await expect(treeFolder.locator('.representation-entry button.tree-row')).toHaveCount(2);
 });
 
 test('browser: diagram-free bindings, editable participants, workspace focus and remembered tree', async ({
@@ -2528,11 +2523,11 @@ test('browser: Chromium context menus on solution objects, relation references a
       return event.defaultPrevented;
     }),
   ).toBe(true);
-  await page.getByRole('menuitem', { name: 'Свойства Владелец меню', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Свойства', exact: true }).click();
   await expect(page.getByLabel('Имя объекта', { exact: true })).toHaveValue(owner.name);
   await page.getByRole('button', { name: 'Закрыть', exact: true }).click();
   const childRow = page.locator(`[data-tree-entity="${child.id}"] > .solution-tree-row`);
-  await treeAction(page, childRow, 'Создать внутри Дочерний элемент меню');
+  await treeAction(page, childRow, 'Создать внутри');
   await expect(page.getByRole('dialog', { name: 'Создать: Объект', exact: true })).toBeVisible();
   await expect(page.getByLabel('Родительский объект')).toHaveValue(child.id);
   await page.getByRole('button', { name: 'Закрыть', exact: true }).click();
@@ -2543,7 +2538,7 @@ test('browser: Chromium context menus on solution objects, relation references a
   if ((await folder.getAttribute('aria-expanded')) === 'false')
     await folder.locator(':scope > button').click();
   const reference = folder.locator('.tree-row').filter({ hasText: relation.name }).first();
-  await treeAction(page, reference, 'Свойства Связь для меню');
+  await treeAction(page, reference, 'Свойства');
   await expect(page.getByLabel('Имя связи', { exact: true })).toHaveValue(relation.name);
   await page.getByRole('button', { name: 'Закрыть', exact: true }).click();
   await page.goto(`/solutions?parent=${owner.id}`);
@@ -2552,10 +2547,8 @@ test('browser: Chromium context menus on solution objects, relation references a
   );
   if ((await representations.getAttribute('open')) === null)
     await representations.locator('summary').click();
-  await representations.locator('.representation-entry a').click({ button: 'right' });
-  await page
-    .getByRole('menuitem', { name: `Показать представление ${owner.name}`, exact: true })
-    .click();
+  await representations.locator('.representation-entry button.tree-row').click({ button: 'right' });
+  await page.getByRole('menuitem', { name: 'Найти', exact: true }).click();
   await expect(page).toHaveURL(
     new RegExp(`diagram=${diagram.id}&element=${diagram.document.nodes[0].id}`),
   );
@@ -2595,14 +2588,14 @@ test('browser: canvas context menu and inherited representation attributes', asy
   await page.goto(`/solutions?diagram=${d.id}`);
   const first = page.locator(`.react-flow__node[data-id="${d.document.nodes[0].id}"]`);
   await first.click({ button: 'right' });
-  await page.getByRole('menuitem', { name: 'Показать в дереве объектов', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'В дереве', exact: true }).click();
   await expect(page.locator(`[data-tree-entity="${parent.id}"]`)).toHaveAttribute(
     'aria-expanded',
     'true',
   );
   await expect(page.locator(`[data-object-id="${entity.id}"]`)).toBeVisible();
   await first.click({ button: 'right' });
-  await page.getByRole('menuitem', { name: 'Изменить свойства объекта', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Свойства', exact: true }).click();
   await expect(page.getByLabel('Имя объекта', { exact: true })).toHaveValue(entity.name);
   await page.getByRole('button', { name: 'Закрыть', exact: true }).click();
   await first.click({ button: 'right' });
@@ -2664,7 +2657,7 @@ test('browser: canvas context menu and inherited representation attributes', asy
     await page.mouse.click(point.x, point.y, { button: 'right' });
   }
   await rightClickEdge();
-  await page.getByRole('menuitem', { name: 'Показать в дереве объектов', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'В дереве', exact: true }).click();
   await expect(
     page.locator(`[data-relation-reference="${d.document.relations![0].id}"]`).first(),
   ).toBeVisible();
@@ -3071,7 +3064,7 @@ test('browser: viewpoint explorer and object transitions preserve identity and c
   await expect(page.getByRole('button', { name: 'Ракурсы', exact: true })).toContainText('Бизнес');
   const node = page.locator('.react-flow__node-notation');
   await node.click({ button: 'right' });
-  await page.getByRole('menuitem', { name: 'Декомпозиция объекта', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Декомпозиция', exact: true }).click();
   const links = page.getByRole('dialog', {
     name: 'Диаграммы объекта: Процесс ракурсов',
     exact: true,
@@ -3173,7 +3166,7 @@ test('browser: viewpoint explorer and object transitions preserve identity and c
     solutionExplorer.getByRole('link', { name: 'Реализация процесса', exact: true }),
   ).toBeVisible();
   const treeRow = page.locator(`[data-tree-entity="${entity.id}"] > .solution-tree-row`);
-  await treeAction(page, treeRow, `Углубление ${entity.name}`);
+  await treeAction(page, treeRow, 'Углубление');
   await expect(
     page
       .getByRole('dialog', { name: 'Диаграммы объекта: Процесс ракурсов', exact: true })
@@ -4610,7 +4603,7 @@ test('inheritance: live attributes, protected semantic links, instance markers a
   await treeAction(
     page,
     page.locator(`[data-tree-entity="${base.id}"] > .tree-row`),
-    `Создать наследника ${base.name}`,
+    'Создать наследника',
   );
   let dialog = page.getByRole('dialog');
   await expect(dialog.getByLabel('Базовый объект', { exact: true })).toHaveValue(base.id);
@@ -4620,7 +4613,7 @@ test('inheritance: live attributes, protected semantic links, instance markers a
   await treeAction(
     page,
     page.locator(`[data-tree-entity="${base.id}"] > .tree-row`),
-    `Создать реализацию ${base.name}`,
+    'Создать реализацию',
   );
   dialog = page.getByRole('dialog');
   await expect(dialog.getByLabel('Вид наследования', { exact: true })).toHaveValue('instance');
@@ -4630,7 +4623,7 @@ test('inheritance: live attributes, protected semantic links, instance markers a
   await treeAction(
     page,
     page.locator(`[data-tree-entity="${instance.id}"] > .tree-row`),
-    `Свойства ${instance.name}`,
+    'Свойства',
   );
   dialog = page.getByRole('dialog');
   await expect(dialog.getByRole('region', { name: 'Наследование объекта' })).toContainText(
@@ -4750,7 +4743,7 @@ test('object sharing: ID links, readonly properties, inherited updates and persi
   await treeAction(
     page,
     page.locator(`[data-tree-entity="${sharedObject.id}"] > .tree-row`),
-    `Свойства ${sharedObject.name}`,
+    'Свойства',
   );
   const properties = page.getByRole('dialog', { name: 'Общие свойства объекта', exact: true });
   await expect(properties.getByLabel('ID объекта', { exact: true })).toHaveValue(sharedObject.id);

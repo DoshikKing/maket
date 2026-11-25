@@ -102,10 +102,7 @@ test('diagram browser shares the workspace tree; notation settings work from tre
   await expect(page.getByRole('button', { name: 'Импорт', exact: true })).toBeVisible();
   // Editing the current diagram from its tree uses the editor's live revision and flushes pending edits.
   await page.locator(`.object-tree [data-tree-entity="${d.entityId}"]`).click({ button: 'right' });
-  await page
-    .getByRole('menu')
-    .getByRole('menuitem', { name: /Изменить/ })
-    .click();
+  await page.getByRole('menu').getByRole('menuitem', { name: 'Свойства' }).click();
   await expect(properties.getByLabel('Добавить нотацию', { exact: true })).toBeEnabled();
   await properties.getByLabel('Добавить нотацию', { exact: true }).selectOption(bpmn.id);
   await expect(

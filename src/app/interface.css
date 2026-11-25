@@ -1079,3 +1079,7 @@ textarea {
     flex: none;
   }
 }
+
+.representation-entry button.tree-row {
+  width: 100%;
+}

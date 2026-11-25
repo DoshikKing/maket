@@ -500,6 +500,7 @@ export function ObjectTree({
   focusId,
   focusRequest,
   onPlace,
+  onSelect,
   onLocate,
   onSaved,
   onRefresh,
@@ -535,6 +536,7 @@ export function ObjectTree({
   selectedId?: string;
   focusId?: string | null;
   focusRequest?: { id: string; token: number } | null;
+  onSelect?: (id: string) => void;
   onPlace: (id: string) => void;
   onLocate: (id: string) => void;
   onSaved: (o: ModelObject) => void;
@@ -542,6 +544,18 @@ export function ObjectTree({
   onRemove: (object: ModelObject) => Promise<void>;
 }) {
   const editable = useContext(CommandEditingContext);
+  const [treeSelection, setTreeSelection] = useState<string>();
+  useEffect(() => {
+    if (selectedId) setTreeSelection(selectedId);
+  }, [selectedId]);
+  useEffect(() => {
+    if (focusRequest) setTreeSelection(focusRequest.id);
+  }, [focusRequest]);
+  const activeId = treeSelection ?? selectedId ?? focusId;
+  function selectEntity(id: string) {
+    setTreeSelection(id);
+    onSelect?.(id);
+  }
   const [query, setQuery] = useState(''),
     [editing, setEditing] = useState<{
       object?: ModelObject;
@@ -620,6 +634,7 @@ export function ObjectTree({
         {linked.map((r) => (
           <div key={r.id} role="treeitem" aria-level={level + 1}>
             <TreeContextMenu
+              onOpen={() => selectEntity(r.id)}
               data-relation-reference={r.id}
               entityId={r.id}
               beforeNavigate={beforeNavigate}
@@ -653,6 +668,7 @@ export function ObjectTree({
                   </button>
                   <button
                     data-command="locate"
+                    disabled={!counts.get(r.id)}
                     aria-label={`Найти связь ${r.name}`}
                     onClick={() => onRelationLocate?.(r.id)}
                   >
@@ -669,9 +685,9 @@ export function ObjectTree({
               }
             >
               <button
-                className="solution-tree-select tree-row tree-row-leaf"
-                onClick={() => onRelationLocate?.(r.id)}
-                onDoubleClick={() => onRelationEdit?.(r)}
+                className={`solution-tree-select tree-row tree-row-leaf ${activeId === r.id ? 'selected' : ''}`}
+                aria-pressed={activeId === r.id}
+                onClick={() => selectEntity(r.id)}
               >
                 <GitBranch className="tree-icon" size={16} />
                 <span className="tree-label">
@@ -725,11 +741,15 @@ export function ObjectTree({
             role="treeitem"
             aria-level={depth + 1}
             aria-expanded={children ? !closed : undefined}
-            aria-selected={(selectedId ?? focusId) === o.id}
+            aria-selected={activeId === o.id}
             data-tree-entity={o.id}
             aria-current={focusId === o.id ? 'page' : undefined}
           >
             <TreeContextMenu
+              onOpen={() => selectEntity(o.id)}
+              onClick={(event) => {
+                if (!(event.target as Element).closest('.tree-toggle')) selectEntity(o.id);
+              }}
               entityId={o.id}
               beforeNavigate={beforeNavigate}
               actions={
@@ -768,6 +788,15 @@ export function ObjectTree({
                       <GitBranch size={12} />
                     </Link>
                   )}
+                  {diagrams.find((d) => d.entityId === o.id) && (
+                    <Link
+                      data-command="open"
+                      aria-label="Открыть"
+                      href={`/solutions?diagram=${diagrams.find((d) => d.entityId === o.id)!.id}`}
+                    >
+                      <FileText size={12} />
+                    </Link>
+                  )}
                   <button
                     data-command="place"
                     aria-label={`Разместить ${o.name}`}
@@ -783,6 +812,7 @@ export function ObjectTree({
                   </button>
                   <button
                     data-command="locate"
+                    disabled={!counts.get(o.id)}
                     aria-label={`Найти объект ${o.name}`}
                     title="Показать представление на диаграмме"
                     onClick={() =>
@@ -870,6 +900,7 @@ export function ObjectTree({
                       </button>
                       <button
                         data-command="archive"
+                        data-menu-label={o.archived ? 'Восстановить' : 'Архивировать'}
                         aria-label={`${o.archived ? 'Вернуть из архива' : 'Архивировать'} ${o.name}`}
                         onClick={async () => {
                           try {
@@ -923,7 +954,7 @@ export function ObjectTree({
                   )}
                 </>
               }
-              className={`object-tree-row tree-row ${(selectedId ?? focusId) === o.id ? 'selected' : ''} ${o.archived ? 'archived' : ''}`}
+              className={`object-tree-row tree-row ${activeId === o.id ? 'selected' : ''} ${o.archived ? 'archived' : ''}`}
               title={`${o.derivation === 'instance' ? 'Реализация' : o.derivation === 'inheritance' ? 'Наследник' : entityLabels[kind]} · Родитель: ${entities.find((p) => p.id === o.parentId)?.name ?? 'Корень пространства'}`}
               draggable={editable && !o.archived}
               data-object-id={o.id}
@@ -975,13 +1006,6 @@ export function ObjectTree({
                 className="object-tree-name tree-label"
                 aria-label={o.name}
                 title={`${o.name} · Родитель: ${entities.find((p) => p.id === o.parentId)?.name ?? 'Корень пространства'}`}
-                onClick={() => {
-                  const d = diagrams.find((d) => d.entityId === o.id);
-                  if (d) window.location.assign(appPath(`/solutions?diagram=${d.id}`));
-                  else if (relationIds.has(o.id)) onRelationLocate?.(o.id);
-                  else onLocate(o.id);
-                }}
-                onDoubleClick={() => editEntity(o)}
               >
                 {o.name}
                 <small>
@@ -1058,6 +1082,7 @@ export function ObjectTree({
                               </button>
                               <button
                                 data-command="locate"
+                                disabled={!counts.get(r.id)}
                                 aria-label={`Найти связь ${r.name}`}
                                 title="Показать представление на диаграмме"
                                 onClick={() => onRelationLocate?.(r.id)}
@@ -1115,7 +1140,8 @@ export function ObjectTree({
                               void move(id, r.id);
                             }
                           }}
-                          className={`object-relation-reference tree-row ${r.archived ? 'archived' : ''}`}
+                          onOpen={() => selectEntity(r.id)}
+                          className={`object-relation-reference tree-row ${activeId === r.id ? 'selected' : ''} ${r.archived ? 'archived' : ''}`}
                         >
                           <button
                             className="tree-toggle"
@@ -1136,8 +1162,7 @@ export function ObjectTree({
                           <button
                             className="tree-label"
                             title={`${r.name} · Родитель: ${entities.find((p) => p.id === r.parentId)?.name ?? 'Корень пространства'}`}
-                            onClick={() => onRelationLocate?.(r.id)}
-                            onDoubleClick={() => onRelationEdit?.(r)}
+                            onClick={() => selectEntity(r.id)}
                           >
                             {r.name}
                             <small>

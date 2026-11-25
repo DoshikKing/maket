@@ -25,6 +25,7 @@ export function RepresentationFolder({
   beforeNavigate?: () => Promise<boolean>;
   level?: number;
 }) {
+  const [selectedId, setSelectedId] = useState<string>();
   const [loaded, setLoaded] = useState<Representation[] | null>(null),
     [error, setError] = useState('');
   const { open, setOpen } = useTreeDisclosure(`representations:${entityId}`);
@@ -83,8 +84,10 @@ export function RepresentationFolder({
             key={`${r.diagramId}:${r.id}`}
             role={level ? 'treeitem' : undefined}
             aria-level={level ? level + 1 : undefined}
+            aria-selected={selectedId === r.id}
           >
             <TreeContextMenu
+              onOpen={() => setSelectedId(r.id)}
               entityId={entityId}
               beforeNavigate={beforeNavigate}
               actions={
@@ -104,15 +107,10 @@ export function RepresentationFolder({
                 </Link>
               }
             >
-              <Link
-                className="tree-row tree-row-leaf"
-                href={`/solutions?diagram=${r.diagramId}&element=${encodeURIComponent(r.id)}`}
-                onClick={(e) => {
-                  if (onLocate) {
-                    e.preventDefault();
-                    onLocate(r.id, r.diagramId);
-                  }
-                }}
+              <button
+                type="button"
+                className={`tree-row tree-row-leaf ${selectedId === r.id ? 'selected' : ''}`}
+                onClick={() => setSelectedId(r.id)}
               >
                 <Layers className="tree-icon" size={16} />
                 <span className="tree-label">
@@ -121,7 +119,7 @@ export function RepresentationFolder({
                     {r.diagramName} · {r.notation} · {r.type}
                   </small>
                 </span>
-              </Link>
+              </button>
             </TreeContextMenu>
           </div>
         ))}
