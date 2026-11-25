@@ -1,6 +1,10 @@
+import { projectDocument } from '../src/lib/model';
+import { drawioFixture } from './fixtures/drawio';
 import { expect, it } from 'vitest';
 import {
   mergeDiagramState,
+  mergeSavedDiagram,
+  sameDiagramValue,
   DiagramConflict,
   changedDiagramTargets,
 } from '../src/lib/diagram-merge';
@@ -78,5 +82,77 @@ it('merges independently introduced appearance overrides without merging collidi
   });
   expect(() => mergeDiagramState({ ...initial, nodes: [] }, local, remote)).toThrow(
     DiagramConflict,
+  );
+});
+
+it('does not resurrect an unused relation snapshot after deleting its last representation', () => {
+  const relation = { id: 'r', sourceId: 'A', targetId: 'B' };
+  const before = {
+    ...structuredClone(base),
+    edges: [{ id: 'e', source: 'a', target: 'b', relationId: 'r' }],
+    relations: [relation],
+  };
+  const deleted = { ...before, edges: [] };
+  const saved = { ...deleted, relations: [] };
+  expect(mergeDiagramState(deleted, deleted, saved)).toEqual(saved);
+});
+
+it('retains unsaved relation dependencies and inheritance while pruning unused snapshots', () => {
+  const pending = {
+    ...structuredClone(base),
+    edges: [{ id: 'e', source: 'a', target: 'b', relationId: 'child' }],
+    relations: [
+      { id: 'parent', sourceId: 'A', targetId: 'B' },
+      { id: 'child', sourceId: 'parent', targetId: 'B' },
+      { id: 'inheritance', sourceId: 'A', targetId: 'B', relationType: 'наследует' },
+      { id: 'unused', sourceId: 'A', targetId: 'B' },
+    ],
+  };
+  const remote = { ...structuredClone(base), relations: [] as typeof pending.relations };
+  expect(mergeDiagramState(remote, pending, remote).relations.map((r) => r.id)).toEqual([
+    'parent',
+    'child',
+    'inheritance',
+  ]);
+});
+it('compares normalized JSON values independently of object key insertion order', () => {
+  expect(
+    sameDiagramValue({ position: { x: 1, y: 2 }, layer: undefined }, { position: { y: 2, x: 1 } }),
+  ).toBe(true);
+  expect(sameDiagramValue([{ id: 'a' }, { id: 'b' }], [{ id: 'b' }, { id: 'a' }])).toBe(false);
+});
+it('keeps delete/undo edits made during an own save without suppressing real concurrent conflicts', () => {
+  const snapshot = projectDocument(drawioFixture().document);
+  snapshot.edges = [snapshot.edges[0]];
+  delete snapshot.edges[0].relationId;
+  const saved = structuredClone(snapshot);
+  saved.edges[0].relationId = 'server-relation';
+  saved.relations = [
+    {
+      id: 'server-relation',
+      sourceId: snapshot.nodes[0].objectId!,
+      targetId: snapshot.nodes[1].objectId!,
+      name: 'Связь',
+      description: '',
+      attributes: {},
+      archived: false,
+      revision: 1,
+    },
+  ];
+  const deleted = { ...snapshot, edges: [] };
+  expect(mergeSavedDiagram(snapshot, deleted, saved, false).edges).toEqual([]);
+  expect(() => mergeSavedDiagram(snapshot, deleted, saved, true)).toThrow(DiagramConflict);
+  const moved = structuredClone(snapshot);
+  moved.nodes[0].position.x += 50;
+  expect(mergeSavedDiagram(snapshot, moved, saved, false).nodes[0].position.x).toBe(
+    moved.nodes[0].position.x,
+  );
+  const rebound = structuredClone(snapshot);
+  rebound.edges[0].target = snapshot.nodes[2].id;
+  const merged = mergeSavedDiagram(snapshot, rebound, saved, false),
+    edge = merged.edges[0];
+  expect(edge.relationId).not.toBe('server-relation');
+  expect(merged.relations?.find((r) => r.id === edge.relationId)?.targetId).toBe(
+    snapshot.nodes[2].objectId,
   );
 });

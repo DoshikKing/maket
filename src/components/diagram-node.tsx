@@ -1,5 +1,13 @@
 'use client';
-import { createContext, memo, useContext, useRef, useState, useLayoutEffect } from 'react';
+import {
+  createContext,
+  memo,
+  useContext,
+  useRef,
+  useState,
+  useLayoutEffect,
+  useEffect,
+} from 'react';
 import {
   Handle,
   NodeResizer,
@@ -56,6 +64,15 @@ export const DiagramNodeView = memo(function DiagramNodeView({
   useLayoutEffect(
     () => updateInternals(id),
     [id, portSignature, importedSignature, updateInternals],
+  );
+  useEffect(
+    () => () => {
+      if (active.current) {
+        active.current = false;
+        actions.end();
+      }
+    },
+    [actions.end],
   );
   const rotation = a.textRotation ?? 0;
   const vertical = Math.abs(rotation) === 90;

@@ -160,11 +160,82 @@ const assert = require('node:assert/strict');
       0,
     );
     await window.getByRole('button', { name: 'Редактирование', exact: true }).click();
+    // Portable uses the same editor against a real bundled PostgreSQL, with autosave enabled.
+    const savingId = await window.evaluate(async (id) => {
+      const old = await (await fetch(`/api/diagrams/${id}`)).json();
+      const notation = old.document.bindings[0].document;
+      const response = await fetch('/api/diagrams', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: 'Portable save regression',
+          document: {
+            schemaVersion: 1,
+            notation,
+            nodes: [
+              {
+                id: 'save-a',
+                typeId: 'process',
+                position: { x: 0, y: 0 },
+                properties: { title: 'A' },
+              },
+              {
+                id: 'save-b',
+                typeId: 'process',
+                position: { x: 400, y: 0 },
+                properties: { title: 'B' },
+              },
+            ],
+            edges: [
+              {
+                id: 'save-edge',
+                typeId: 'flow',
+                source: 'save-a',
+                target: 'save-b',
+                sourcePort: 'out',
+                targetPort: 'in',
+                properties: {},
+              },
+            ],
+          },
+        }),
+      });
+      if (!response.ok) throw new Error(await response.text());
+      return (await response.json()).id;
+    }, data.diagramId);
+    await window.goto(`${data.origin}/diagrams/${savingId}`);
+    await expect(window.locator('.react-flow__node-notation')).toHaveCount(2);
+    await expect(window.getByRole('button', { name: 'Просмотр', exact: true })).toBeEnabled();
+    let saves = 0;
+    window.on('request', (request) => {
+      if (request.method() === 'PUT' && request.url().endsWith(`/api/diagrams/${savingId}`))
+        saves++;
+    });
+    for (let cycle = 0; cycle < 2; cycle++) {
+      await window.locator('.react-flow__node[data-id="save-a"]').click();
+      await window.keyboard.press('Delete');
+      await expect(window.locator('.react-flow__node-notation')).toHaveCount(1);
+      await expect(window.locator('.editor-save-state')).toContainText('Сохранено', {
+        timeout: 15000,
+      });
+      await window.waitForTimeout(2200);
+      assert.equal(saves, cycle * 2 + 1, 'Deleting an arrow must not start an autosave loop');
+      await window.locator('.react-flow').focus();
+      await window.keyboard.press(`${modifier}+z`);
+      await expect(window.locator('.react-flow__edge')).toHaveCount(1);
+      await expect(window.locator('.editor-save-state')).toContainText('Сохранено', {
+        timeout: 15000,
+      });
+      assert.equal(saves, cycle * 2 + 2);
+    }
+    await window.reload();
+    await expect(window.locator('.react-flow__node-notation')).toHaveCount(2);
+    await expect(window.locator('.react-flow__edge')).toHaveCount(1);
     await window.screenshot({
       path: process.env.MAKET_TEST_SCREENSHOT || path.join(directory, 'desktop.png'),
     });
     console.log(
-      'Packaged Electron smoke OK: local workspace, session bootstrap, settings, canvas modes, native keyboard undo/redo/save, isolated renderer, MCP and all file formats',
+      'Packaged Electron smoke OK: local workspace, session bootstrap, settings, canvas modes, native keyboard undo/redo/save, portable delete/undo autosave stability, isolated renderer, MCP and all file formats',
     );
   } finally {
     if (app) {

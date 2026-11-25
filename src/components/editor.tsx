@@ -1,6 +1,11 @@
 'use client';
 import { appPath } from '@/lib/base-path';
-import { mergeDiagramState, DiagramConflict } from '@/lib/diagram-merge';
+import {
+  mergeDiagramState,
+  mergeSavedDiagram,
+  sameDiagramValue,
+  DiagramConflict,
+} from '@/lib/diagram-merge';
 import { useEditLease, LeaseNotice } from './collaboration';
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import Link from 'next/link';
@@ -375,14 +380,15 @@ function Editor({ initial }: { initial: Diagram }) {
     };
   }, [initial.id, lease.held, refreshObjects, interacting, saving]);
   const serialized = useMemo(() => JSON.stringify(document), [document]);
-  const dirty = serialized !== savedDoc;
+  const savedDocument = useMemo(() => JSON.parse(savedDoc) as ViewDocument, [savedDoc]);
+  const dirty = !sameDiagramValue(document, savedDocument);
   const errors = useMemo(
     () => modelErrors(packDocument(document, objects, relations)),
     [document, objects, relations],
   );
   const change = useCallback((next: DiagramDocument, record = true) => {
     if (!editable.current) return;
-    if (JSON.stringify(next) === JSON.stringify(docRef.current)) return;
+    if (sameDiagramValue(next, docRef.current)) return;
     if (record && !gesture.current) {
       const previous = structuredClone(docRef.current);
       setUndo((u) => [...u.slice(-49), previous]);
@@ -396,19 +402,28 @@ function Editor({ initial }: { initial: Diagram }) {
     async (retry = false): Promise<boolean> => {
       if (!editable.current || gesture.current || savingRef.current || (blocked && !retry))
         return false;
-      await objectWrites.current;
-      if (gesture.current || savingRef.current) return false;
-      const snapshot = docRef.current;
-      const packed = packDocument(snapshot, objectsRef.current, relationsRef.current);
-      const issues = modelErrors(packed);
-      if (issues.length) {
-        setError(issues.join('; '));
-        return false;
-      }
       savingRef.current = true;
       setSaving(true);
-      setError('');
       try {
+        // Claim the save slot before awaiting model writes; preparation can fail too.
+        const writes = objectWrites.current;
+        if ((await writes) === false) {
+          if (objectWrites.current === writes) objectWrites.current = Promise.resolve();
+          throw new Error(
+            'Не удалось сохранить общие свойства. Повторите изменение свойства; локальная диаграмма остаётся в редакторе.',
+          );
+        }
+        if (gesture.current || !editable.current) return false;
+        const snapshot = docRef.current;
+        if (sameDiagramValue(snapshot, JSON.parse(cleanDocument.current))) {
+          setBlocked(false);
+          setError('');
+          return true;
+        }
+        const packed = packDocument(snapshot, objectsRef.current, relationsRef.current);
+        const issues = modelErrors(packed);
+        if (issues.length) throw new Error(issues.join('; '));
+        setError('');
         const result = await api<ModelDiagram & { concurrentBase?: ModelDocument }>(
           `diagrams/${initial.id}`,
           'PUT',
@@ -419,7 +434,7 @@ function Editor({ initial }: { initial: Diagram }) {
           },
         );
         const remote = projectDocument(result.document);
-        const next = mergeDiagramState(snapshot, docRef.current, remote);
+        const next = mergeSavedDiagram(snapshot, docRef.current, remote, !!result.concurrentBase);
         mergeObjects(result.document.objects);
         mergeRelations(result.document.relations ?? []);
         if (result.concurrentBase) {
@@ -442,7 +457,7 @@ function Editor({ initial }: { initial: Diagram }) {
         cleanDocument.current = JSON.stringify(remote);
         setSavedDoc(cleanDocument.current);
         setBlocked(false);
-        return JSON.stringify(docRef.current) === JSON.stringify(remote);
+        return sameDiagramValue(docRef.current, remote);
       } catch (e) {
         const message = (e as Error).message;
         setError(message);
@@ -475,22 +490,36 @@ function Editor({ initial }: { initial: Diagram }) {
     dirty,
     user.settings.autosave && !errors.length && !blocked ? () => save() : undefined,
   );
-  const beginGesture = useCallback((_kind: 'drag' | 'resize' | 'text') => {
+  const gestureKind = useRef<'drag' | 'resize' | 'text' | null>(null);
+  const beginGesture = useCallback((kind: 'drag' | 'resize' | 'text') => {
     if (!editable.current || gesture.current) return;
+    gestureKind.current = kind;
     gesture.current = structuredClone(docRef.current);
     setInteracting(true);
   }, []);
   const endGesture = useCallback(() => {
     queueMicrotask(() => {
       const previous = gesture.current;
-      if (previous && JSON.stringify(previous) !== JSON.stringify(docRef.current)) {
+      if (previous && !sameDiagramValue(previous, docRef.current)) {
         setUndo((u) => [...u.slice(-49), previous]);
         setRedo([]);
       }
       gesture.current = null;
+      gestureKind.current = null;
       setInteracting(false);
     });
   }, []);
+  useEffect(() => {
+    const release = () => {
+      if (gestureKind.current !== 'text') endGesture();
+    };
+    window.addEventListener('blur', release);
+    window.addEventListener('pointercancel', release);
+    return () => {
+      window.removeEventListener('blur', release);
+      window.removeEventListener('pointercancel', release);
+    };
+  }, [endGesture]);
   const setNodeLabel = useCallback(
     (id: string, text: string) => {
       const node = docRef.current.nodes.find((n) => n.id === id);
@@ -606,7 +635,7 @@ function Editor({ initial }: { initial: Diagram }) {
   }
   async function flush() {
     await objectWrites.current;
-    if (JSON.stringify(docRef.current) === savedDoc) return true;
+    if (sameDiagramValue(docRef.current, JSON.parse(cleanDocument.current))) return true;
     return save();
   }
   async function addNode(
@@ -1115,6 +1144,7 @@ function Editor({ initial }: { initial: Diagram }) {
       nodes: docRef.current.nodes.filter((n) => !removed.has(n.id)),
       edges: docRef.current.edges.filter((e) => !removed.has(e.id)),
     });
+    endGesture();
     setSelected(null);
   }
   function nodesChanged(changes: NodeChange<CanvasNode>[]) {
@@ -1157,7 +1187,7 @@ function Editor({ initial }: { initial: Diagram }) {
     if (ids.length) deleteItems([], ids);
   }
   function undoAction() {
-    if (!editable.current || !undo.length) return;
+    if (!editable.current || gesture.current || !undo.length) return;
     const previous = undo[undo.length - 1];
     const current = structuredClone(docRef.current);
     setRedo((r) => [...r, current]);
@@ -1165,7 +1195,7 @@ function Editor({ initial }: { initial: Diagram }) {
     change(previous, false);
   }
   function redoAction() {
-    if (!editable.current || !redo.length) return;
+    if (!editable.current || gesture.current || !redo.length) return;
     const next = redo[redo.length - 1];
     const current = structuredClone(docRef.current);
     setUndo((u) => [...u, current]);
@@ -1607,14 +1637,14 @@ function Editor({ initial }: { initial: Diagram }) {
           data-command="save"
           aria-label="Сохранить диаграмму"
           disabled={!canEdit || saving || !dirty}
-          onClick={() => void save()}
+          onClick={() => void save(true)}
         >
           <Save size={14} />
         </button>
         <button
           data-command="undo"
           aria-label="Отменить изменение"
-          disabled={!canEdit || !undo.length}
+          disabled={!canEdit || interacting || !undo.length}
           onClick={undoAction}
         >
           <Undo2 size={14} />
@@ -1871,6 +1901,7 @@ function Editor({ initial }: { initial: Diagram }) {
             </button>
             <button
               className="primary small"
+              aria-label={blocked ? 'Повторить сохранение' : 'Сохранить'}
               onClick={() => void save(true)}
               disabled={
                 commandBusy || objectSaving || interacting || saving || (!dirty && !blocked)
@@ -1902,7 +1933,27 @@ function Editor({ initial }: { initial: Diagram }) {
         )}
         {error && (
           <div className="error editor-error" role="alert">
-            {error}
+            <span>
+              {error}
+              {blocked ? ' Несохранённые изменения остаются в редакторе.' : ''}
+            </span>
+            {blocked && (
+              <button
+                className="secondary small"
+                onClick={() =>
+                  download(`${name}.maket.json`, {
+                    name,
+                    document: packDocument(
+                      docRef.current,
+                      objectsRef.current,
+                      relationsRef.current,
+                    ),
+                  })
+                }
+              >
+                Скачать несохранённую копию
+              </button>
+            )}
           </div>
         )}
         {connectionNotice && (

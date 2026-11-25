@@ -4,7 +4,12 @@ export const activeEditLeases = new Map<string, string>();
 export function collaborationClientId() {
   return (clientId ??= crypto.randomUUID());
 }
-export async function api<T = unknown>(path: string, method = 'GET', body?: unknown): Promise<T> {
+export async function api<T = unknown>(
+  path: string,
+  method = 'GET',
+  body?: unknown,
+  options: { timeoutMs?: number } = {},
+): Promise<T> {
   const headers: Record<string, string> = {};
   if (body !== undefined) headers['Content-Type'] = 'application/json';
   const workspace =
@@ -17,15 +22,25 @@ export async function api<T = unknown>(path: string, method = 'GET', body?: unkn
         [...activeEditLeases].map(([rootId, leaseId]) => ({ rootId, leaseId })),
       );
   }
-  const response = await fetch(appPath(`/api/${path}`), {
-    method,
-    keepalive: method === 'DELETE' && path.startsWith('collaboration/locks/'),
-    headers,
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  const data = await response.json();
-  if (!response.ok) throw new ApiError(response.status, data.error ?? 'Ошибка запроса');
-  return data;
+  const signal = AbortSignal.timeout(options.timeoutMs ?? 90_000);
+  try {
+    const response = await fetch(appPath(`/api/${path}`), {
+      method,
+      signal,
+      keepalive: method === 'DELETE' && path.startsWith('collaboration/locks/'),
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new ApiError(response.status, data.error ?? 'Ошибка запроса');
+    return data;
+  } catch (error) {
+    if (signal.aborted && signal.reason?.name === 'TimeoutError')
+      throw new Error('Сервер не ответил вовремя. Запрос прерван; попробуйте ещё раз.', {
+        cause: error,
+      });
+    throw error;
+  }
 }
 export function download(name: string, data: unknown) {
   downloadBlob(name, new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
