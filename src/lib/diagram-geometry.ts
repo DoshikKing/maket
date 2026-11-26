@@ -54,6 +54,27 @@ function anchorSide(anchor: Point) {
   ] as const;
   return [...sides].sort((a, b) => a[0] - b[0])[0][1];
 }
+/** Resolve a pointer along a semantic port's face without changing the port or notation rules. */
+export function faceAttachment(
+  d: DiagramDocument,
+  id: string,
+  port: string | null | undefined,
+  pointer?: Point | null,
+) {
+  const node = d.nodes.find((n) => n.id === id);
+  const type = d.notation.nodeTypes.find((t) => t.id === node?.typeId);
+  const definition = type?.ports.find((p) => p.id === port);
+  if (!node || !type || !definition || !pointer) return;
+  const a = nodeAppearance(node, type);
+  const anchor = {
+    x: definition.direction === 'output' ? 1 : 0,
+    y: Math.max(0, Math.min(1, (pointer.y - node.position.y) / a.height)),
+  };
+  return {
+    anchor,
+    point: { x: node.position.x + anchor.x * a.width, y: node.position.y + anchor.y * a.height },
+  };
+}
 export function edgeGeometry(d: DiagramDocument) {
   const result = new Map<string, EdgeGeometry>();
   const visiting = new Set<string>();

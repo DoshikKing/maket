@@ -7,6 +7,7 @@ import {
   useState,
   useLayoutEffect,
   useEffect,
+  type CSSProperties,
 } from 'react';
 import {
   Handle,
@@ -178,26 +179,42 @@ export const DiagramNodeView = memo(function DiagramNodeView({
         )}
       </div>
       <ImportedHandles handles={data.importedHandles} />
-      {inputs.map((p, i) => (
-        <Handle
-          key={p.id}
-          type="target"
-          position={Position.Left}
-          id={p.id}
-          style={{ top: `${((i + 1) / (inputs.length + 1)) * 100}%` }}
-          title={p.id}
-        />
-      ))}
-      {outputs.map((p, i) => (
-        <Handle
-          key={p.id}
-          type="source"
-          position={Position.Right}
-          id={p.id}
-          style={{ top: `${((i + 1) / (outputs.length + 1)) * 100}%` }}
-          title={p.id}
-        />
-      ))}
+      {[inputs, outputs].flatMap((ports, side) =>
+        ports.map((p, i) => (
+          <Handle
+            key={p.id}
+            type={side ? 'source' : 'target'}
+            position={side ? Position.Right : Position.Left}
+            id={p.id}
+            className="face-port"
+            style={
+              {
+                top: `${(i / ports.length) * 100}%`,
+                '--face-height': `${100 / ports.length}%`,
+              } as CSSProperties
+            }
+            title={`${side ? 'Выход' : 'Вход'}: ${p.id}. Подключение в любом месте грани`}
+            role="button"
+            aria-disabled={!actions.editable}
+            aria-label={`${side ? 'Выход' : 'Вход'} ${p.id}`}
+            tabIndex={actions.editable ? 0 : -1}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.stopPropagation();
+                e.preventDefault();
+                if (e.key === 'Enter') e.currentTarget.click();
+              }
+            }}
+            onKeyUp={(e) => {
+              if (e.key === ' ') {
+                e.stopPropagation();
+                e.preventDefault();
+                e.currentTarget.click();
+              }
+            }}
+          />
+        )),
+      )}
     </div>
   );
 });
